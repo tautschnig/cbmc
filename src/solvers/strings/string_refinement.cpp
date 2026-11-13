@@ -38,6 +38,7 @@ Author: Alberto Griggio, alberto.griggio@gmail.com
 #include "string_float_format.h"
 #include "string_refinement_invariant.h"
 
+#include <algorithm>
 #include <cmath>
 #include <stack>
 #include <unordered_set>
@@ -1691,6 +1692,15 @@ bool string_refinementt::check_float_conversions()
     add_lemma(implies_exprt{
       and_exprt{conversion.guard, equal_exprt{conversion.value, value}},
       string_is(expected)});
+    add_lemma(implies_exprt{
+      conversion.guard,
+      float_decade_lemma(conversion, constant, single, expected)});
+    if(actual.has_value())
+    {
+      add_lemma(implies_exprt{
+        conversion.guard,
+        float_prefix_lemma(conversion, constant, single, *actual)});
+    }
     // And the string in the model comes only from the value it represents,
     // if any: one round excludes the string as well as the value, so that
     // a constraint on the string is decided in one round rather than one
@@ -1783,6 +1793,194 @@ bool string_refinementt::check_float_conversions()
     }
   }
   return all_right;
+}
+
+exprt string_refinementt::float_prefix_lemma(
+  const string_constraint_generatort::float_conversiont &conversion,
+  const ieee_float_valuet &value,
+  bool single,
+  const std::string &actual)
+{
+  const bool scientific = conversion.format == float_formatt::JAVA_SCIENTIFIC;
+  if(!scientific && conversion.format != float_formatt::JAVA_PLAIN)
+    return true_exprt{};
+  // digits '.' digits, then 'E' and the exponent in scientific notation
+  const std::size_t point = actual.find('.');
+  const std::size_t mark = scientific ? actual.find('E') : actual.size();
+  if(
+    point == std::string::npos || point == 0 || mark == std::string::npos ||
+    mark <= point + 1)
+    return true_exprt{};
+  const std::string mantissa = actual.substr(0, mark);
+  const std::string tail = actual.substr(mark);
+  const auto all_digits = [](const std::string &t)
+  {
+    return !t.empty() &&
+           std::all_of(t.begin(), t.end(), [](char c) { return isdigit(c); });
+  };
+  if(
+    !all_digits(mantissa.substr(0, point)) ||
+    !all_digits(mantissa.substr(point + 1)))
+    return true_exprt{};
+  long exponent = 0;
+  if(scientific)
+  {
+    const std::string e = tail.substr(1);
+    const bool minus = !e.empty() && e[0] == '-';
+    if(!all_digits(minus ? e.substr(1) : e) || e.size() > 5)
+      return true_exprt{};
+    exponent = std::stol(e);
+  }
+  const auto parse = [&](const std::string &text)
+  {
+    ieee_float_valuet v;
+    if(single)
+      v.from_float(std::strtof(text.c_str(), nullptr));
+    else
+      v.from_double(std::strtod(text.c_str(), nullptr));
+    return v;
+  };
+  const array_string_exprt &result = conversion.result;
+  const exprt length = generator.array_pool.get_or_create_length(result);
+  const typet &index_type = result.length_type();
+  const typet &char_type =
+    to_type_with_subtype(result.content().type()).subtype();
+  const auto character = [&](char c)
+  { return from_integer(static_cast<unsigned char>(c), char_type); };
+  // The proper prefixes of the digits, the shortest first; one that ends
+  // with the point is that before it.
+  for(std::size_t size = 1; size < mantissa.size(); ++size)
+  {
+    if(size == point + 1)
+      continue;
+    std::string digits = mantissa.substr(0, std::min(size, point));
+    if(size > point)
+      digits += mantissa.substr(point + 1, size - point - 1);
+    // the prefix is digits * 10^scale
+    const long scale =
+      exponent + static_cast<long>(point) - static_cast<long>(digits.size());
+    const mp_integer d = string2integer(digits);
+    const ieee_float_valuet lower =
+      parse(integer2string(d) + "e" + std::to_string(scale));
+    const ieee_float_valuet upper =
+      parse(integer2string(d + 1) + "e" + std::to_string(scale));
+    if(!(value < lower) && value <= upper)
+      continue;
+    if(lower.is_infinity())
+      return true_exprt{};
+    // the string starts with this prefix and ends with this exponent
+    exprt::operandst premise{binary_relation_exprt{
+      length, ID_gt, from_integer(size + tail.size(), index_type)}};
+    for(std::size_t i = 0; i < size; ++i)
+    {
+      premise.push_back(equal_exprt{
+        result[from_integer(i, index_type)], character(mantissa[i])});
+    }
+    for(std::size_t i = 0; i < tail.size(); ++i)
+    {
+      premise.push_back(equal_exprt{
+        result[minus_exprt{length, from_integer(tail.size() - i, index_type)}],
+        character(tail[i])});
+    }
+    const exprt &v = conversion.value;
+    exprt::operandst range{binary_relation_exprt{v, ID_ge, lower.to_expr()}};
+    if(!upper.is_infinity())
+      range.push_back(binary_relation_exprt{v, ID_le, upper.to_expr()});
+    return implies_exprt{conjunction(premise), conjunction(range)};
+  }
+  return true_exprt{};
+}
+
+exprt string_refinementt::float_decade_lemma(
+  const string_constraint_generatort::float_conversiont &conversion,
+  const ieee_float_valuet &value,
+  bool single,
+  const std::string &expected)
+{
+  // Java's scientific notation only: [-]d.dddE[-]e
+  if(
+    conversion.format != float_formatt::JAVA &&
+    conversion.format != float_formatt::JAVA_SCIENTIFIC)
+    return true_exprt{};
+  const std::size_t exponent_mark = expected.find('E');
+  const bool negative = !expected.empty() && expected[0] == '-';
+  const std::size_t first = negative ? 1 : 0;
+  if(
+    exponent_mark == std::string::npos || expected.size() <= first ||
+    !std::isdigit(static_cast<unsigned char>(expected[first])))
+    return true_exprt{};
+  const int digit = expected[first] - '0';
+  const std::string exponent = expected.substr(exponent_mark + 1);
+  const auto parse = [&](const std::string &text)
+  {
+    ieee_float_valuet v;
+    if(single)
+      v.from_float(std::strtof(text.c_str(), nullptr));
+    else
+      v.from_double(std::strtod(text.c_str(), nullptr));
+    return v;
+  };
+  const ieee_float_valuet lower = parse(std::to_string(digit) + "e" + exponent);
+  const ieee_float_valuet upper = parse(
+    digit < 9 ? std::to_string(digit + 1) + "e" + exponent
+              : "1e" + std::to_string(std::stoi(exponent) + 1));
+  // Subnormal values have fewer digits than the decades: their strings do
+  // not follow them.
+  const ieee_float_valuet smallest_normal =
+    ieee_float_valuet::fltmin(value.spec);
+  if(
+    lower.is_NaN() || lower.is_infinity() || upper.is_NaN() ||
+    !(lower < upper) || lower < smallest_normal)
+    return true_exprt{};
+  ieee_float_valuet minus_lower = lower;
+  minus_lower.negate();
+  ieee_float_valuet minus_upper = upper;
+  minus_upper.negate();
+
+  const array_string_exprt &result = conversion.result;
+  const exprt length = generator.array_pool.get_or_create_length(result);
+  const typet &index_type = result.length_type();
+  const typet &char_type =
+    to_type_with_subtype(result.content().type()).subtype();
+  const exprt &v = conversion.value;
+  const exprt in_range =
+    negative ? and_exprt{
+                 binary_relation_exprt{v, ID_le, minus_lower.to_expr()},
+                 binary_relation_exprt{v, ID_gt, minus_upper.to_expr()}}
+             : and_exprt{
+                 binary_relation_exprt{v, ID_ge, lower.to_expr()},
+                 binary_relation_exprt{v, ID_lt, upper.to_expr()}};
+  // d.ddd...E<exponent>: the leading digit, the point, digits, and the
+  // exponent of the decade at the end
+  const std::string tail = "E" + exponent;
+  const auto character = [&](char c)
+  { return from_integer(static_cast<unsigned char>(c), char_type); };
+  exprt::operandst conjuncts{
+    equal_exprt{
+      result[from_integer(first, index_type)], character('0' + digit)},
+    equal_exprt{result[from_integer(first + 1, index_type)], character('.')},
+    binary_relation_exprt{
+      length, ID_ge, from_integer(first + 3 + tail.size(), index_type)}};
+  for(std::size_t i = 0; i < tail.size(); ++i)
+  {
+    conjuncts.push_back(equal_exprt{
+      result[minus_exprt{length, from_integer(tail.size() - i, index_type)}],
+      character(tail[i])});
+  }
+  const std::size_t longest =
+    float_string_length_bounds(single, conversion.format).second;
+  const exprt digits_end =
+    minus_exprt{length, from_integer(tail.size(), index_type)};
+  for(std::size_t i = first + 2; i < longest; ++i)
+  {
+    const exprt at = result[from_integer(i, index_type)];
+    conjuncts.push_back(implies_exprt{
+      binary_relation_exprt{from_integer(i, index_type), ID_lt, digits_end},
+      and_exprt{
+        binary_relation_exprt{at, ID_ge, character('0')},
+        binary_relation_exprt{at, ID_le, character('9')}}});
+  }
+  return implies_exprt{in_range, conjunction(conjuncts)};
 }
 
 /// Add the given lemma to the solver.

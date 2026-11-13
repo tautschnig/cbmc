@@ -169,7 +169,22 @@ string_constraintst string_constraint_generatort::float_string_axioms(
       is_digit(res[minus_exprt{length, from_integer(1, index_type)}])}});
 
   if(format == float_formatt::JAVA_SCIENTIFIC)
+  {
+    // d.d...E[-]e: a non-zero leading digit, the point, a digit, and at
+    // least "E" and a digit after them.
+    const exprt one_based = from_integer('1', char_type);
+    constraints.existential.push_back(implies_exprt{
+      finite_nonzero,
+      conjunction(
+        {binary_relation_exprt{res[offset], ID_ge, one_based},
+         binary_relation_exprt{
+           res[offset], ID_le, from_integer('9', char_type)},
+         equal_exprt{res[after_first], point},
+         is_digit(res[plus_exprt{after_first, from_integer(1, index_type)}]),
+         binary_relation_exprt{
+           length, ID_ge, plus_exprt{offset, from_integer(5, index_type)}}})});
     return constraints;
+  }
 
   // A value in the range of plain notation of the language has, after the
   // sign, at most the significant digits, "0." and the zeros before them
@@ -202,6 +217,51 @@ string_constraintst string_constraint_generatort::float_string_axioms(
       and_exprt{
         equal_exprt{res[offset], from_integer('0' + k, char_type)},
         equal_exprt{res[after_first], point}}});
+  }
+
+  // In plain notation, a magnitude of decimal exponent e starts with its
+  // leading digit d and has the point after e + 1 digits: the magnitude is
+  // at least the nearest value to d * 10^e and below the nearest to
+  // (d + 1) * 10^e. (A string of fewer digits that rounds to the value has
+  // the same leading digit and exponent.) Checked against Float.toString
+  // for every float in [1, 10^7), Double.toString for 20 million doubles
+  // and Python's repr for 2 million values up to 10^16. Without it, a
+  // prefix of the string of a value in the thousands took a refinement
+  // round per value.
+  {
+    const bool single_type = single;
+    const auto nearest = [&](const std::string &text) -> exprt
+    {
+      return single_type
+               ? float_constant(std::strtof(text.c_str(), nullptr), type)
+               : float_constant(std::strtod(text.c_str(), nullptr), type);
+    };
+    const int largest_exponent = python ? 15 : 6;
+    for(int e = 1; e <= largest_exponent; ++e)
+    {
+      for(int d = 1; d <= 9; ++d)
+      {
+        const exprt lower =
+          nearest(std::to_string(d) + "e" + std::to_string(e));
+        const exprt upper =
+          d < 9 ? nearest(std::to_string(d + 1) + "e" + std::to_string(e))
+                : nearest("1e" + std::to_string(e + 1));
+        const exprt in_range = or_exprt{
+          and_exprt{
+            binary_relation_exprt{value, ID_ge, lower},
+            binary_relation_exprt{value, ID_lt, upper}},
+          and_exprt{
+            binary_relation_exprt{value, ID_le, unary_minus_exprt{lower}},
+            binary_relation_exprt{value, ID_gt, unary_minus_exprt{upper}}}};
+        constraints.existential.push_back(implies_exprt{
+          in_range,
+          and_exprt{
+            equal_exprt{res[offset], from_integer('0' + d, char_type)},
+            equal_exprt{
+              res[plus_exprt{offset, from_integer(e + 1, index_type)}],
+              point}}});
+      }
+    }
   }
 
   // The first digit after the point of a magnitude in [1, 10): d where the

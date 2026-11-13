@@ -23,6 +23,7 @@ Author: Alberto Griggio, alberto.griggio@gmail.com
 #ifndef CPROVER_SOLVERS_REFINEMENT_STRING_REFINEMENT_H
 #define CPROVER_SOLVERS_REFINEMENT_STRING_REFINEMENT_H
 
+#include <util/ieee_float.h>
 #include <util/union_find_replace.h>
 
 #include <solvers/refinement/bv_refinement.h>
@@ -206,6 +207,29 @@ private:
   /// current model. Otherwise, add lemmas giving the result for the value
   /// of each wrong one.
   bool check_float_conversions();
+  /// For a conversion whose model value \p value has the string
+  /// \p expected in scientific notation: every normal value of the same
+  /// sign between the nearest values to d * 10^e and (d + 1) * 10^e, for the
+  /// leading digit d and exponent e of \p expected, starts with d and ends
+  /// with "E" e. True for other strings.
+  /// For a conversion in Java's plain or scientific notation of the
+  /// magnitude whose string \p actual in the model is well formed but not
+  /// that of the model value \p value: the shortest proper prefix of its
+  /// digits that no string of \p value has, with the lemma that a string
+  /// with that prefix (and that exponent) is the string of a value between
+  /// the nearest values to the prefix and to the prefix plus one in its last
+  /// digit, inclusive. (The string is between them as a decimal, it rounds
+  /// to the value, and rounding is monotone.) True if there is none.
+  exprt float_prefix_lemma(
+    const string_constraint_generatort::float_conversiont &conversion,
+    const ieee_float_valuet &value,
+    bool single,
+    const std::string &actual);
+  exprt float_decade_lemma(
+    const string_constraint_generatort::float_conversiont &conversion,
+    const ieee_float_valuet &value,
+    bool single,
+    const std::string &expected);
   /// Explain an ERROR of the propositional solver, which ends the
   /// refinement.
   void warn_propositional_error();
