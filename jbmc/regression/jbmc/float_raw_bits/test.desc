@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.constants --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Float.floatToRawIntBits, Double.doubleToRawLongBits and the canonical bits of NaN of floatToIntBits and doubleToLongBits, which the models leave to JBMC.

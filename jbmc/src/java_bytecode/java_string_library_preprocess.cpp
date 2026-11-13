@@ -914,6 +914,41 @@ java_string_library_preprocesst::string_literal_to_string_expr(
 /// \param symbol_table: symbol table
 /// \param message_handler: a message handler
 /// \return Code corresponding to the Java conversion of floats to strings.
+/// Provide code for Float.floatToRawIntBits and Double.doubleToRawLongBits:
+/// the bits of the argument, as an integer of its width.
+/// \param type: type of the function
+/// \param loc: location in the source
+/// \param function_id: unused
+/// \param symbol_table: unused
+/// \param message_handler: unused
+/// \return code returning the bits of the argument
+code_blockt java_string_library_preprocesst::make_float_bits_code(
+  const java_method_typet &type,
+  const source_locationt &loc,
+  const irep_idt &function_id,
+  symbol_table_baset &symbol_table,
+  message_handlert &message_handler)
+{
+  (void)function_id;
+  (void)symbol_table;
+  (void)message_handler;
+  const java_method_typet::parameterst &params = type.parameters();
+  PRECONDITION(params.size() == 1);
+  PRECONDITION(!params[0].get_identifier().empty());
+  const symbol_exprt arg{params[0].get_identifier(), params[0].type()};
+  const std::size_t width = to_floatbv_type(arg.type()).get_width();
+  PRECONDITION(
+    type.return_type().id() == ID_signedbv &&
+    to_signedbv_type(type.return_type()).get_width() == width);
+  // A cast to a bit vector keeps the bits.
+  code_blockt code;
+  code.add(
+    code_returnt{
+      typecast_exprt{typecast_exprt{arg, bv_typet{width}}, type.return_type()}},
+    loc);
+  return code;
+}
+
 code_blockt java_string_library_preprocesst::make_float_to_string_code(
   const java_method_typet &type,
   const source_locationt &loc,
@@ -1787,6 +1822,20 @@ void java_string_library_preprocesst::initialize_conversion_table()
         std::placeholders::_3,
         std::placeholders::_4,
         std::placeholders::_5);
+  // The models of these give any bits.
+  for(const char *method :
+      {"java::java.lang.Float.floatToRawIntBits:(F)I",
+       "java::java.lang.Double.doubleToRawLongBits:(D)J"})
+  {
+    conversion_table[method] = std::bind(
+      &java_string_library_preprocesst::make_float_bits_code,
+      this,
+      std::placeholders::_1,
+      std::placeholders::_2,
+      std::placeholders::_3,
+      std::placeholders::_4,
+      std::placeholders::_5);
+  }
   cprover_equivalent_to_java_function
     ["java::org.cprover.CProverString.parseInt:(Ljava/lang/String;I)I"] =
       ID_cprover_string_parse_int_func;
