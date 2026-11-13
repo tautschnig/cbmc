@@ -52,8 +52,14 @@ stop's post-state, so the cycle closes rather than only the forward path.
 `harness_cleanup_step.c` makes **no call to driver code at all**. To remove the
 ring-size bound it transcribes the loop body from `ena_ethdev.c:3229-3253` and
 proves the invariant over the transcription. So the ring 8, 16 and 32 cleanup
-results are only as good as that transcription, and nothing automatic will
-notice if the driver's loop changes underneath it.
+results are only as good as that transcription.
+
+*Attribution, corrected: `ena-cleanup-ring8-2026-11.md` already said this when
+that artefact was written -- "it is a transcription, not the compiled source" --
+and a commit of mine claimed it was undocumented. It was documented in the
+artefact's own note; what was missing was this cross-artefact summary carrying
+it, and any mechanism to detect drift. `check_citations.py` is now that
+mechanism.*
 
 The comparison is the useful part: `harness_xmit_step.c` **does** call the
 driver, so the xmit depth results do not carry this caveat, and
