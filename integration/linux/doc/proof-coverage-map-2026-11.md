@@ -192,3 +192,45 @@ for cleanup. Widening them is task #4 and is not free -- cleanup at ring 8 did
 not finish in 2400 s. Nothing here should be read as "the ENA TX path is
 proven correct"; it is "these obligations hold for these operations at these
 sizes, and the proof is demonstrably non-vacuous at each point".
+
+## Class S coverage against the `eth_dev_ops` table (2026-11-13)
+
+Class S is the group the Unveil class list had no name for: an operation the
+device **rejected** reported to the caller as **success**. The DPDK ENA driver
+exposes 24 `eth_dev_ops` entry points; these are the ones that set something,
+with the obligation each now carries.
+
+| entry point | obligation | result |
+|---|---|---|
+| `dev_configure` | `CFG_AENQ_FAIL` (pre-existing) | holds |
+| `mtu_set` | `SM_MTU_RC`, `SM_MTU_PUBLISH` | holds |
+| `reta_update` | `SM_RETA_RC` | holds |
+| `rss_hash_update` | `SM_HASH_RC` | holds |
+| `dev_reset` | `DR_RC_SOUND` | holds |
+| `dev_start` | via `F18_SETUP_RC` on `ena_setup_rx_intr` | **fails** (F18) |
+| `dev_stop` | `SM_STOP_RC` | **fails** (F26) |
+| `rx_queue_intr_enable` | `SM_INTR_RC` | **fails** (F17) |
+| `rx_queue_intr_disable` | same shape as enable, not separately run | fails by inspection |
+| `rx_queue_setup`, `tx_queue_setup` | `ERR_*` error-path obligations | hold |
+| `tx_done_cleanup` | returns a packet count, not a status -- no class S obligation applies | n/a |
+| FreeBSD `SIOCSIFMTU` | `SM_RC_SOUND`, `SM_NO_SILENT` | **fails** (confirms a Velocity Labs finding) |
+
+Every run clean: no other failing property, no reached bodyless callee, no
+UNKNOWN, no failing unwinding assertion, witnesses failing, each adjudicated
+by `check_hygiene.sh`.
+
+**Four of the eleven setters fail a class S obligation**, and three of those
+four were already findings recorded under another class -- F17 as a
+device-access fault, F18 as an error-path fault, F21 as sticky state. Naming
+the class is what showed they share a shape: *the caller is told the operation
+succeeded when the device, or the driver's own undo path, says otherwise.*
+
+The one new finding is F26, `ena_stop`. The one confirmation is FreeBSD's
+`SIOCSIFMTU`, which is Velocity Labs' finding and not ours.
+
+**What this says about the method.** The obligation needed nothing invented --
+two instances already existed -- and applying it across one table of entry
+points turned up one new defect, re-classified three, and confirmed one of
+theirs. That is a better return than any depth work in the same period, and it
+is the argument for finishing the sweep on Linux ENA and EFA rather than
+pushing ring sizes further.

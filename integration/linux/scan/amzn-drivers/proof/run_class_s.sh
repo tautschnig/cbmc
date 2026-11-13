@@ -12,6 +12,9 @@
 #   ENTRY 2  ena_rx_queue_intr_enable  must FAIL -- it returns 0
 #            unconditionally because ena_rx_queue_intr_set is void, so F17 is
 #            a class S finding as well as a device-access one
+#   ENTRY 3  ena_stop              must FAIL -- F26, a requested device reset
+#            that fails is logged and discarded, and the teardown proceeds
+#   ENTRY 4  ena_rss_hash_update   must HOLD
 #
 # ENTRY 2 runs with --no-pointer-check: pointer checks over these
 # union-bearing ena_com structs leave the intr_reg dereferences UNDECIDED,
@@ -30,7 +33,7 @@ for f in eth_ena_prep_pkts eth_ena_xmit_pkts eth_ena_recv_pkts ena_xmit_mbuf \
   RM="$RM --remove-function-body $f"; done
 F="--max-field-sensitivity-array-size 256 --unwind 600 $SOLVER \
   --slice-formula --unwinding-assertions"
-for E in ${ENTRIES:-0 1 2}; do
+for E in ${ENTRIES:-0 1 2 3 4}; do
   PC="--pointer-check"; [ "$E" = 2 ] && PC="--no-pointer-check"
   for V in 0 1; do
     vd=""; [ $V = 1 ] && vd=-DVACUITY_CHECK

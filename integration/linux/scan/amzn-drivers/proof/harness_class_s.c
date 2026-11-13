@@ -126,6 +126,48 @@ int ena_com_indirect_table_set(struct ena_com_dev *d)
   }
   return 0;
 }
+int ena_com_fill_hash_function(
+  struct ena_com_dev *d, enum ena_admin_hash_functions f, const u8 *key,
+  u16 key_len, u32 init_val)
+{
+  (void)d;
+  (void)f;
+  (void)key;
+  (void)key_len;
+  (void)init_val;
+  g_asked++;
+  if(nd_int())
+  {
+    g_refused++;
+    return ENA_COM_INVAL;
+  }
+  return 0;
+}
+int ena_com_fill_hash_ctrl(
+  struct ena_com_dev *d, enum ena_admin_flow_hash_proto proto, u16 fields)
+{
+  (void)d;
+  (void)proto;
+  (void)fields;
+  g_asked++;
+  if(nd_int())
+  {
+    g_refused++;
+    return ENA_COM_INVAL;
+  }
+  return 0;
+}
+int ena_com_set_hash_ctrl(struct ena_com_dev *d)
+{
+  (void)d;
+  g_asked++;
+  if(nd_int())
+  {
+    g_refused++;
+    return ENA_COM_INVAL;
+  }
+  return 0;
+}
 int ena_com_indirect_table_get(struct ena_com_dev *d, u32 *t)
 {
   (void)d;
@@ -221,6 +263,24 @@ int main(void)
     rc != 0 || g_refused == 0,
     "SM_RETA_RC: ena_rss_reta_update returns 0 only if the device accepted "
     "every entry it was asked for");
+#elif ENTRY == 4
+  /* ---- rss_hash_update ----
+   *
+   * ena_rss_hash_update propagates: it takes the lock, calls
+   * ena_rss_hash_set, and returns rc on failure (ena_rss.c:516-530).  So the
+   * obligation should HOLD, and the point of running it is to establish that
+   * rather than assume it. */
+  static uint8_t hash_key[ENA_HASH_KEY_SIZE];
+  static struct rte_eth_rss_conf hash_conf;
+  hash_conf.rss_key = hash_key;
+  hash_conf.rss_key_len = ENA_HASH_KEY_SIZE;
+  hash_conf.rss_hf = nd_u64();
+  adapter.ena_dev.rss.hash_key = (struct ena_admin_rss_key *)hash_key;
+  rc = ena_rss_hash_update(&dev, &hash_conf);
+  __CPROVER_assert(
+    rc != 0 || g_refused == 0,
+    "SM_HASH_RC: ena_rss_hash_update returns 0 only if the device accepted "
+    "the hash configuration");
 #elif ENTRY == 3
   /* ---- dev_stop ----
    *

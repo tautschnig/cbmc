@@ -55,6 +55,8 @@ Class S for the DPDK setters: does the return code reflect what the device actua
 | `SM_MTU_RC` | ena_mtu_set returns 0 only if the device accepted the MTU |
 | `SM_MTU_PUBLISH` | a refused MTU is not published to the application |
 | `SM_RETA_RC` | ena_rss_reta_update returns 0 only if the device accepted |
+| `SM_HASH_RC` | ena_rss_hash_update returns 0 only if the device accepted |
+| `SM_STOP_RC` | ena_stop returns 0 only if a requested device reset |
 | `SM_INTR_RC` | ena_rx_queue_intr_enable returns 0 only if the queue was |
 
 * run by `run_class_s.sh`: no restricting macros
