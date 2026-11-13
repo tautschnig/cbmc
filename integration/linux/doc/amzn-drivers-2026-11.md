@@ -1582,6 +1582,37 @@ while the interface keeps the MTU it had. `SM_MTU_RANGE` confirms
 rather than the helper. With `-DWITH_RC_FIX` propagating the result, all three
 obligations hold -- so the fix is one line and is verified, not asserted.
 
+### A second Velocity Labs confirmation: the `stats_sample_interval` sysctl
+
+Their class Z item, FreeBSD: *"Rejected stats_sample_interval writes report
+success to sysctl(8) and scripts."* **Confirmed.** Theirs, not ours.
+
+`ena_sysctl_metrics_interval` computes `error` on three rejection paths -- the
+device is not running, `sysctl_handle_16` fails, or the interval exceeds
+`ENA_METRICS_MAX_SAMPLE_INTERVAL` -- and then returns 0 regardless
+(`ena_sysctl.c:886-931`). `error` is assigned, read by nothing, and dropped at
+`return (0)`.
+
+| configuration | `SS_RC_SOUND` | `SS_NO_SILENT` | `SS_RANGE` |
+|---|---|---|---|
+| as-is | **FAILURE** | **FAILURE** | SUCCESS |
+| `-DWITH_RC_FIX` | SUCCESS | SUCCESS | SUCCESS |
+
+Clean runs, all six witnesses failing, both adjudicated by
+`check_hygiene.sh`. `SS_RANGE` holding says the range check itself is sound,
+so the defect is the discarded status and nothing else.
+
+`-DWITH_RC_FIX` reconstructs the repaired return value from the same
+conditions the handler tests, because the driver source cannot be edited from
+the harness. That is a **model of the fix rather than the fix**, and is marked
+as such in the harness; the real change is `return (error);` at
+`ena_sysctl.c:931`.
+
+This is the third instance of one shape across two drivers and three
+languages of plumbing: a status computed and then dropped. DPDK's `ena_stop`
+logs it (F26), FreeBSD's MTU ioctl ignores the helper's return, and this one
+assigns a local that never leaves the function.
+
 ### F17 is a class S finding too
 
 `ena_rx_queue_intr_enable` returns 0 unconditionally, because the function it

@@ -4,7 +4,7 @@
 
 One row per harness: what it puts under test, the obligations it asserts, whether it carries a vacuity witness, and -- the column this index exists for -- what each configuration macro assumes away. A finding was once reported and retracted because that last column did not exist anywhere.
 
-46 harnesses.
+47 harnesses.
 
 ## Harnesses with no vacuity witness
 
@@ -802,6 +802,24 @@ FreeBSD ENA ena_rx_mbuf: the RX assembly step.
 * run by `run_fbsd_rx.sh`: `-DMAXCHAIN`
 
 * vacuity witness: yes, 3
+
+### `fbsd/harness_fbsd_sysctl.c`
+
+Class S: FreeBSD's stats_sample_interval sysctl reports success for a write it rejected.
+
+| obligation | asserts |
+|---|---|
+| `SS_RC_SOUND` | the handler returns 0 only if the interval it was asked |
+| `SS_NO_SILENT` | the handler does not return 0 on a write it rejected |
+| `SS_RANGE` | an applied interval is within what the driver accepts |
+
+| configuration | assumes |
+|---|---|
+| `-DWITH_RC_FIX` | applies the fix for the FreeBSD SIOCSIFMTU class S defect, propagating ena_change_mtu's result instead of discarding it |
+
+* run by `run_fbsd_sysctl.sh`: `-DWITH_RC_FIX`
+
+* vacuity witness: yes, 6
 
 ### `fbsd/harness_fbsd_xmit.c`
 
