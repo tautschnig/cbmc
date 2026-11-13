@@ -4,7 +4,7 @@
 
 One row per harness: what it puts under test, the obligations it asserts, whether it carries a vacuity witness, and -- the column this index exists for -- what each configuration macro assumes away. A finding was once reported and retracted because that last column did not exist anywhere.
 
-42 harnesses.
+43 harnesses.
 
 ## Harnesses with no vacuity witness
 
@@ -295,6 +295,25 @@ The LLQ transmit path end to end, on the real code, for two questions:
 
 * run by `run_induction.sh`: `-DASSUME_NO_F14`, `-DBURST`, `-DDEVINIT_ONLY`, `-DSEGS`
 * run by `run_llq_path.sh`: `-DBURST`, `-DDEVINIT_ONLY`, `-DSEGS`
+
+* vacuity witness: yes, 3
+
+### `harness_lock_order.c`
+
+Class E, deadlock and lockup: the admin-lock discipline.
+
+| obligation | asserts |
+|---|---|
+| `LKO_NO_RECURSION` | the lock is never taken while already held |
+| `LKO_NO_STRAY_UNLOCK` | the lock is only released by a holder |
+| `LKO_RELEASED` | the entry point returns with the admin lock released |
+
+| configuration | assumes |
+|---|---|
+| `-DBREAK_RETA_UNLOCK` | **UNDESCRIBED** |
+| `-DENTRY` | **UNDESCRIBED** |
+
+* run by `run_lock_order.sh`: `-DBREAK_RETA_UNLOCK`, `-DENTRY`
 
 * vacuity witness: yes, 3
 
