@@ -360,3 +360,24 @@ It reads logs, so it cannot tell whether the obligations are the *right* ones,
 whether an assumption is sound, or whether a bound is realistic. Those are the
 failures the harness index addresses instead. A log can pass every check here
 and still prove something uninteresting about a configuration nobody runs.
+
+## One more trap: never edit a shell script while it is running
+
+The corpus sweep was running from `run_all.sh` when a fix was committed to
+that same file. Bash reads a script incrementally rather than loading it whole,
+so the edit shifted the byte offsets under the running shell and it resumed in
+the middle of a line:
+
+```
+./run_all.sh: line 50: x_com.sh: command not found
+```
+
+The visible damage was one runner failing to start. The *invisible* damage was
+worse: another runner reported `NO VERDICT` and was flagged by the adjudicator
+as an unsupported claim, when re-running it alone gave `VERIFICATION
+SUCCESSFUL` with every witness failing. A corrupted sweep produces results
+that look like findings.
+
+Either copy the script to a scratch path before a long run, or do not touch it
+until the run finishes. The same applies to any harness a background
+verification is still compiling against.
