@@ -39,6 +39,19 @@ array_string_exprt from_char_vector(
   return arg;
 }
 
+// The encoding of an argument of String.format by cproverFormatArgument of
+// the Java models: its kind, its value as a long in four 16-bit characters,
+// and its text.
+static std::vector<mp_integer>
+encoded(char kind, std::vector<mp_integer> value, const std::string &text)
+{
+  std::vector<mp_integer> result{kind};
+  result.insert(result.end(), value.begin(), value.end());
+  for(const char c : text)
+    result.push_back(c);
+  return result;
+}
+
 SCENARIO(
   "length_for_format_specifier",
   "[core][solvers][strings][string_format_builtin_function]")
@@ -54,16 +67,21 @@ SCENARIO(
 
   WHEN("format specifier = %s")
   {
-    WHEN("arg = serialized(\"bar\")")
+    WHEN("arg = encoded(\"bar\")")
     {
       array_string_exprt arg = from_char_vector(
-        {'b', 'a', 'r'}, char_type, length_type, pointer_type, array_pool);
+        encoded('S', {0, 0, 0, 0}, "bar"),
+        char_type,
+        length_type,
+        pointer_type,
+        array_pool);
       format_specifiert fs{0, "", 0, 0, false, format_specifiert::STRING};
       const exprt actual =
         length_for_format_specifier(fs, arg, length_type, array_pool).value();
       THEN("length constraint represents 3")
       {
-        int to_int = *numeric_cast<int>(to_constant_expr(actual));
+        int to_int =
+          *numeric_cast<int>(to_constant_expr(simplify_expr(actual, ns)));
         REQUIRE(to_int == 3);
       }
     }
@@ -71,17 +89,88 @@ SCENARIO(
 
   WHEN("format specifier = %S")
   {
-    WHEN("arg = serialized(\"bar\")")
+    WHEN("arg = encoded(\"bar\")")
     {
       array_string_exprt arg = from_char_vector(
-        {'b', 'a', 'r'}, char_type, length_type, pointer_type, array_pool);
+        encoded('S', {0, 0, 0, 0}, "bar"),
+        char_type,
+        length_type,
+        pointer_type,
+        array_pool);
       format_specifiert fs{0, "", 0, 0, false, format_specifiert::STRING_UPPER};
       const exprt actual =
         length_for_format_specifier(fs, arg, length_type, array_pool).value();
       THEN("length constraint represents 3")
       {
-        int to_int = *numeric_cast<int>(to_constant_expr(actual));
+        int to_int =
+          *numeric_cast<int>(to_constant_expr(simplify_expr(actual, ns)));
         REQUIRE(to_int == 3);
+      }
+    }
+  }
+
+  WHEN("format specifier = %s")
+  {
+    WHEN("arg = encoded(12)")
+    {
+      // %s prints the text of the argument, not its value characters
+      array_string_exprt arg = from_char_vector(
+        encoded('I', {0, 0, 0, 12}, "12"),
+        char_type,
+        length_type,
+        pointer_type,
+        array_pool);
+      format_specifiert fs{0, "", 0, 0, false, format_specifiert::STRING};
+      const exprt actual = simplify_expr(
+        length_for_format_specifier(fs, arg, length_type, array_pool).value(),
+        ns);
+      THEN("length constraint represents 2")
+      {
+        REQUIRE(*numeric_cast<int>(to_constant_expr(actual)) == 2);
+      }
+    }
+  }
+
+  WHEN("format specifier = %b")
+  {
+    WHEN("arg = encoded(0), an Integer")
+    {
+      // only null and Boolean.FALSE are false
+      array_string_exprt arg = from_char_vector(
+        encoded('I', {0, 0, 0, 0}, "0"),
+        char_type,
+        length_type,
+        pointer_type,
+        array_pool);
+      format_specifiert fs{0, "", 0, 0, false, format_specifiert::BOOLEAN};
+      const exprt actual = simplify_expr(
+        length_for_format_specifier(fs, arg, length_type, array_pool).value(),
+        ns);
+      THEN("length constraint represents 4")
+      {
+        REQUIRE(*numeric_cast<int>(to_constant_expr(actual)) == 4);
+      }
+    }
+  }
+
+  WHEN("format specifier = %c")
+  {
+    WHEN("arg = encoded(0x1F600), an Integer")
+    {
+      // a code point beyond the basic plane is a surrogate pair
+      array_string_exprt arg = from_char_vector(
+        encoded('I', {0, 0, 1, 0xF600}, "128512"),
+        char_type,
+        length_type,
+        pointer_type,
+        array_pool);
+      format_specifiert fs{0, "", 0, 0, false, format_specifiert::CHARACTER};
+      const exprt actual = simplify_expr(
+        length_for_format_specifier(fs, arg, length_type, array_pool).value(),
+        ns);
+      THEN("length constraint represents 2")
+      {
+        REQUIRE(*numeric_cast<int>(to_constant_expr(actual)) == 2);
       }
     }
   }
@@ -89,7 +178,11 @@ SCENARIO(
   WHEN("format specifier = %E")
   {
     const array_string_exprt arg = from_char_vector(
-      {0, 0, 0, 12}, char_type, length_type, pointer_type, array_pool);
+      encoded('I', {0, 0, 0, 12}, "12"),
+      char_type,
+      length_type,
+      pointer_type,
+      array_pool);
     format_specifiert fs{
       0, "", 0, 0, false, format_specifiert::SCIENTIFIC_UPPER};
     THEN("there is no length formula")
@@ -102,10 +195,14 @@ SCENARIO(
 
   WHEN("format specifier = %d")
   {
-    WHEN("arg = serialized(12)")
+    WHEN("arg = encoded(12)")
     {
       const array_string_exprt arg = from_char_vector(
-        {0, 0, 0, 12}, char_type, length_type, pointer_type, array_pool);
+        encoded('I', {0, 0, 0, 12}, "12"),
+        char_type,
+        length_type,
+        pointer_type,
+        array_pool);
       format_specifiert fs{
         0, "", 0, 0, false, format_specifiert::DECIMAL_INTEGER};
       const exprt actual =
@@ -121,10 +218,10 @@ SCENARIO(
 
   WHEN("format specifier = %d")
   {
-    WHEN("arg = serialized(-12)")
+    WHEN("arg = encoded(-12)")
     {
       const array_string_exprt arg = from_char_vector(
-        {0xFFFF, 0xFFFF, 0xFFFF, 0xFFF4},
+        encoded('I', {0xFFFF, 0xFFFF, 0xFFFF, 0xFFF4}, "-12"),
         char_type,
         length_type,
         pointer_type,
@@ -144,10 +241,10 @@ SCENARIO(
 
   WHEN("format specifier = %d")
   {
-    WHEN("arg = serialized(-1234567890)")
+    WHEN("arg = encoded(-1234567890)")
     {
       const array_string_exprt arg = from_char_vector(
-        {0xFFFF, 0xFFFF, 0xB669, 0xFD2E},
+        encoded('I', {0xFFFF, 0xFFFF, 0xB669, 0xFD2E}, "-1234567890"),
         char_type,
         length_type,
         pointer_type,
@@ -167,10 +264,14 @@ SCENARIO(
 
   WHEN("format specifier = %d")
   {
-    WHEN("arg = serialized(null)")
+    WHEN("arg = encoded(null)")
     {
       const array_string_exprt arg = from_char_vector(
-        {'n', 'u', 'l', 'l'}, char_type, length_type, pointer_type, array_pool);
+        encoded('N', {0, 0, 0, 0}, "null"),
+        char_type,
+        length_type,
+        pointer_type,
+        array_pool);
       format_specifiert fs{
         0, "", 0, 0, false, format_specifiert::DECIMAL_INTEGER};
       const exprt actual =
@@ -186,10 +287,14 @@ SCENARIO(
 
   WHEN("format specifier = %x")
   {
-    WHEN("arg = serialized(12)")
+    WHEN("arg = encoded(12)")
     {
       const array_string_exprt arg = from_char_vector(
-        {0, 0, 0, 12}, char_type, length_type, pointer_type, array_pool);
+        encoded('I', {0, 0, 0, 12}, "12"),
+        char_type,
+        length_type,
+        pointer_type,
+        array_pool);
       format_specifiert fs{
         0, "", 0, 0, false, format_specifiert::HEXADECIMAL_INTEGER};
       const exprt actual =
@@ -205,10 +310,14 @@ SCENARIO(
 
   WHEN("format specifier = %c")
   {
-    WHEN("arg = serialized('c')")
+    WHEN("arg = encoded('c')")
     {
       const array_string_exprt arg = from_char_vector(
-        {0, 0, 0, 'c'}, char_type, length_type, pointer_type, array_pool);
+        encoded('C', {0, 0, 0, 'c'}, "c"),
+        char_type,
+        length_type,
+        pointer_type,
+        array_pool);
       format_specifiert fs{0, "", 0, 0, false, format_specifiert::CHARACTER};
       const exprt actual =
         length_for_format_specifier(fs, arg, length_type, array_pool).value();
@@ -223,10 +332,14 @@ SCENARIO(
 
   WHEN("format specifier = %c")
   {
-    WHEN("arg = serialized(null)")
+    WHEN("arg = encoded(null)")
     {
       const array_string_exprt arg = from_char_vector(
-        {'n', 'u', 'l', 'l'}, char_type, length_type, pointer_type, array_pool);
+        encoded('N', {0, 0, 0, 0}, "null"),
+        char_type,
+        length_type,
+        pointer_type,
+        array_pool);
       format_specifiert fs{0, "", 0, 0, false, format_specifiert::CHARACTER};
       const exprt actual =
         length_for_format_specifier(fs, arg, length_type, array_pool).value();
@@ -241,10 +354,14 @@ SCENARIO(
 
   WHEN("format specifier = %b")
   {
-    WHEN("arg = serialized(false)")
+    WHEN("arg = encoded(false)")
     {
       const array_string_exprt arg = from_char_vector(
-        {0, 0, 0, 0}, char_type, length_type, pointer_type, array_pool);
+        encoded('B', {0, 0, 0, 0}, "false"),
+        char_type,
+        length_type,
+        pointer_type,
+        array_pool);
       format_specifiert fs{0, "", 0, 0, false, format_specifiert::BOOLEAN};
       const exprt actual =
         length_for_format_specifier(fs, arg, length_type, array_pool).value();
@@ -256,10 +373,14 @@ SCENARIO(
       }
     }
 
-    WHEN("arg = serialized(true)")
+    WHEN("arg = encoded(true)")
     {
       const array_string_exprt arg = from_char_vector(
-        {0, 0, 0, 1}, char_type, length_type, pointer_type, array_pool);
+        encoded('B', {0, 0, 0, 1}, "true"),
+        char_type,
+        length_type,
+        pointer_type,
+        array_pool);
       format_specifiert fs{0, "", 0, 0, false, format_specifiert::BOOLEAN};
       const exprt actual =
         length_for_format_specifier(fs, arg, length_type, array_pool).value();
@@ -271,10 +392,14 @@ SCENARIO(
       }
     }
 
-    WHEN("arg = serialized(null)")
+    WHEN("arg = encoded(null)")
     {
       const array_string_exprt arg = from_char_vector(
-        {'n', 'u', 'l', 'l'}, char_type, length_type, pointer_type, array_pool);
+        encoded('N', {0, 0, 0, 0}, "null"),
+        char_type,
+        length_type,
+        pointer_type,
+        array_pool);
       format_specifiert fs{0, "", 0, 0, false, format_specifiert::BOOLEAN};
       const exprt actual =
         length_for_format_specifier(fs, arg, length_type, array_pool).value();

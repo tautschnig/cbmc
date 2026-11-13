@@ -1799,11 +1799,16 @@ void java_string_library_preprocesst::initialize_conversion_table()
   cprover_equivalent_to_java_function
     ["java::org.cprover.CProverString.isValidLong:(Ljava/lang/String;I)Z"] =
       ID_cprover_string_is_valid_long_func;
-  // The number of arguments a format string uses (a helper of the
-  // String.format model, which throws MissingFormatArgumentException).
-  cprover_equivalent_to_java_function
-    ["java::java.lang.String.cproverFormatArgumentCount:(Ljava/lang/"
-     "String;)I"] = ID_cprover_string_format_argument_count_func;
+  // The first error of a call of String.format (a helper of the
+  // String.format model, which throws the exception of the error).
+  {
+    std::string signature = "java::java.lang.String.cproverFormatError:(";
+    for(std::size_t i = 0; i < 11; ++i)
+      signature += "Ljava/lang/String;";
+    signature += ")I";
+    cprover_equivalent_to_java_function[signature] =
+      ID_cprover_string_format_error_func;
+  }
 
   // String library
   conversion_table["java::java.lang.String.<init>:(Ljava/lang/String;)V"] =

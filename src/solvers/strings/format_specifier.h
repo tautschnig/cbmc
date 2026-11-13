@@ -57,12 +57,16 @@ public:
   /// Whether the specifier cannot be modelled, as for a '<' flag without a
   /// previous argument.
   bool unsupported = false;
+  /// Whether the conversion is not one of Java's (Java throws
+  /// UnknownFormatConversionException).
+  bool unknown_conversion = false;
 
   /// Whether the specifier is one that the string solver models: one
   /// without flags, width or precision, as these are not modelled.
   bool is_modelled() const
   {
-    return !unsupported && flag.empty() && width == -1 && precision == -1;
+    return !unsupported && !unknown_conversion && flag.empty() && width == -1 &&
+           precision == -1;
   }
 
   format_specifiert(

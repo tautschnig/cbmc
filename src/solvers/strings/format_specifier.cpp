@@ -40,7 +40,11 @@ static format_specifiert format_specifier_of_match(std::smatch &m)
     m[6].str().length() == 1, "format conversion should be one character");
   char conversion = dt ? tT[0] : m[6].str()[0];
 
-  return format_specifiert(index, flag, width, precision, dt, conversion);
+  format_specifiert fs(index, flag, width, precision, dt, conversion);
+  const std::string known = dt ? "tT" : "bBhHsScCdoxXeEfgGaAtT%n";
+  if(known.find(conversion) == std::string::npos)
+    fs.unknown_conversion = true;
+  return fs;
 }
 
 /// Regexp is taken directly from openJDK implementation:

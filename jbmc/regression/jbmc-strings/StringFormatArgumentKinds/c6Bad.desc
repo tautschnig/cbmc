@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.c6Bad --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+The negation of c6: String.format("[%s]") of the Object null: "[null]", as in Java.

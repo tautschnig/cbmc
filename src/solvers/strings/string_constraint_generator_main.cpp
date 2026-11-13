@@ -435,8 +435,8 @@ string_constraint_generatort::add_axioms_for_function_application(
     return add_axioms_for_code_point_count(expr);
   else if(id == ID_cprover_string_is_ascii_func)
     return add_axioms_for_is_ascii(expr);
-  else if(id == ID_cprover_string_format_argument_count_func)
-    return add_axioms_for_format_argument_count(expr);
+  else if(id == ID_cprover_string_format_error_func)
+    return add_axioms_for_format_error(expr);
   else if(id == ID_cprover_string_offset_by_code_point_func)
     return add_axioms_for_offset_by_code_point(expr);
   else if(id == ID_cprover_string_compare_to_func)

@@ -92,16 +92,94 @@ static bool check_format_string(std::string s)
 }
 #endif
 
-/// Expression which is true when the string is equal to the literal "null"
-static exprt is_null(const array_string_exprt &string, array_poolt &array_pool)
+// The encoding of an argument by cproverFormatArgument of the Java models:
+// a character for its kind, four characters for the value of an integral,
+// char or boolean as a long (16 bits each, the most significant first), and
+// the text of String.valueOf of the argument. A missing argument is "".
+static const char kind_null = 'N';
+static const char kind_string = 'S';
+static const char kind_int = 'I'; // Byte, Short or Integer
+static const char kind_long = 'L';
+static const char kind_char = 'C';
+static const char kind_boolean = 'B';
+static const char kind_float = 'F'; // Float or Double
+static const char kind_other = 'O';
+static const std::size_t text_offset = 5;
+
+/// Whether the argument \p arg is of kind \p kind.
+static exprt kind_is(const array_string_exprt &arg, char kind)
 {
-  return and_exprt{
-    equal_exprt{array_pool.get_or_create_length(string),
-                from_integer(4, string.length_type())},
-    and_exprt{equal_exprt{string[0], from_integer('n', string[0].type())},
-              equal_exprt{string[1], from_integer('u', string[0].type())},
-              equal_exprt{string[2], from_integer('l', string[0].type())},
-              equal_exprt{string[3], from_integer('l', string[0].type())}}};
+  return equal_exprt{
+    arg[from_integer(0, arg.length_type())],
+    from_integer(kind, to_type_with_subtype(arg.content().type()).subtype())};
+}
+
+/// Expression which is true when the argument is null
+static exprt is_null(const array_string_exprt &string, array_poolt &)
+{
+  return kind_is(string, kind_null);
+}
+
+/// Axioms that \p res is \p text where \p condition holds.
+static exprt string_is_constant_if(
+  const exprt &condition,
+  const array_string_exprt &res,
+  const std::string &text,
+  array_poolt &array_pool)
+{
+  const typet &index_type = res.length_type();
+  const typet &char_type = to_type_with_subtype(res.content().type()).subtype();
+  exprt::operandst conjuncts{equal_exprt{
+    array_pool.get_or_create_length(res),
+    from_integer(text.size(), index_type)}};
+  for(std::size_t i = 0; i < text.size(); ++i)
+  {
+    conjuncts.push_back(equal_exprt{
+      res[from_integer(i, index_type)],
+      from_integer(static_cast<unsigned char>(text[i]), char_type)});
+  }
+  return implies_exprt{condition, conjunction(conjuncts)};
+}
+
+/// Axioms that \p res is \p source where \p condition holds.
+static void string_equals_if(
+  string_constraint_generatort &generator,
+  const exprt &condition,
+  const array_string_exprt &res,
+  const array_string_exprt &source,
+  string_constraintst &constraints,
+  message_handlert &message_handler)
+{
+  array_poolt &array_pool = generator.array_pool;
+  const exprt source_length = array_pool.get_or_create_length(source);
+  constraints.existential.push_back(implies_exprt{
+    condition,
+    equal_exprt{array_pool.get_or_create_length(res), source_length}});
+  const symbol_exprt qvar =
+    generator.fresh_symbol("QA_format_copy", res.length_type());
+  constraints.universal.emplace_back(
+    qvar,
+    zero_if_negative(source_length),
+    implies_exprt{condition, equal_exprt{res[qvar], source[qvar]}},
+    generator.ns,
+    message_handler);
+}
+
+/// The text of the argument \p arg, String.valueOf of it.
+static std::pair<array_string_exprt, string_constraintst> argument_text(
+  string_constraint_generatort &generator,
+  const array_string_exprt &arg)
+{
+  array_poolt &array_pool = generator.array_pool;
+  const typet &index_type = arg.length_type();
+  const array_string_exprt text = array_pool.fresh_string(
+    index_type, to_type_with_subtype(arg.content().type()).subtype());
+  auto result = generator.add_axioms_for_substring(
+    text,
+    arg,
+    from_integer(text_offset, index_type),
+    array_pool.get_or_create_length(arg));
+  return {text, std::move(result.second)};
 }
 
 /// Parse `s` and add axioms ensuring the output corresponds to the output of
@@ -132,9 +210,19 @@ add_axioms_for_format_specifier(
   switch(fs.conversion)
   {
   case format_specifiert::DECIMAL_INTEGER:
+  {
+    const exprt null = is_null(string_arg, array_pool);
+    const array_string_exprt digits =
+      array_pool.fresh_string(index_type, char_type);
     return_code = generator.add_axioms_for_string_of_int(
-      res, format_arg_from_string(string_arg, ID_int, array_pool), 0);
-    return {res, std::move(return_code.second)};
+      digits, format_arg_from_string(string_arg, ID_int, array_pool), 0);
+    constraints = std::move(return_code.second);
+    constraints.existential.push_back(
+      string_is_constant_if(null, res, "null", array_pool));
+    string_equals_if(
+      generator, not_exprt{null}, res, digits, constraints, message_handler);
+    return {res, std::move(constraints)};
+  }
   case format_specifiert::HEXADECIMAL_INTEGER:
   {
     // Java prints a negative value as the two's complement of its own type,
@@ -153,8 +241,11 @@ add_axioms_for_format_specifier(
         "String.format",
         "is not modelled for the format specifier %x of a negative value");
     }
+    const exprt null = is_null(string_arg, array_pool);
+    return_code.second.existential.push_back(
+      string_is_constant_if(null, res, "null", array_pool));
     return_code.second.existential.push_back(implies_exprt{
-      non_negative,
+      and_exprt{not_exprt{null}, non_negative},
       equal_exprt{
         array_pool.get_or_create_length(res),
         array_pool.get_or_create_length(digits)}});
@@ -163,32 +254,57 @@ add_axioms_for_format_specifier(
     return_code.second.universal.emplace_back(
       qvar,
       zero_if_negative(array_pool.get_or_create_length(digits)),
-      implies_exprt{non_negative, equal_exprt{res[qvar], digits[qvar]}},
+      implies_exprt{
+        and_exprt{not_exprt{null}, non_negative},
+        equal_exprt{res[qvar], digits[qvar]}},
       generator.ns,
       message_handler);
     return {res, std::move(return_code.second)};
   }
   case format_specifiert::CHARACTER:
   {
-    exprt arg_string = format_arg_from_string(string_arg, ID_char, array_pool);
-    array_string_exprt &string_expr = to_array_string_expr(arg_string);
-    // In the case the arg is null, the result will be equal to "null" and
-    // and otherwise we just take the 4th character of the string.
-    const exprt is_null_literal = is_null(string_expr, array_pool);
+    // null gives "null", a Character itself, and a Byte, Short or Integer
+    // the character of its code point: one char in the basic plane, a
+    // surrogate pair beyond it. (An invalid code point and other kinds
+    // throw, see add_axioms_for_format_error.)
+    const exprt null = is_null(string_arg, array_pool);
     constraints.existential.push_back(
-      equal_exprt{array_pool.get_or_create_length(res),
-                  if_exprt{is_null_literal,
-                           from_integer(4, index_type),
-                           from_integer(1, index_type)}});
+      string_is_constant_if(null, res, "null", array_pool));
+    const exprt value = format_arg_from_string(string_arg, ID_int, array_pool);
+    const exprt basic =
+      binary_relation_exprt{value, ID_le, from_integer(0xFFFF, value.type())};
+    const exprt single = and_exprt{
+      not_exprt{null}, or_exprt{kind_is(string_arg, kind_char), basic}};
     constraints.existential.push_back(implies_exprt{
-      is_null_literal,
-      and_exprt{equal_exprt{res[0], from_integer('n', char_type)},
-                equal_exprt{res[1], from_integer('u', char_type)},
-                equal_exprt{res[2], from_integer('l', char_type)},
-                equal_exprt{res[3], from_integer('l', char_type)}}});
+      single,
+      and_exprt{
+        equal_exprt{
+          array_pool.get_or_create_length(res), from_integer(1, index_type)},
+        equal_exprt{
+          res[from_integer(0, index_type)],
+          typecast_exprt{
+            string_arg[from_integer(4, index_type)], char_type}}}});
+    const minus_exprt offset{value, from_integer(0x10000, value.type())};
     constraints.existential.push_back(implies_exprt{
-      not_exprt{is_null_literal},
-      equal_exprt{res[0], typecast_exprt{string_expr[3], char_type}}});
+      and_exprt{
+        not_exprt{null}, kind_is(string_arg, kind_int), not_exprt{basic}},
+      conjunction(
+        {equal_exprt{
+           array_pool.get_or_create_length(res), from_integer(2, index_type)},
+         equal_exprt{
+           res[from_integer(0, index_type)],
+           typecast_exprt{
+             plus_exprt{
+               from_integer(0xD800, value.type()),
+               ashr_exprt{offset, from_integer(10, value.type())}},
+             char_type}},
+         equal_exprt{
+           res[from_integer(1, index_type)],
+           typecast_exprt{
+             plus_exprt{
+               from_integer(0xDC00, value.type()),
+               bitand_exprt{offset, from_integer(0x3FF, value.type())}},
+             char_type}}})});
     return {res, constraints};
   }
   case format_specifiert::BOOLEAN:
@@ -196,15 +312,15 @@ add_axioms_for_format_specifier(
       res, format_arg_from_string(string_arg, ID_boolean, array_pool));
     return {res, std::move(return_code.second)};
   case format_specifiert::STRING:
-  {
-    const exprt arg_string = string_arg;
-    const array_string_exprt string_expr = to_array_string_expr(arg_string);
-    return {std::move(string_expr), {}};
-  }
+    return argument_text(generator, string_arg);
   case format_specifiert::HASHCODE:
-    return_code = generator.add_axioms_for_string_of_int(
-      res, format_arg_from_string(string_arg, "hashcode", array_pool), 0);
-    return {res, std::move(return_code.second)};
+    // Integer.toHexString of the hash code, which is not modelled, or
+    // "null".
+    generator.approximation_warning(
+      "String.format", "is not modelled for the format specifier %h");
+    constraints.existential.push_back(string_is_constant_if(
+      is_null(string_arg, array_pool), res, "null", array_pool));
+    return {res, constraints};
   case format_specifiert::LINE_SEPARATOR:
     // TODO: the constant should depend on the system: System.lineSeparator()
     return_code = generator.add_axioms_for_constant(res, "\n");
@@ -262,9 +378,8 @@ add_axioms_for_format_specifier(
     "format specifier must belong to [bBhHsScCdoxXeEfgGaAtT%n]");
 }
 
-/// Deserialize an argument for format from \p string.
-/// \p id should be one of: string_expr, int, char, boolean.
-/// The primitive values are expected to all be encoded using 4 characters.
+/// Deserialize an argument for format from \p string (see kind_null).
+/// \p id should be one of: string_expr, int, boolean.
 /// The characters of `string` must be of type `unsignedbv_typet(16)`.
 static exprt format_arg_from_string(
   const array_string_exprt &string,
@@ -279,29 +394,30 @@ static exprt format_arg_from_string(
     return string;
   if(id == ID_int)
   {
-    // Assume the string has length 4
-    // (int64)string.content[0] << 48 | (int64) string.content[1] << 32 |
-    // (int64)string.content[2] << 16 | (int64) string.content[3]
+    // the value, from the characters after the kind
+    // (int64)string[1] << 48 | (int64)string[2] << 32 |
+    // (int64)string[3] << 16 | (int64)string[4]
     const signedbv_typet type{64};
+    const typet &index_type = string.length_type();
+    const auto at = [&](std::size_t i) {
+      return typecast_exprt{string[from_integer(i, index_type)], type};
+    };
     return bitor_exprt{
-      bitor_exprt{shl_exprt{typecast_exprt{string[0], type}, 48},
-                  shl_exprt{typecast_exprt{string[1], type}, 32}},
-      bitor_exprt{shl_exprt{typecast_exprt{string[2], type}, 16},
-                  typecast_exprt{string[3], type}}};
+      bitor_exprt{shl_exprt{at(1), 48}, shl_exprt{at(2), 32}},
+      bitor_exprt{shl_exprt{at(3), 16}, at(4)}};
   }
 
-  if(id == ID_char)
-  {
-    // Leave the string unchanged as the "null" string is used to represent null
-    return string;
-  }
   if(id == ID_boolean)
   {
-    // We assume the string has length exactly 4, if it is "null" return false
-    // and otherwise ignore the first 3 and return (bool)string.content[3]
-    return if_exprt{is_null(string, array_pool),
-                    false_exprt{},
-                    typecast_exprt{string[3], bool_typet()}};
+    // Java's %b: false for null and Boolean.FALSE, true for anything else.
+    return if_exprt{
+      is_null(string, array_pool),
+      false_exprt{},
+      if_exprt{
+        kind_is(string, kind_boolean),
+        typecast_exprt{
+          string[from_integer(4, string.length_type())], bool_typet()},
+        true_exprt{}}};
   }
   UNHANDLED_CASE;
 }
@@ -428,34 +544,35 @@ static std::pair<exprt, string_constraintst> add_axioms_for_format(
   return {maximum(result.first, return_code), std::move(constraints)};
 }
 
-static std::vector<mp_integer> deserialize_constant_int_arg(
-  const std::vector<mp_integer> serialized,
-  const unsigned base)
+/// The value of an encoded argument (see kind_null) as a long.
+static mp_integer eval_long_arg(const std::vector<mp_integer> &encoded)
 {
-  PRECONDITION(serialized.size() == 4);
-
-  // long value, to be used for other formats?
-  for(std::size_t i = 0; i < 4; i++)
+  PRECONDITION(encoded.size() >= text_offset);
+  for(std::size_t i = 1; i < text_offset; i++)
   {
     DATA_INVARIANT(
-      serialized[i] <= 0xFFFF,
-      "Component of serialized value to"
-      "format must be bounded by 0xFFFF");
+      encoded[i] <= 0xFFFF,
+      "Component of serialized value to format must be bounded by 0xFFFF");
   }
-
   const int64_t int64_value =
-    (serialized[0] << 48).to_long() | (serialized[1] << 32).to_long() |
-    (serialized[2] << 16).to_long() | serialized[3].to_long();
-  const mp_integer mp_integer_value{int64_value};
-  const std::string long_as_string = integer2string(mp_integer_value, base);
+    (encoded[1] << 48).to_long() | (encoded[2] << 32).to_long() |
+    (encoded[3] << 16).to_long() | encoded[4].to_long();
+  return mp_integer{int64_value};
+}
+
+static std::vector<mp_integer> deserialize_constant_int_arg(
+  const std::vector<mp_integer> encoded,
+  const unsigned base)
+{
+  const std::string long_as_string =
+    integer2string(eval_long_arg(encoded), base);
 
   return make_range(long_as_string).map([&](char c) { return mp_integer{c}; });
 }
 
 static bool eval_is_null(const std::vector<mp_integer> &string)
 {
-  return string.size() == 4 && string[0] == 'n' && string[1] == 'u' &&
-         string[2] == 'l' && string[3] == 'l';
+  return !string.empty() && string[0] == kind_null;
 }
 
 /// Return the string to replace the format specifier, as a vector of
@@ -511,16 +628,25 @@ static std::optional<std::vector<mp_integer>> eval_format_specifier(
   {
     if(eval_is_null(arg))
       return std::vector<mp_integer>{'n', 'u', 'l', 'l'};
-    return std::vector<mp_integer>{arg[3]};
+    if(arg[0] == kind_char)
+      return std::vector<mp_integer>{arg[4]};
+    const mp_integer code_point = eval_long_arg(arg);
+    if(code_point < 0 || code_point > 0x10FFFF)
+      return {};
+    if(code_point <= 0xFFFF)
+      return std::vector<mp_integer>{code_point};
+    const mp_integer offset = code_point - 0x10000;
+    return std::vector<mp_integer>{
+      0xD800 + offset / 1024, 0xDC00 + offset % 1024};
   }
   case format_specifiert::BOOLEAN:
   {
-    if(arg[3] == 1)
-      return std::vector<mp_integer>{'t', 'r', 'u', 'e'};
-    return std::vector<mp_integer>{'f', 'a', 'l', 's', 'e'};
+    if(eval_is_null(arg) || (arg[0] == kind_boolean && arg[4] == 0))
+      return std::vector<mp_integer>{'f', 'a', 'l', 's', 'e'};
+    return std::vector<mp_integer>{'t', 'r', 'u', 'e'};
   }
   case format_specifiert::STRING:
-    return arg;
+    return std::vector<mp_integer>{arg.begin() + text_offset, arg.end()};
   case format_specifiert::HASHCODE:
     return {};
   case format_specifiert::LINE_SEPARATOR:
@@ -589,7 +715,8 @@ std::optional<exprt> string_format_builtin_functiont::eval(
         if(!position.has_value())
           return {};
         auto arg_value = eval_string(inputs[*position], get_value);
-        if(!arg_value.has_value())
+        // (a missing argument is "", and Java throws)
+        if(!arg_value.has_value() || arg_value->size() < text_offset)
           return {};
         auto evaluated = eval_format_specifier(fs, *arg_value);
         if(!evaluated.has_value())
@@ -742,13 +869,19 @@ std::optional<exprt> length_for_format_specifier(
   case format_specifiert::CHARACTER:
   case format_specifiert::CHARACTER_UPPER:
   {
-    const exprt arg_string = format_arg_from_string(arg, ID_char, array_pool);
-    const array_string_exprt &string_expr = to_array_string_expr(arg_string);
-    // In the case the arg is null, the result will be equal to "null" and
-    // and otherwise we just take the 4th character of the string.
-    return if_exprt{is_null(string_expr, array_pool),
-                    from_integer(4, index_type),
-                    from_integer(1, index_type)};
+    // "null", one char, or a surrogate pair for a code point beyond the
+    // basic plane
+    const exprt value = format_arg_from_string(arg, ID_int, array_pool);
+    return if_exprt{
+      is_null(arg, array_pool),
+      from_integer(4, index_type),
+      if_exprt{
+        and_exprt{
+          kind_is(arg, kind_int),
+          binary_relation_exprt{
+            value, ID_gt, from_integer(0xFFFF, value.type())}},
+        from_integer(2, index_type),
+        from_integer(1, index_type)}};
   }
   case format_specifiert::BOOLEAN:
   case format_specifiert::BOOLEAN_UPPER:
@@ -759,12 +892,10 @@ std::optional<exprt> length_for_format_specifier(
   }
   case format_specifiert::STRING:
   case format_specifiert::STRING_UPPER:
-  {
-    const exprt arg_string =
-      format_arg_from_string(arg, "string_expr", array_pool);
-    const array_string_exprt string_expr = to_array_string_expr(arg_string);
-    return array_pool.get_or_create_length(string_expr);
-  }
+    // the text after the kind and the value
+    return minus_exprt{
+      array_pool.get_or_create_length(arg),
+      from_integer(text_offset, index_type)};
   case format_specifiert::HASHCODE:
     return {};
   case format_specifiert::LINE_SEPARATOR:
@@ -912,50 +1043,136 @@ exprt string_format_builtin_functiont::length_constraint() const
   return conjunction(constraints);
 }
 
-/// The number of arguments that the format string of Java's String.format
-/// uses: the largest argument index of a specifier that takes an argument,
-/// or the largest int for a `%<` specifier without a previous argument
-/// (Java throws MissingFormatArgumentException for both). For a format
-/// string that is not constant the result is any non-negative number.
-/// \param f: function application with a string argument
+/// Whether a conversion fits an argument, as Java's Formatter checks it, by
+/// the kind of the argument. (Whether an object of kind_other fits a
+/// numeric or date/time conversion depends on its class, a BigInteger for
+/// %d say, which the kind does not record: see add_axioms_for_format_error.)
+static exprt
+conversion_fits(const format_specifiert &fs, const array_string_exprt &arg)
+{
+  const auto any_of = [&](std::initializer_list<char> kinds)
+  {
+    exprt::operandst disjuncts;
+    for(const char k : kinds)
+      disjuncts.push_back(kind_is(arg, k));
+    return disjunction(disjuncts);
+  };
+  if(fs.dt)
+    return any_of({kind_null, kind_long});
+  switch(tolower(fs.conversion))
+  {
+  case format_specifiert::BOOLEAN:
+  case format_specifiert::STRING:
+  case format_specifiert::HASHCODE:
+    return true_exprt{};
+  case format_specifiert::CHARACTER:
+    return any_of({kind_null, kind_char, kind_int});
+  case format_specifiert::DECIMAL_INTEGER:
+  case format_specifiert::OCTAL_INTEGER:
+  case format_specifiert::HEXADECIMAL_INTEGER:
+    return any_of({kind_null, kind_int, kind_long});
+  case format_specifiert::SCIENTIFIC:
+  case format_specifiert::DECIMAL_FLOAT:
+  case format_specifiert::GENERAL:
+  case format_specifiert::HEXADECIMAL_FLOAT:
+    return any_of({kind_null, kind_float});
+  default:
+    return true_exprt{};
+  }
+}
+
+/// The first error of Java's String.format with a format string and the
+/// encoded arguments (see kind_null; "" for a missing argument), in the
+/// order of java.util.Formatter: an unknown conversion anywhere (-1), then
+/// for each specifier in turn a missing argument (-2), a conversion that
+/// does not fit its argument (the conversion character), and an invalid
+/// code point for %c (-3); 0 for none. For a format string that is not
+/// constant, and for conversions that depend on a class that the kind does
+/// not record, the result is unknown. Errors of flags, widths and
+/// precisions are not modelled.
+/// \param f: function application with the format string and ten
+///   arguments
 /// \return an integer expression
 std::pair<exprt, string_constraintst>
-string_constraint_generatort::add_axioms_for_format_argument_count(
+string_constraint_generatort::add_axioms_for_format_error(
   const function_application_exprt &f)
 {
-  PRECONDITION(f.arguments().size() == 1);
+  PRECONDITION(f.arguments().size() == 11);
   string_constraintst constraints;
   const array_string_exprt str = get_string_expr(array_pool, f.arguments()[0]);
+  std::vector<array_string_exprt> args;
+  for(std::size_t i = 1; i < f.arguments().size(); ++i)
+    args.push_back(get_string_expr(array_pool, f.arguments()[i]));
   const typet &return_type = f.type();
   const exprt length = array_pool.get_or_create_length(str);
-  if(length.is_constant() && str.content().id() == ID_array)
+  if(!length.is_constant() || str.content().id() != ID_array)
   {
-    const auto n = numeric_cast_v<std::size_t>(to_constant_expr(length));
-    const std::string format =
-      utf16_constant_array_to_java(to_array_expr(str.content()), n);
-    mp_integer count = 0;
-    for(const format_elementt &fe : parse_format_string(format))
-    {
-      if(!fe.is_format_specifier())
-        continue;
-      const format_specifiert &fs = fe.get_format_specifier();
-      if(!takes_argument(fs))
-        continue;
-      if(fs.unsupported || fs.index < 1)
-      {
-        // `%<` without a previous argument
-        count = to_signedbv_type(return_type).largest();
-        break;
-      }
-      count = std::max(count, mp_integer{fs.index});
-    }
-    return {from_integer(count, return_type), constraints};
+    approximation_warning(
+      "String.format", "only checks a constant format string");
+    return {fresh_symbol("format_error", return_type), constraints};
   }
-  approximation_warning(
-    "String.format", "only checks the arguments of a constant format string");
-  const symbol_exprt result =
-    fresh_symbol("format_argument_count", return_type);
-  constraints.existential.push_back(
-    binary_relation_exprt{result, ID_ge, from_integer(0, return_type)});
+  const auto n = numeric_cast_v<std::size_t>(to_constant_expr(length));
+  const std::vector<format_elementt> elements = parse_format_string(
+    utf16_constant_array_to_java(to_array_expr(str.content()), n));
+  for(const format_elementt &fe : elements)
+  {
+    if(fe.is_format_specifier() && fe.get_format_specifier().unknown_conversion)
+      return {from_integer(-1, return_type), constraints};
+  }
+
+  // The errors of the specifiers, the last first, so that the first one
+  // that fails gives the result.
+  exprt result = from_integer(0, return_type);
+  for(auto it = elements.rbegin(); it != elements.rend(); ++it)
+  {
+    if(!it->is_format_specifier())
+      continue;
+    const format_specifiert &fs = it->get_format_specifier();
+    if(!takes_argument(fs))
+      continue;
+    if(fs.unsupported || fs.index < 1 || fs.index > 10)
+    {
+      // `%<` without a previous argument, or beyond the arguments of the
+      // model
+      result = from_integer(-2, return_type);
+      continue;
+    }
+    const array_string_exprt &arg = args[fs.index - 1];
+    const exprt missing = equal_exprt{
+      array_pool.get_or_create_length(arg), from_integer(0, arg.length_type())};
+    exprt fits = conversion_fits(fs, arg);
+    // an object whose class is not recorded may fit a numeric or date/time
+    // conversion
+    const char lower = static_cast<char>(tolower(fs.conversion));
+    if(
+      fs.dt || lower == 'd' || lower == 'o' || lower == 'x' || lower == 'e' ||
+      lower == 'f' || lower == 'g' || lower == 'a')
+    {
+      fits = or_exprt{
+        fits, and_exprt{kind_is(arg, kind_other), fresh_symbol("format_fits")}};
+    }
+    result = if_exprt{
+      missing,
+      from_integer(-2, return_type),
+      if_exprt{
+        not_exprt{fits},
+        from_integer(fs.dt ? 't' : fs.conversion, return_type),
+        result}};
+    if(lower == 'c')
+    {
+      // a Byte, Short or Integer must be a valid code point
+      const exprt value = format_arg_from_string(arg, ID_int, array_pool);
+      const exprt invalid = and_exprt{
+        kind_is(arg, kind_int),
+        or_exprt{
+          binary_relation_exprt{value, ID_lt, from_integer(0, value.type())},
+          binary_relation_exprt{
+            value, ID_gt, from_integer(0x10FFFF, value.type())}}};
+      result = if_exprt{
+        and_exprt{not_exprt{missing}, fits, invalid},
+        from_integer(-3, return_type),
+        result};
+    }
+  }
   return {result, constraints};
 }
