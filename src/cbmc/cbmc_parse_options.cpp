@@ -266,6 +266,23 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
         "--python-unbounded-ints",
         "pass --z3 or --cvc5 (or another SMT backend, or --outfile)"};
     }
+    // The refined string operations are a SAT-side procedure: an SMT back end
+    // receives them as uninterpreted functions, so nothing is known about
+    // the strings of a Python program.
+    bool python_input = false;
+    for(const auto &arg : cmdline.args)
+      if(arg.size() >= 3 && arg.substr(arg.size() - 3) == ".py")
+        python_input = true;
+    if(
+      python_input && any_smt_solver && !cmdline.isset("outfile") &&
+      !cmdline.isset("python-smt-strings"))
+    {
+      log.warning()
+        << "an SMT back end does not interpret the refined Python string "
+           "operations: string values are unconstrained. Pass "
+           "--python-smt-strings (with --cvc5 or --z3) for strings."
+        << messaget::eom;
+    }
   }
   if(cmdline.isset("python-lazy-stubs"))
     options.set_option("python-lazy-stubs", true);

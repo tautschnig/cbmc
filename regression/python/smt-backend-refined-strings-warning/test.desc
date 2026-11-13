@@ -1,0 +1,12 @@
+CORE cvc5
+main.py
+--cvc5
+^EXIT=10$
+^SIGNAL=0$
+an SMT back end does not interpret the refined Python string operations
+^VERIFICATION FAILED$
+--
+--
+Without --python-smt-strings, an SMT back end receives the refined string
+operations as uninterpreted functions, so string facts do not verify; the
+user is told so.
