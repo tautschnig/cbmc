@@ -267,3 +267,71 @@ and set `METRICS_STEP=iteration` for exploratory runs so the final-versus-
 iteration split is real. Record an `iterations.csv` row per artefact when you
 commit it, with the invariant-version count — that number is the one this
 retrospective most wishes it had.
+
+## The activity split, rebuilt on evidence (2026-11-13)
+
+The split reported earlier in this note was marked not trustworthy and should
+not be quoted. This section replaces the method; `metrics/attribute.py`
+replaces `report.sh` for anything to do with human time.
+
+### What was wrong
+
+Durations came from the gap between consecutive journal events. Two
+consequences made the numbers describe something other than effort:
+
+* a long background verification was charged to whatever category happened to
+  precede it, so machine time appeared as human work;
+* a missed event charged everything up to the next one to the wrong category,
+  and an overnight gap became hours of "READ".
+
+### What replaces it
+
+Nothing is charged to a human category unless something independently
+observable happened: a journal event, a file written, or a commit. The rules:
+
+* **Machine intervals** come from `cbmc-runs.csv` and `tool-runs.csv`,
+  reconstructed as `[ts - wall_s, ts]` because the wrapper writes `ts` at
+  completion. They are removed from every human figure.
+* **Each piece of human evidence licenses a window** of plus or minus half the
+  idle gap around itself (default 15 minutes, so plus or minus 7.5). Windows
+  are **unioned, not summed**: ten file writes in one minute are one window,
+  not ten.
+* **Time with no evidence is reported as UNATTRIBUTED**, not folded into the
+  nearest category.
+* A machine run *completing* is **not** treated as evidence a person was
+  present. Including run boundaries inflated a synthetic test by half, which
+  is how the error was found.
+
+### Validation
+
+Checked against a synthetic case with a known answer: a one-hour span, a
+journal event at the start, a 30-minute CBMC run from +10 to +40 minutes, and
+a closing event. Expected machine 0.50 h and two 7.5-minute human windows;
+reported machine 0.50 h, `HARNESS` 0.25 h, `DOC` 0.12 h. A measurement tool
+nobody has tested is just another claim, which is the lesson this whole note
+keeps re-learning.
+
+### What it says about the work so far
+
+```
+span            2026-11-11 18:29 to 2026-11-13 07:56  (37.4 h elapsed)
+machine runs    160 (13.5 h inside journalled spans)
+evidenced human  2.84 h   TOOL 79.8%, DOC 9.9%, TRIAGE 9.1%, rest under 1%
+unattributed    21.08 h
+evidenced        43.7% of the elapsed span
+```
+
+**Under half the span is evidenced, so the category split describes a minority
+of it and the absolute hours are a lower bound on effort rather than a
+measurement.** The report prints that warning itself below 60%.
+
+The honest conclusion is about the instrument, not the work: journalling at 24
+events across 37 hours is too sparse to support a category breakdown, and the
+`TOOL`-heavy shape mostly reflects that benchmark runs were journalled while
+reading and harness edits often were not. The remedy is more frequent events,
+and the coverage percentage is now the thing to watch, because it says whether
+any of the rest can be believed.
+
+Two figures are unaffected, because they never depended on the journal: the
+89-commit and 186-hour elapsed counts, and the per-run machine costs in
+`cbmc-runs.csv`.
