@@ -261,6 +261,12 @@ deliberately, and say which you are doing.
 
 ## Added 2026-11-12: four traps from one harness
 
+*(The harness that produced these, `harness_doorbell.c`, duplicated the
+existing `harness_doorbell_budget.c` and its conclusion was wrong and has been
+retracted -- see the retraction note in `amzn-drivers-2026-11.md`. The four
+traps below are independent of that conclusion and still hold. The fifth,
+added at the end, is the one that actually mattered.)*
+
 The doorbell harness (`harness_doorbell.c`, F23) needed six rounds before it
 checked anything. Every round looked like a clean pass. All four causes are
 worth knowing because each produces *a proof that holds for want of anything
@@ -295,3 +301,11 @@ and written" -- failed to fail in rounds 1 to 5, and that was the only signal
 that the passing verdict meant nothing. A vacuity witness that merely says
 "some path reaches the end of the harness" would have passed all six rounds.
 Witness the specific state, not reachability.
+
+5. **Check whether a harness for this function already exists, and read what
+   its configurations assume.** The four traps above were paid for in a
+   harness that duplicated one already in the tree, whose configurations had
+   already separated the real ingredient from a degenerate case I then
+   reported as new. `run_all.sh` named the existing runner, in a comment at
+   the top of the file. An hour of reading would have saved the whole detour,
+   and the wrong finding that came out of it.
