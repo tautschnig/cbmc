@@ -1,0 +1,15 @@
+CORE broken-z3-smt-backend no-new-smt
+main.c
+--cvc5
+^\[main\.assertion\.1\] line \d+ array in union: SUCCESS$
+^\[main\.assertion\.2\] line \d+ struct array: SUCCESS$
+^\[main\.assertion\.3\] line \d+ fails: FAILURE$
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Reading an array member of a union converts the union's bits to an SMT-LIB
+array using (as const ...). CVC5 only accepts a constant value there, and
+rejected the formula when that value was the first element of the array.

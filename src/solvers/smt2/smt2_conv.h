@@ -234,6 +234,10 @@ protected:
   // unflatten() does the opposite.
   enum class wheret { BEGIN, END };
   void flatten2bv(const exprt &);
+  /// A constant of type \p type that \ref convert_expr can convert without
+  /// any prior declarations (as `(as const ...)` in CVC5 requires a constant
+  /// value), or an empty optional if there is none.
+  std::optional<exprt> constant_default_value(const typet &type) const;
   void unflatten(wheret, const typet &, unsigned nesting=0);
 
   // pointers

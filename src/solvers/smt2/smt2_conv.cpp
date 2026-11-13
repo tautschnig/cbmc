@@ -18,6 +18,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/c_types.h>
 #include <util/config.h>
 #include <util/exception_utils.h>
+#include <util/expr_initializer.h>
 #include <util/expr_iterator.h>
 #include <util/expr_util.h>
 #include <util/find_symbols.h>
@@ -5355,6 +5356,40 @@ void smt2_convt::flatten2bv(const exprt &expr)
     convert_expr(expr);
 }
 
+std::optional<exprt> smt2_convt::constant_default_value(const typet &type) const
+{
+  if(type.id() == ID_array)
+  {
+    auto element = constant_default_value(to_array_type(type).element_type());
+    if(!element.has_value())
+      return {};
+    return array_of_exprt{std::move(*element), to_array_type(type)};
+  }
+  else if(type.id() == ID_struct || type.id() == ID_struct_tag)
+  {
+    if(!use_datatypes)
+      return {};
+    const struct_typet &struct_type =
+      type.id() == ID_struct_tag ? ns.follow_tag(to_struct_tag_type(type))
+                                 : to_struct_type(type);
+    exprt::operandst operands;
+    operands.reserve(struct_type.components().size());
+    for(const auto &component : struct_type.components())
+    {
+      auto value = constant_default_value(component.type());
+      if(!value.has_value())
+        return {};
+      operands.push_back(std::move(*value));
+    }
+    return struct_exprt{std::move(operands), type};
+  }
+
+  auto zero = zero_initializer(type, source_locationt{}, ns);
+  if(zero.has_value() && zero->is_constant())
+    return zero;
+  return {};
+}
+
 void smt2_convt::unflatten(
   wheret where,
   const typet &type,
@@ -5387,11 +5422,20 @@ void smt2_convt::unflatten(
       mp_integer size =
         numeric_cast_v<mp_integer>(to_constant_expr(array_type.size()));
 
-      for(mp_integer i = 1; i < size; ++i)
+      // Build a constant array as the base, then set the elements via
+      // (store ...). The base is filled with element 0, so that only
+      // indices 1..N-1 need to be stored. CVC5, however, requires the value
+      // of `(as const ...)` to be a constant: use a constant default value
+      // there, and store all elements.
+      const std::optional<exprt> default_value =
+        use_as_const && solver == solvert::CVC5
+          ? constant_default_value(array_type.element_type())
+          : std::optional<exprt>{};
+      const mp_integer first_stored = default_value.has_value() ? 0 : 1;
+
+      for(mp_integer i = first_stored; i < size; ++i)
         out << "(store ";
 
-      // Build a constant array filled with element 0 as the base, then
-      // overwrite indices 1..N-1 via (store ...).
       if(use_as_const)
       {
         out << "((as const ";
@@ -5413,15 +5457,21 @@ void smt2_convt::unflatten(
         convert_type(array_type.index_type());
         out << ")) ";
       }
-      // use element at index 0 as default value
-      unflatten(wheret::BEGIN, array_type.element_type(), nesting + 1);
-      out << "((_ extract " << subtype_width - 1 << " "
-          << "0) ?ufop" << nesting << ")";
-      unflatten(wheret::END, array_type.element_type(), nesting + 1);
+      if(default_value.has_value())
+        convert_expr(*default_value);
+      else
+      {
+        // use element at index 0 as default value
+        unflatten(wheret::BEGIN, array_type.element_type(), nesting + 1);
+        out << "((_ extract " << subtype_width - 1 << " "
+            << "0) ?ufop" << nesting << ")";
+        unflatten(wheret::END, array_type.element_type(), nesting + 1);
+      }
       out << ") ";
 
-      std::size_t offset = subtype_width;
-      for(mp_integer i = 1; i < size; ++i, offset += subtype_width)
+      std::size_t offset =
+        numeric_cast_v<std::size_t>(first_stored) * subtype_width;
+      for(mp_integer i = first_stored; i < size; ++i, offset += subtype_width)
       {
         convert_expr(from_integer(i, array_type.index_type()));
         out << ' ';
