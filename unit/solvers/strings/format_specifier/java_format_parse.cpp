@@ -243,7 +243,7 @@ TEST_CASE(
       decorate(std::get<0>(c), std::get<1>(c), std::get<2>(c), {}) ==
       std::get<3>(c));
   }
-  // Java 8 prints %% without its width; the zeros of %a count the sign
+  // Java 8 to 10 print %% without its width; the zeros of %a count the sign
   // since Java 17
   REQUIRE(decorate("%5%", "%", false, {false, false}) == "%");
   REQUIRE(decorate("%5%", "%", false, {true, false}) == "    %");

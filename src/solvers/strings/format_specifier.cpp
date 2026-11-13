@@ -505,7 +505,7 @@ std::vector<java_format_print_versiont> java_format_print_versions()
   std::vector<java_format_print_versiont> versions;
   if(config.java.may_run_on(1, 10))
     versions.push_back({false, false});
-  if(config.java.may_run_on(9, 16))
+  if(config.java.may_run_on(11, 16))
     versions.push_back({true, false});
   if(config.java.may_run_on(17, 0))
     versions.push_back({true, true});
@@ -606,7 +606,7 @@ std::optional<std::string> java_format_decorate(
       ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
     }
   }
-  // appendJustified (Java 8 prints %% without it)
+  // appendJustified (Java 8 to 10 print %% without it)
   if(c == '%' && !version.percent_width)
     return body;
   if(width != -1 && static_cast<long>(body.size()) < width)

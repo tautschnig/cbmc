@@ -289,15 +289,14 @@ int java_format_flags(const std::string &flags, char conversion);
 /// differs.
 struct java_format_print_versiont
 {
-  /// Whether %% takes its width (since Java 9 or later: not in Java 8).
+  /// Whether %% takes its width (since Java 11: not in Java 8 to 10).
   bool percent_width = true;
   /// Whether the zeros of %a count the sign (since Java 17).
   bool hex_float_counts_sign = true;
 };
 
 /// The versions of the Java runtimes that may run the program (see
-/// configt::javat::may_run_on), Java 9 and 10 as either of their
-/// neighbours, which were not compared.
+/// configt::javat::may_run_on).
 std::vector<java_format_print_versiont> java_format_print_versions();
 
 /// What java.util.Formatter prints for a specifier, from its \p core: the

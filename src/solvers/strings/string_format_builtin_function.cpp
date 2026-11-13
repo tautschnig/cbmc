@@ -852,7 +852,7 @@ add_axioms_for_decorated_specifier(
       has(left_justify) ? p.concat({cased, spaces}) : p.concat({spaces, cased});
     if(c == '%')
     {
-      // Java 8 prints %% without its width
+      // Java 8 to 10 print %% without its width
       if(!versions_agree(&java_format_print_versiont::percent_width))
       {
         justified = p.choice(
