@@ -12,6 +12,16 @@ public class Test {
   public static void c5() { String r = String.format("%.3f", 1e-4); assert r.equals("0.000"); }
   public static void c5Bad() { String r = String.format("%.3f", 1e-4); assert !r.equals("0.000"); }
   public static void c6() { String r = String.format("%f", 1e23); assert r.equals("100000000000000000000000.000000"); }
+  public static void c6Java17() { String r = String.format("%f", 1e23); assert r.equals("99999999999999990000000.000000"); }
+  public static void c6Java17Bad() { String r = String.format("%f", 1e23); assert !r.equals("99999999999999990000000.000000"); }
+  public static void c6Any() { String r = String.format("%f", 1e23); assert r.equals("100000000000000000000000.000000") || r.equals("99999999999999990000000.000000"); }
+  public static void c6AnyBad() { String r = String.format("%f", 1e23); assert r.equals("100000000000000000000000.000000"); }
+  public static void toString23(double d) { if(d != 1e23) return; String r = Double.toString(d); assert r.equals("1.0E23"); }
+  public static void toString23Java17(double d) { if(d != 1e23) return; String r = Double.toString(d); assert r.equals("9.999999999999999E22"); }
+  public static void toString23Any(double d) { if(d != 1e23) return; String r = Double.toString(d); assert r.equals("1.0E23") || r.equals("9.999999999999999E22"); }
+  public static void toString23AnyBad(double d) { if(d != 1e23) return; String r = Double.toString(d); assert r.equals("1.0E23"); }
+  public static void indexZero() { String r = String.format("%0$s", "a"); assert r.equals("a"); }
+  public static void indexZeroBad() { String r = String.format("%0$s", "a"); assert !r.equals("a"); }
   public static void c6Bad() { String r = String.format("%f", 1e23); assert !r.equals("100000000000000000000000.000000"); }
   public static void c7() { String r = String.format("%.1f", Double.NaN); assert r.equals("NaN"); }
   public static void c7Bad() { String r = String.format("%.1f", Double.NaN); assert !r.equals("NaN"); }

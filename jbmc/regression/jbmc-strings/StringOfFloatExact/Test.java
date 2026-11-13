@@ -7,6 +7,7 @@ public class Test {
   public static void thirdBad(float f) { if(f != 1f/3) return; assert !String.valueOf(f).equals("0.33333334"); }
   public static void sci(float f) { if(f != 1e30f) return; assert String.valueOf(f).equals("1.0E30"); }
   public static void sciBad(float f) { if(f != 1e30f) return; assert !String.valueOf(f).startsWith("1.0E"); }
+  public static void negSciJava17(float f) { if(f != -1.5e10f) return; assert String.valueOf(f).equals("-1.50000005E10"); }
   public static void negSci(float f) { if(f != -1.5e10f) return; assert String.valueOf(f).equals("-1.5E10"); }
   public static void dbl(double d) { if(d != 1.0/3) return; assert String.valueOf(d).equals("0.3333333333333333"); }
   public static void dblBad(double d) { if(d != 1.0/3) return; assert !String.valueOf(d).equals("0.3333333333333333"); }

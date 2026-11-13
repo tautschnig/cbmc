@@ -6,6 +6,8 @@ Author: Diffblue Ltd.
 
 \*******************************************************************/
 
+#include <util/config.h>
+
 #include <solvers/strings/string_float_format.h>
 #include <testing-utils/use_catch.h>
 
@@ -105,7 +107,14 @@ TEST_CASE(
   "[core][solvers][strings][string_float_format]")
 {
   // The longest strings: those of the smallest values in plain notation, and
-  // of negative subnormals with 17 or 9 digits.
+  // of negative subnormals with 17 or 9 digits (also for Java 18 and
+  // earlier, whose 18 digits are only those of shorter strings).
+  const auto saved = config.java;
+  config.java.min_version = config.java.max_version = 17;
+  REQUIRE(
+    float_string_length_bounds(false, float_formatt::JAVA) ==
+    std::make_pair(std::size_t{3}, std::size_t{24}));
+  config.java.min_version = config.java.max_version = 19;
   REQUIRE(
     float_string_length_bounds(false, float_formatt::JAVA) ==
     std::make_pair(std::size_t{3}, std::size_t{24}));
@@ -120,6 +129,7 @@ TEST_CASE(
   REQUIRE(
     format_float(-std::numeric_limits<float>::min(), true, float_formatt::JAVA)
       .size() <= 15);
+  config.java = saved;
 }
 
 TEST_CASE("parse_float_string", "[core][solvers][strings][string_float_format]")
@@ -361,4 +371,24 @@ TEST_CASE(
   // 1 to 309 digits before the point and 2 after it, a sign, or NaN
   const std::vector<std::pair<std::size_t, std::size_t>> f{{3, 313}};
   REQUIRE(java_format_float_lengths('f', 2) == f);
+}
+
+TEST_CASE(
+  "format_float with the digits of Java 18 and earlier",
+  "[core][solvers][strings][string_float_format]")
+{
+  // The expected strings are those of Java 17 (as of Java 8 to 18; Java 19
+  // and later give 1.0E23 and 2.0E23).
+  const auto legacy = [](double d, bool single) {
+    return format_float(d, single, float_formatt::JAVA, java_digitst::LEGACY);
+  };
+  REQUIRE(legacy(2e-3, false) == "0.002");
+  REQUIRE(legacy(1e23, false) == "9.999999999999999E22");
+  REQUIRE(legacy(2e23, false) == "1.9999999999999998E23");
+  REQUIRE(legacy(4.9e-324, false) == "4.9E-324");
+  REQUIRE(legacy(-0.0, false) == "-0.0");
+  REQUIRE(legacy(1.0E7, false) == "1.0E7");
+  REQUIRE(legacy(9e9f, true) == "8.9999995E9");
+  REQUIRE(legacy(1.0f / 3, true) == "0.33333334");
+  REQUIRE(format_float(1e23, false, float_formatt::JAVA) == "1.0E23");
 }

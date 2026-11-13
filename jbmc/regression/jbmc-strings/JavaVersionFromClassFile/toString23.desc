@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.toString23 --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Test.class is compiled for Java 21 (javac --release 21), so only a runtime of Java 21 or later runs it: without --java-version, Double.toString(1e23) is 1.0E23. (The same with a class file of Java 8 is not proved, see StringFormatFloats/c6AnyBad and toString23AnyBad, and StringFormatErrors/flagsAnyBad.)

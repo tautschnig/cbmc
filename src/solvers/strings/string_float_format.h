@@ -35,17 +35,51 @@ enum class float_formatt
   PYTHON
 };
 
+/// The digits of the strings of floating-point values of Java.
+enum class java_digitst
+{
+  /// The shortest that distinguish the value (Double.toString of Java 19
+  /// and later, Formatter of Java 21 and later).
+  SHORTEST,
+  /// Those of FloatingDecimal (Double.toString of Java 18 and earlier,
+  /// Formatter of Java 20 and earlier), see java_floating_decimal.h.
+  LEGACY
+};
+
+/// The digits of Double.toString and Float.toString of the Java runtimes
+/// that may run the program (see configt::javat::may_run_on).
+std::vector<java_digitst> java_to_string_digits();
+
+/// The digits of %e, %f and %g of java.util.Formatter of the Java runtimes
+/// that may run the program.
+std::vector<java_digitst> java_formatter_digits();
+
 /// The representation of \p value in \p format. \p single_precision says
 /// whether \p value is a float, whose shortest digits that distinguish it
-/// are those among floats.
-std::string
-format_float(double value, bool single_precision, float_formatt format);
+/// are those among floats. \p digits says which digits the Java formats
+/// take.
+std::string format_float(
+  double value,
+  bool single_precision,
+  float_formatt format,
+  java_digitst digits = java_digitst::SHORTEST);
+
+/// format_float of \p value with each of the digits of
+/// java_to_string_digits (one for Python's format), without repetitions.
+std::vector<std::string> format_float_candidates(
+  double value,
+  bool single_precision,
+  float_formatt format);
 
 /// What java.util.Formatter of Java 21 and later prints for \p value with
 /// the conversion \p conversion ('e', 'f', 'g' or 'a') and the precision
 /// \p precision (-1 for none), without flags or width, in lower case. (Java
 /// 17 takes other digits for some values, as for Double.toString.)
-std::string java_format_float(double value, char conversion, int precision);
+std::string java_format_float(
+  double value,
+  char conversion,
+  int precision,
+  java_digitst digits = java_digitst::SHORTEST);
 
 /// The largest length of java_format_float with \p conversion and
 /// \p precision (an upper bound).
@@ -73,7 +107,8 @@ struct java_format_float_preimaget
 java_format_float_preimaget java_format_float_preimage(
   const std::string &text,
   char conversion,
-  int precision);
+  int precision,
+  java_digitst digits = java_digitst::SHORTEST);
 
 /// The smallest and the largest length of format_float of any value of the
 /// precision in \p format, special values included.
@@ -86,7 +121,8 @@ float_string_length_bounds(bool single_precision, float_formatt format);
 std::optional<double> parse_float_string(
   const std::string &text,
   bool single_precision,
-  float_formatt format);
+  float_formatt format,
+  java_digitst digits = java_digitst::SHORTEST);
 
 /// The length of the longest prefix of \p text that is a prefix of a string
 /// of the shape of format_float in \p format: digits, a point and digits,

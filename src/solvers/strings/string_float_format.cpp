@@ -13,8 +13,11 @@ Author: Diffblue Ltd.
 #include "string_float_format.h"
 
 #include <util/arith_tools.h>
+#include <util/config.h>
 #include <util/invariant.h>
 #include <util/mp_arith.h>
+
+#include "java_floating_decimal.h"
 
 #include <algorithm>
 #include <cctype>
@@ -233,8 +236,48 @@ static std::string python_scientific(const std::string &digits, int exponent)
   return result + std::to_string(magnitude);
 }
 
-std::string
-format_float(double value, bool single_precision, float_formatt format)
+std::vector<java_digitst> java_to_string_digits()
+{
+  std::vector<java_digitst> result;
+  if(config.java.may_run_on(1, 18))
+    result.push_back(java_digitst::LEGACY);
+  if(config.java.may_run_on(19, 0))
+    result.push_back(java_digitst::SHORTEST);
+  return result;
+}
+
+std::vector<java_digitst> java_formatter_digits()
+{
+  std::vector<java_digitst> result;
+  if(config.java.may_run_on(1, 20))
+    result.push_back(java_digitst::LEGACY);
+  if(config.java.may_run_on(21, 0))
+    result.push_back(java_digitst::SHORTEST);
+  return result;
+}
+
+std::vector<std::string> format_float_candidates(
+  double value,
+  bool single_precision,
+  float_formatt format)
+{
+  if(format == float_formatt::PYTHON)
+    return {format_float(value, single_precision, format)};
+  std::vector<std::string> result;
+  for(const java_digitst digits : java_to_string_digits())
+  {
+    std::string text = format_float(value, single_precision, format, digits);
+    if(std::find(result.begin(), result.end(), text) == result.end())
+      result.push_back(std::move(text));
+  }
+  return result;
+}
+
+std::string format_float(
+  double value,
+  bool single_precision,
+  float_formatt format,
+  java_digitst java_digits)
 {
   const bool negative = std::signbit(value);
   const double magnitude = std::fabs(value);
@@ -252,7 +295,9 @@ format_float(double value, bool single_precision, float_formatt format)
 
   int exponent;
   const std::string digits =
-    shortest_digits(magnitude, single_precision, !python, exponent);
+    !python && java_digits == java_digitst::LEGACY
+      ? legacy_java_digits(magnitude, single_precision, exponent)
+      : shortest_digits(magnitude, single_precision, !python, exponent);
   switch(format)
   {
   case float_formatt::JAVA_PLAIN:
@@ -429,8 +474,14 @@ static std::string hex_double(double d, int prec)
          std::to_string(std::stoi(text.substr(p + 1)) - 54);
 }
 
-std::string java_format_float(double value, char conversion, int precision)
+std::string java_format_float(
+  double value,
+  char conversion,
+  int precision,
+  java_digitst digits)
 {
+  if(digits == java_digitst::LEGACY && conversion != 'a')
+    return legacy_java_format_float(value, conversion, precision);
   if(std::isnan(value))
     return "NaN";
   const std::string sign = std::signbit(value) ? "-" : "";
@@ -708,7 +759,8 @@ static int compare_printed(
 java_format_float_preimaget java_format_float_preimage(
   const std::string &text,
   char conversion,
-  int precision)
+  int precision,
+  java_digitst digits)
 {
   java_format_float_preimaget result;
   if(text == "NaN")
@@ -728,7 +780,7 @@ java_format_float_preimaget java_format_float_preimage(
     double d;
     std::memcpy(&d, &bits, sizeof(d));
     const auto value = parse_printed_magnitude(
-      java_format_float(d, conversion, precision), conversion);
+      java_format_float(d, conversion, precision, digits), conversion);
     INVARIANT(value.has_value(), "java_format_float prints a magnitude");
     return *value;
   };
@@ -762,7 +814,7 @@ java_format_float_preimaget java_format_float_preimage(
   double d;
   std::memcpy(&d, &first, sizeof(d));
   // the target as it is printed, as text may differ (as "1.50" from "1.5")
-  if(java_format_float(d, conversion, precision) != magnitude_text)
+  if(java_format_float(d, conversion, precision, digits) != magnitude_text)
     return result;
   result.empty = false;
   result.low = d;
@@ -776,7 +828,11 @@ float_string_length_bounds(bool single_precision, float_formatt format)
 {
   // At most this many significant digits; decimal exponents of the first
   // digit from -min_exponent to max_exponent; and the longest exponent with
-  // its sign.
+  // its sign. (The digits of Java 18 and earlier have 18 digits for some
+  // doubles, those of the integers in [2^53, 2^63) that FloatingDecimal
+  // develops exactly, which are in scientific notation with an exponent of
+  // two digits, shorter than the longest. Measured: at most 24 characters
+  // for 20 million doubles and the powers of two, 15 for all floats.)
   const std::size_t digits = single_precision ? 9 : 17;
   const std::size_t min_exponent = single_precision ? 45 : 324;
   const std::size_t max_exponent = single_precision ? 38 : 308;
@@ -822,7 +878,8 @@ float_string_length_bounds(bool single_precision, float_formatt format)
 std::optional<double> parse_float_string(
   const std::string &text,
   bool single_precision,
-  float_formatt format)
+  float_formatt format,
+  java_digitst digits)
 {
   // The digits, points, exponents, signs and special words of the formats,
   // all of which strtod reads.
@@ -845,7 +902,7 @@ std::optional<double> parse_float_string(
                          : std::strtod(text.c_str(), &end);
   if(end != text.c_str() + text.size())
     return {};
-  if(format_float(value, single_precision, format) != text)
+  if(format_float(value, single_precision, format, digits) != text)
     return {};
   return value;
 }

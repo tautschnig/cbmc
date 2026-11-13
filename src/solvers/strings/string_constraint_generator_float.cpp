@@ -193,6 +193,8 @@ string_constraintst string_constraint_generatort::float_string_axioms(
   // floats in Java, 22 in Python. (JAVA_PLAIN is given the magnitude of
   // values of all ranges, but used for those of this range.)
   {
+    // (Java 18 and earlier takes 18 digits only for doubles of at least
+    // 2^53, beyond this range, see float_string_length_bounds.)
     const std::size_t digits = single ? 9 : 17;
     const exprt plain_range =
       python ? magnitude_in(1e-4, 1e16) : magnitude_in(1e-3, 1e7);
@@ -334,7 +336,17 @@ string_constraint_generatort::add_axioms_for_string_of_float(
     if(single || constant.spec == ieee_float_spect::double_precision())
     {
       const double d = single ? constant.to_float() : constant.to_double();
-      return add_axioms_for_constant(res, format_float(d, single, format));
+      // the string of each version of Java that may run the program
+      const std::vector<std::string> candidates =
+        format_float_candidates(d, single, format);
+      if(candidates.size() == 1)
+        return add_axioms_for_constant(res, candidates.front());
+      exprt::operandst disjuncts;
+      for(const std::string &text : candidates)
+        disjuncts.push_back(string_is(res, text, array_pool));
+      string_constraintst constraints;
+      constraints.existential.push_back(disjunction(disjuncts));
+      return {from_integer(0, get_return_code_type()), constraints};
     }
   }
   float_conversions.push_back({value, res, format});
@@ -356,11 +368,26 @@ string_constraint_generatort::add_axioms_for_java_format_float(
   const exprt simplified = simplify_expr(value, ns);
   if(simplified.is_constant())
   {
+    // the string of each version of Java that may run the program
     const ieee_float_valuet constant{to_constant_expr(simplified)};
-    return add_axioms_for_constant(
-             res,
-             java_format_float(constant.to_double(), conversion, precision))
-      .second;
+    std::vector<std::string> candidates;
+    for(const java_digitst digits : java_formatter_digits())
+    {
+      std::string text =
+        java_format_float(constant.to_double(), conversion, precision, digits);
+      if(
+        std::find(candidates.begin(), candidates.end(), text) ==
+        candidates.end())
+        candidates.push_back(std::move(text));
+    }
+    if(candidates.size() == 1)
+      return add_axioms_for_constant(res, candidates.front()).second;
+    exprt::operandst disjuncts;
+    for(const std::string &text : candidates)
+      disjuncts.push_back(string_is(res, text, array_pool));
+    string_constraintst constraints;
+    constraints.existential.push_back(disjunction(disjuncts));
+    return constraints;
   }
   float_conversiont conversion_record{value, res, float_formatt::JAVA};
   conversion_record.java_conversion = conversion;

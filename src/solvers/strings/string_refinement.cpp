@@ -1638,10 +1638,20 @@ bool string_refinementt::check_float_conversions()
         all_right = false;
       continue;
     }
-    const std::string expected = format_float(
-      single ? constant.to_float() : constant.to_double(),
-      single,
-      conversion.format);
+    // the string of each version of Java that may run the program (see
+    // java_to_string_digits), the first as the one of the lemmas
+    const double source_value =
+      single ? constant.to_float() : constant.to_double();
+    const std::vector<std::string> candidates =
+      format_float_candidates(source_value, single, conversion.format);
+    const std::string &expected = candidates.front();
+    // whether the digits of Java 18 and earlier are possible, which do not
+    // follow the decades at their bounds (as 9.999999999999999E22 for 1e23)
+    const auto java_digits = java_to_string_digits();
+    const bool legacy =
+      conversion.format != float_formatt::PYTHON &&
+      std::find(java_digits.begin(), java_digits.end(), java_digitst::LEGACY) !=
+        java_digits.end();
 
     const array_string_exprt &result = conversion.result;
     const exprt length = generator.array_pool.get_or_create_length(result);
@@ -1676,8 +1686,13 @@ bool string_refinementt::check_float_conversions()
         }
       }
     }
-    if(actual == expected)
+    if(
+      actual.has_value() &&
+      std::find(candidates.begin(), candidates.end(), *actual) !=
+        candidates.end())
+    {
       continue;
+    }
 
     log.debug() << "string refinement: the string of a floating-point value "
                 << "is " << (actual.has_value() ? *actual : "unknown")
@@ -1696,12 +1711,15 @@ bool string_refinementt::check_float_conversions()
       }
       return conjunction(conjuncts);
     };
+    exprt::operandst candidate_strings;
+    for(const std::string &text : candidates)
+      candidate_strings.push_back(string_is(text));
     add_lemma(implies_exprt{
       and_exprt{conversion.guard, equal_exprt{conversion.value, value}},
-      string_is(expected)});
+      disjunction(candidate_strings)});
     add_lemma(implies_exprt{
       conversion.guard,
-      float_decade_lemma(conversion, constant, single, expected)});
+      float_decade_lemma(conversion, constant, single, expected, legacy)});
     if(actual.has_value())
     {
       add_lemma(implies_exprt{
@@ -1727,8 +1745,17 @@ bool string_refinementt::check_float_conversions()
     };
     if(actual.has_value())
     {
-      const std::optional<double> source =
-        parse_float_string(*actual, single, conversion.format);
+      // (any of the digits that may give it, all of which read the string
+      // as the same value)
+      std::optional<double> source;
+      for(const java_digitst digits : java_digits)
+      {
+        if(!source.has_value())
+          source =
+            parse_float_string(*actual, single, conversion.format, digits);
+      }
+      if(conversion.format == float_formatt::PYTHON)
+        source = parse_float_string(*actual, single, conversion.format);
       exprt from_source = false_exprt{};
       if(source.has_value() && std::isnan(*source))
         from_source = isnan_exprt{conversion.value};
@@ -1785,15 +1812,20 @@ bool string_refinementt::check_float_conversions()
         // offers the next model a consistent pair near this one.
         if(source.has_value() && !std::isnan(*source))
         {
-          const std::string source_string =
-            format_float(*source, single, conversion.format);
-          if(source_string != *actual)
+          const std::vector<std::string> source_strings =
+            format_float_candidates(*source, single, conversion.format);
+          if(
+            std::find(source_strings.begin(), source_strings.end(), *actual) ==
+            source_strings.end())
           {
-            const exprt source_value = to_equal_expr(from_source).rhs();
+            const exprt read_value = to_equal_expr(from_source).rhs();
+            exprt::operandst disjuncts;
+            for(const std::string &text : source_strings)
+              disjuncts.push_back(string_is(text));
             add_lemma(implies_exprt{
               and_exprt{
-                conversion.guard, equal_exprt{conversion.value, source_value}},
-              string_is(source_string)});
+                conversion.guard, equal_exprt{conversion.value, read_value}},
+              disjunction(disjuncts)});
           }
         }
       }
@@ -1834,10 +1866,8 @@ bool string_refinementt::check_java_format_float(
   const string_constraint_generatort::float_conversiont &conversion,
   const ieee_float_valuet &constant)
 {
-  const std::string expected = java_format_float(
-    constant.to_double(),
-    conversion.java_conversion,
-    conversion.java_precision);
+  // the digits of the versions of Java that may run the program
+  const std::vector<java_digitst> digits = java_formatter_digits();
   const array_string_exprt &result = conversion.result;
   const exprt length = generator.array_pool.get_or_create_length(result);
   const typet &index_type = result.length_type();
@@ -1859,18 +1889,31 @@ bool string_refinementt::check_java_format_float(
     }
     return conjunction(conjuncts);
   };
-  std::vector<mp_integer> expected_characters;
-  for(const char c : expected)
-    expected_characters.emplace_back(static_cast<unsigned char>(c));
-  if(actual == expected_characters)
+  exprt::operandst expected;
+  bool right = false;
+  for(const java_digitst d : digits)
+  {
+    std::vector<mp_integer> characters;
+    for(const char c : java_format_float(
+          constant.to_double(),
+          conversion.java_conversion,
+          conversion.java_precision,
+          d))
+    {
+      characters.emplace_back(static_cast<unsigned char>(c));
+    }
+    right = right || actual == characters;
+    expected.push_back(string_is(characters));
+  }
+  if(right)
     return true;
-  log.debug() << "string refinement: a float of String.format is " << expected
-              << " rather than another string in the model" << messaget::eom;
-  // This value gives this string.
+  log.debug() << "string refinement: a float of String.format is another "
+              << "string than in the model" << messaget::eom;
+  // This value gives these strings.
   add_lemma(implies_exprt{
     and_exprt{
       conversion.guard, equal_exprt{conversion.value, constant.to_expr()}},
-    string_is(expected_characters)});
+    disjunction(expected)});
   if(
     !actual.has_value() ||
     actual->size() > java_format_float_max_length(
@@ -1879,32 +1922,36 @@ bool string_refinementt::check_java_format_float(
     return false;
   }
   // And the string in the model comes only from the values that give it
-  // (none for a character beyond ASCII).
+  // (none for a character beyond ASCII), with any of the digits.
   std::string text;
   for(const mp_integer &c : *actual)
     text.push_back(c > 0 && c < 128 ? static_cast<char>(c.to_ulong()) : '\x01');
-  const java_format_float_preimaget preimage = java_format_float_preimage(
-    text, conversion.java_conversion, conversion.java_precision);
   const exprt &value = conversion.value;
-  exprt from_preimage = false_exprt{};
-  if(preimage.nan)
-    from_preimage = isnan_exprt{value};
-  else if(!preimage.empty)
+  exprt::operandst from_preimages;
+  for(const java_digitst d : digits)
   {
-    // the magnitude in [low, high], so the value in [-high, -low] for a
-    // negative one; and the sign, as -0.0 == 0.0
-    ieee_float_valuet low;
-    low.from_double(preimage.negative ? -preimage.high : preimage.low);
-    ieee_float_valuet high;
-    high.from_double(preimage.negative ? -preimage.low : preimage.high);
-    const exprt negative = sign_exprt{value};
-    from_preimage = conjunction(
-      {preimage.negative ? negative : not_exprt{negative},
-       binary_relation_exprt{value, ID_ge, low.to_expr()},
-       binary_relation_exprt{value, ID_le, high.to_expr()}});
+    const java_format_float_preimaget preimage = java_format_float_preimage(
+      text, conversion.java_conversion, conversion.java_precision, d);
+    if(preimage.nan)
+      from_preimages.push_back(isnan_exprt{value});
+    else if(!preimage.empty)
+    {
+      // the magnitude in [low, high], so the value in [-high, -low] for a
+      // negative one; and the sign, as -0.0 == 0.0
+      ieee_float_valuet low;
+      low.from_double(preimage.negative ? -preimage.high : preimage.low);
+      ieee_float_valuet high;
+      high.from_double(preimage.negative ? -preimage.low : preimage.high);
+      const exprt negative = sign_exprt{value};
+      from_preimages.push_back(conjunction(
+        {preimage.negative ? negative : not_exprt{negative},
+         binary_relation_exprt{value, ID_ge, low.to_expr()},
+         binary_relation_exprt{value, ID_le, high.to_expr()}}));
+    }
   }
   add_lemma(implies_exprt{
-    and_exprt{conversion.guard, string_is(*actual)}, from_preimage});
+    and_exprt{conversion.guard, string_is(*actual)},
+    disjunction(from_preimages)});
   return false;
 }
 
@@ -2008,7 +2055,8 @@ exprt string_refinementt::float_decade_lemma(
   const string_constraint_generatort::float_conversiont &conversion,
   const ieee_float_valuet &value,
   bool single,
-  const std::string &expected)
+  const std::string &expected,
+  bool legacy)
 {
   // Java's scientific notation only: [-]d.dddE[-]e
   if(
@@ -2056,12 +2104,21 @@ exprt string_refinementt::float_decade_lemma(
   const typet &char_type =
     to_type_with_subtype(result.content().type()).subtype();
   const exprt &v = conversion.value;
+  // The digits of Java 18 and earlier are not the shortest, but they read
+  // as the value (checked on 8 million values), and reading is monotone: a
+  // string below d * 10^e reads as at most the nearest value to it, one of
+  // (d + 1) * 10^e or above as at least the nearest to that. So the values
+  // strictly between those nearest values have strings of the decade.
+  // (Strictly above the lower: 1e23 gives 9.999999999999999E22.)
+  const irep_idt lower_relation = legacy ? ID_gt : ID_ge;
+  const irep_idt minus_lower_relation = legacy ? ID_lt : ID_le;
   const exprt in_range =
     negative ? and_exprt{
-                 binary_relation_exprt{v, ID_le, minus_lower.to_expr()},
+                 binary_relation_exprt{
+                   v, minus_lower_relation, minus_lower.to_expr()},
                  binary_relation_exprt{v, ID_gt, minus_upper.to_expr()}}
              : and_exprt{
-                 binary_relation_exprt{v, ID_ge, lower.to_expr()},
+                 binary_relation_exprt{v, lower_relation, lower.to_expr()},
                  binary_relation_exprt{v, ID_lt, upper.to_expr()}};
   // d.ddd...E<exponent>: the leading digit, the point, digits, and the
   // exponent of the decade at the end

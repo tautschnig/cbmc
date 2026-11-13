@@ -1,9 +1,10 @@
 CORE
 Test
---function Test.negSci --max-nondet-string-length 30 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+--function Test.negSci --java-version 19 --max-nondet-string-length 30 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
 --
 Negative values in scientific notation.
+With --java-version 19: Java 8 to 18 give -1.50000005E10 (see negSciJava17).

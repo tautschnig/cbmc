@@ -232,11 +232,15 @@ private:
     const ieee_float_valuet &value,
     bool single,
     const std::string &actual);
+  /// \param legacy: whether the digits of Java 18 and earlier are possible
+  ///   (see java_digitst), for which the lower bound of the decade is
+  ///   excluded
   exprt float_decade_lemma(
     const string_constraint_generatort::float_conversiont &conversion,
     const ieee_float_valuet &value,
     bool single,
-    const std::string &expected);
+    const std::string &expected,
+    bool legacy);
   /// Explain an ERROR of the propositional solver, which ends the
   /// refinement.
   void warn_propositional_error();

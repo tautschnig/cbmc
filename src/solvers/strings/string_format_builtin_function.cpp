@@ -821,8 +821,17 @@ static std::optional<std::vector<mp_integer>> eval_format_specifier(
     const auto bits = static_cast<std::uint64_t>(eval_long_arg(arg).to_long());
     double value;
     std::memcpy(&value, &bits, sizeof(value));
-    return characters(
-      java_format_float(value, fs.conversion, fs.precision), false);
+    // unknown where the versions of Java that may run the program differ
+    std::optional<std::string> text;
+    for(const java_digitst digits : java_formatter_digits())
+    {
+      std::string t =
+        java_format_float(value, fs.conversion, fs.precision, digits);
+      if(text.has_value() && *text != t)
+        return {};
+      text = std::move(t);
+    }
+    return characters(*text, false);
   }
   case format_specifiert::CHARACTER:
   {

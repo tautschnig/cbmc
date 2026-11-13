@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.toString23 --max-nondet-string-length 20 --java-version 19 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Double.toString(1e23) is 1.0E23 in Java 19 and later.
