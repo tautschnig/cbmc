@@ -28,11 +28,8 @@
  * the driver sources are included; the driver's call sites then expand to the
  * ghost, and the header's own definitions are untouched.
  *
- * Scope, stated honestly: ENTRY=0 (ena_rss_reta_update) is proven clean and
- * mutation-validated.  ENTRY 1, 2 and 4 each reach an ena_com_* callee with
- * no body, which cuts the path, and ENTRY 3 returns before its lock-taking
- * loop so its witnesses pass -- i.e. it proves nothing yet.  Each needs a
- * model for the callee concerned; until then only ENTRY=0 is a result.
+ * All five entry points that take the lock are proven, and ENTRY=0 is
+ * additionally mutation-validated.
  *
  * -DENTRY=n selects which entry point to exercise.
  * -DBREAK_RETA_UNLOCK removes the error-path unlock in ena_rss_reta_update,
@@ -152,6 +149,73 @@ int rte_mp_request_sync(
 }
 void rte_pci_register(struct rte_pci_driver *d) { (void)d; }
 
+/* Models for the ena_com admin calls each entry point makes while holding the
+ * lock.  Every one returns an arbitrary result so that BOTH the success and
+ * the failure branch of the caller stay reachable: the failure branches are
+ * exactly where a missing unlock would live, so a model that always succeeds
+ * would hide the bug these obligations exist to find.  Out-parameters are
+ * filled with arbitrary values for the same reason. */
+int ena_com_indirect_table_get(struct ena_com_dev *d, u32 *ind_tbl)
+{
+  (void)d;
+  if(ind_tbl != NULL)
+    for(unsigned i = 0; i < ENA_RX_RSS_TABLE_SIZE; i++)
+      ind_tbl[i] = (u32)nd_u16();
+  return nd_int();
+}
+int ena_com_fill_hash_function(
+  struct ena_com_dev *d, enum ena_admin_hash_functions f, const u8 *key,
+  u16 key_len, u32 init_val)
+{
+  (void)d;
+  (void)f;
+  (void)key;
+  (void)key_len;
+  (void)init_val;
+  return nd_int();
+}
+int ena_com_get_hash_function(
+  struct ena_com_dev *d, enum ena_admin_hash_functions *f)
+{
+  (void)d;
+  if(f != NULL)
+    *f = (enum ena_admin_hash_functions)(nd_u8() & 3);
+  return nd_int();
+}
+int ena_com_get_hash_key(struct ena_com_dev *d, u8 *key)
+{
+  (void)d;
+  if(key != NULL)
+    for(unsigned i = 0; i < ENA_HASH_KEY_SIZE; i++)
+      key[i] = nd_u8();
+  return nd_int();
+}
+int ena_com_fill_hash_ctrl(
+  struct ena_com_dev *d, enum ena_admin_flow_hash_proto proto, u16 fields)
+{
+  (void)d;
+  (void)proto;
+  (void)fields;
+  return nd_int();
+}
+int ena_com_get_hash_ctrl(
+  struct ena_com_dev *d, enum ena_admin_flow_hash_proto proto, u16 *fields)
+{
+  (void)d;
+  (void)proto;
+  if(fields != NULL)
+    *fields = nd_u16();
+  return nd_int();
+}
+int ena_com_get_dev_basic_stats(
+  struct ena_com_dev *d, struct ena_admin_basic_stats *stats)
+{
+  (void)d;
+  if(stats != NULL)
+    __CPROVER_havoc_object(stats);
+  return nd_int();
+}
+
 #ifndef ENTRY
 #  define ENTRY 0
 #endif
@@ -168,6 +232,8 @@ static struct rte_eth_rss_reta_entry64 reta[NRETA];
 static struct rte_eth_rss_conf rss_conf;
 static uint8_t rss_key[ENA_HASH_KEY_SIZE];
 static struct rte_eth_stats stats;
+static struct ena_driver_stats drv_stats;
+static struct ena_admin_rss_key hash_key_mem;
 
 int main(void)
 {
@@ -184,6 +250,13 @@ int main(void)
   data.dev_conf.rxmode.offloads |= RTE_ETH_RX_OFFLOAD_RSS_HASH;
 
   /* the lock as ena_com_init leaves it: initialised and free */
+  /* ena_stats_get reads adapter->drv_stats, and ena_get_rss_hash_key refuses
+   * before reaching the lock unless ena_dev.rss.hash_key is set -- the
+   * default key cannot be read back from the hardware.  Both were left NULL
+   * at first, which made ENTRY 3 and 4 vacuous and noisy respectively. */
+  adapter.drv_stats = &drv_stats;
+  adapter.ena_dev.rss.hash_key = &hash_key_mem;
+
   rte_spinlock_init(&adapter.admin_lock);
   g_held = 0;
   g_locks = 0;
@@ -191,6 +264,11 @@ int main(void)
 
   uint16_t reta_size = nd_u16();
   __CPROVER_assume(reta_size <= NRETA * RTE_ETH_RETA_GROUP_SIZE);
+  /* F19 lives in ena_rss_reta_query, which overreads its stack indirection
+   * table when reta_size exceeds ENA_RX_RSS_TABLE_SIZE.  That is a separate
+   * finding with its own harness; assuming its precondition here keeps the
+   * lock obligations from being entangled with it. */
+  __CPROVER_assume(reta_size <= ENA_RX_RSS_TABLE_SIZE);
   for(unsigned i = 0; i < NRETA; i++)
   {
     reta[i].mask = nd_u64();

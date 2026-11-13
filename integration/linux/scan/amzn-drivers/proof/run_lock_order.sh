@@ -27,11 +27,11 @@ for f in eth_ena_prep_pkts eth_ena_xmit_pkts eth_ena_recv_pkts ena_xmit_mbuf \
 # vacuous.  The EAL primitives it calls are modelled in the harness instead.
 F="--unwind ${UNWIND:-300} $SOLVER --max-field-sensitivity-array-size 256 \
   --slice-formula --unwinding-assertions"
-# Default to the one entry point that is a clean result.  1, 2 and 4 reach a
-# bodyless ena_com_* callee (path cut); 3 returns before its lock-taking loop
-# and its witnesses pass, so it proves nothing.  Run them with
-# ENTRIES="0 1 2 3 4" to see the gaps; they are not claimed as proofs.
-for E in ${ENTRIES:-0}; do
+# All five entry points.  The ena_com_* admin calls each makes while holding
+# the lock are modelled in the harness with arbitrary returns, so both the
+# success and the failure branch stay reachable -- the failure branches are
+# where a missing unlock would live.
+for E in ${ENTRIES:-0 1 2 3 4}; do
  for cfg in "ok:" "mutated:-DBREAK_RETA_UNLOCK"; do
   n=${cfg%%:*}; d=${cfg#*:}
   [ "$n" = mutated ] && [ "$E" != 0 ] && continue

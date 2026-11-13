@@ -20,7 +20,9 @@
 #   4. unwinding assertions present and none failing
 #   5. no unexpected failing property
 #   6. if a vacuity log is given, it must contain witnesses and every witness
-#      must FAIL
+#      must FAIL.  Any label mentioning a witness counts: the conventions in
+#      the tree include "vacuity witness: ", "witness: " and "zero-length
+#      witness: ", and matching only the first silently rejected valid claims
 #
 # Exit 0 if the claim stands, 1 if it does not, 2 on usage error.
 set -u
@@ -85,7 +87,7 @@ else
 fi
 
 # 5. failing properties
-pat='vacuity witness'
+pat='\bwitness\b'
 for a in ${allow+"${allow[@]}"}; do pat="$pat|$a"; done
 [ "$mode" = refuted ] && pat="$pat|$expect"
 n=$(grep -E ': FAILURE$' "$main" | grep -vcE "$pat" || true)
@@ -109,14 +111,14 @@ if [ -n "$vac" ]; then
   if [ ! -f "$vac" ]; then
     bad "no such vacuity log: $vac"
   else
-    w=$(grep -cE 'vacuity witness' "$vac" || true)
+    w=$(grep -cE '\bwitness\b' "$vac" || true)
     if [ "$w" -eq 0 ]; then
       bad "the vacuity log contains no witness: nothing establishes that the state the property describes can arise"
     else
-      p=$(grep -E 'vacuity witness.*: SUCCESS$' "$vac" | wc -l)
+      p=$(grep -E '\bwitness\b.*: SUCCESS$' "$vac" | wc -l)
       [ "$p" -eq 0 ] && say ok "$w vacuity witness(es), all FAILING as they must" || {
         bad "$p witness(es) did NOT fail -- the state they describe may be unreachable, so the proof can be empty:"
-        grep -E 'vacuity witness.*: SUCCESS$' "$vac" | sed 's/^/           /' | head -5
+        grep -E '\bwitness\b.*: SUCCESS$' "$vac" | sed 's/^/           /' | head -5
       }
     fi
   fi
