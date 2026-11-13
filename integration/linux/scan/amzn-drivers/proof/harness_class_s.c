@@ -134,6 +134,37 @@ int ena_com_indirect_table_get(struct ena_com_dev *d, u32 *t)
       t[i] = 0;
   return nd_int();
 }
+/* the interrupt teardown ena_stop performs; not what is under test here */
+int rte_intr_disable(const struct rte_intr_handle *h)
+{
+  (void)h;
+  return 0;
+}
+int rte_intr_enable(const struct rte_intr_handle *h)
+{
+  (void)h;
+  return 0;
+}
+int rte_intr_efd_disable(struct rte_intr_handle *h)
+{
+  (void)h;
+  return 0;
+}
+void rte_intr_vec_list_free(struct rte_intr_handle *h) { (void)h; }
+void rte_timer_stop_sync(struct rte_timer *t) { (void)t; }
+
+int ena_com_dev_reset(struct ena_com_dev *d, enum ena_regs_reset_reason_types r)
+{
+  (void)d;
+  (void)r;
+  g_asked++;
+  if(nd_int())
+  {
+    g_refused++;
+    return ENA_COM_TIMER_EXPIRED;
+  }
+  return 0;
+}
 void ena_com_unmask_intr(struct ena_com_io_cq *cq, struct ena_eth_io_intr_reg *r)
 {
   (void)cq;
@@ -190,6 +221,39 @@ int main(void)
     rc != 0 || g_refused == 0,
     "SM_RETA_RC: ena_rss_reta_update returns 0 only if the device accepted "
     "every entry it was asked for");
+#elif ENTRY == 3
+  /* ---- dev_stop ----
+   *
+   * ena_stop asks the device to reset when a reset was requested, logs any
+   * failure, and then returns 0 unconditionally (ena_ethdev.c:1382-1405):
+   *
+   *     if (adapter->trigger_reset) {
+   *             rc = ena_com_dev_reset(ena_dev, adapter->reset_reason);
+   *             if (rc)
+   *                     PMD_DRV_LOG_LINE(ERR, "Device reset failed, rc: %d", rc);
+   *     }
+   *     ...
+   *     return 0;
+   *
+   * It then disables the interrupt, frees the vector list and marks every
+   * queue STOPPED.  So the application is told the port stopped cleanly while
+   * the device may still be running. */
+  /* rte_intr_handle is opaque in the public API, so it cannot be declared
+   * directly; a byte array stands in, as in harness_setup_rx_intr.c.  Nothing
+   * here dereferences it -- the rte_intr_* calls are modelled. */
+  static struct rte_pci_device stop_pci;
+  static uint8_t stop_handle_storage[256];
+  stop_pci.intr_handle = (struct rte_intr_handle *)stop_handle_storage;
+  dev.device = &stop_pci.device;
+  adapter.trigger_reset = true;
+  adapter.reset_reason = ENA_REGS_RESET_OS_TRIGGER;
+  data.nb_rx_queues = 0;
+  data.nb_tx_queues = 0;
+  rc = ena_stop(&dev);
+  __CPROVER_assert(
+    rc != 0 || g_refused == 0,
+    "SM_STOP_RC: ena_stop returns 0 only if a requested device reset "
+    "actually succeeded");
 #else
   /* ---- rx_queue_intr_enable ----
    *
@@ -218,7 +282,8 @@ int main(void)
   __CPROVER_assert(g_asked == 0, "witness: the device can be asked");
 #  if ENTRY != 2
   __CPROVER_assert(g_refused == 0, "witness: the device can refuse");
-#  else
+#  endif
+#  if ENTRY == 2
   __CPROVER_assert(started, "witness: an unstarted queue is reachable");
 #  endif
 #endif

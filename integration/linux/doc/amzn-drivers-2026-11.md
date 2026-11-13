@@ -1471,6 +1471,70 @@ flow through `eth_ena_dev_init` that reaches them is the driver's own, and the
 missing `goto` is plain in the source, so the modelling affects how the leak
 is *observed*, not whether it is there.
 
+## F26: `ena_stop` reports success when the device reset it asked for failed (DPDK ENA)
+
+Found by the class S sweep over the `eth_dev_ops` setters.
+
+When a reset has been requested, `ena_stop` asks the device to reset, logs any
+failure, and then ignores it (`ena_ethdev.c:1382-1405`):
+
+```c
+if (adapter->trigger_reset) {
+        rc = ena_com_dev_reset(ena_dev, adapter->reset_reason);
+        if (rc)
+                PMD_DRV_LOG_LINE(ERR, "Device reset failed, rc: %d", rc);
+}
+
+rte_intr_disable(intr_handle);
+rte_intr_efd_disable(intr_handle);
+rte_intr_vec_list_free(intr_handle);
+rte_intr_enable(intr_handle);
+
+++adapter->dev_stats.dev_stop;
+adapter->state = ENA_ADAPTER_STATE_STOPPED;
+dev->data->dev_started = 0;
+...
+return 0;
+```
+
+`rc` is assigned and read, so no compiler warns, but it reaches no caller. The
+function returns 0 unconditionally.
+
+**Why it matters more than a wrong return code.** The teardown after that
+point is unconditional too: the interrupt is disabled, the vector list freed,
+the adapter marked `STOPPED` and every queue marked
+`RTE_ETH_QUEUE_STATE_STOPPED`. So when the device did not reset, the driver
+has told the application the port stopped cleanly while the device may still
+be running against rings the application is now entitled to release. That puts
+it next to class A -- a device writing into memory the driver no longer
+considers live -- reached through a false success rather than a lifetime
+mistake.
+
+**Evidence.** `proof/harness_class_s.c -DENTRY=3` with
+`proof/run_class_s.sh`:
+
+| obligation | result |
+|---|---|
+| `SM_STOP_RC` -- `ena_stop` returns 0 only if a requested device reset actually succeeded | **FAILURE** |
+
+Clean run: no other failing property, no reached bodyless callee, no UNKNOWN,
+no failing unwinding assertion, both vacuity witnesses FAILING.
+`check_hygiene.sh --refuted`: CLAIM STANDS.
+
+**Fix.** Propagate it: `return rc;` from the reset branch, or record the
+failure in the adapter so `dev_close` and the next `dev_start` can see that
+the device was never reset. Simply returning non-zero is the smaller change
+and matches what `ena_dev_reset` already does with the same kind of failure.
+
+**Severity.** Needs a reset to have been requested -- the watchdog does that
+on a missing keep-alive, so it is a normal rather than exotic path -- and the
+device's reset to fail or time out. Unveil class S, with a class A
+consequence. DPDK-specific: `ena_stop` is DPDK's own.
+
+**Relation to F21.** F21 is the same function leaving `trigger_reset` set
+across a stop/start cycle. F26 is the reset *failing* and nobody being told.
+They are independent: fixing either leaves the other.
+
 ## Class S confirmations: the return code and what the device did
 
 Class S is the largest group the Unveil class list had no name for -- an
