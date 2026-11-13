@@ -309,3 +309,54 @@ Witness the specific state, not reachability.
    reported as new. `run_all.sh` named the existing runner, in a comment at
    the top of the file. An hour of reading would have saved the whole detour,
    and the wrong finding that came out of it.
+
+## The hygiene checks are now a script, not advice
+
+`proof/check_hygiene.sh` decides whether a log supports the claim made about
+it, and exits nonzero when it does not:
+
+```
+check_hygiene.sh --proved  MAIN.log [--vacuity VAC.log] [--allow LABEL]... [--no-loops]
+check_hygiene.sh --refuted MAIN.log --expect LABEL [--vacuity VAC.log]
+```
+
+It checks, in the order that most often catches something:
+
+1. a verdict is present at all -- not a timeout, a crash, or an unexecutable
+   solver binary, which CBMC reports as per-property `ERROR` with no
+   diagnostic;
+2. no `UNKNOWN` property, because an undecided property is not a proven one;
+3. no *reached* bodyless callee, which cuts the path and makes everything
+   after it vacuous;
+4. unwinding assertions present and passing, or `--no-loops` stated
+   explicitly, so a cut loop cannot pass unnoticed;
+5. no unexpected failing property;
+6. if a vacuity log is given, it contains witnesses and **every witness
+   FAILS**.
+
+`--refuted` is for the runners that reproduce a finding by design: the named
+label must fail and everything else must still be clean. That distinction
+matters, because five runners in `run_all.sh` are expected to report
+`VERIFICATION FAILED` and a rule that simply demanded SUCCESS would have been
+switched off.
+
+### Why this replaced the prose version
+
+The five rules have been written down since the first version of this note,
+and in the period after writing them: three documents acquired wrong
+mechanisms, a harness passed vacuously through four rounds, and a finding was
+reported against a configuration that had already been excluded on purpose.
+Written rules did not bind because the moment of temptation is when a run has
+just printed `VERIFICATION SUCCESSFUL` and the rules feel like paperwork.
+
+Rule 4 earned itself immediately on a real log: the F22 fast-free run had no
+unwinding assertion at all. That turned out to be legitimate -- the harness is
+straight-line -- but the only way to establish it was to look, which is the
+point. `--no-loops` now makes the claim explicit rather than assumed.
+
+### What it does not check
+
+It reads logs, so it cannot tell whether the obligations are the *right* ones,
+whether an assumption is sound, or whether a bound is realistic. Those are the
+failures the harness index addresses instead. A log can pass every check here
+and still prove something uninteresting about a configuration nobody runs.
