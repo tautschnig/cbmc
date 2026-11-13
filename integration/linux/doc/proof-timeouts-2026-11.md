@@ -184,3 +184,25 @@ three were refuted by a measurement that took minutes. The two causes that
 held up -- the quadratic map construction and the field-sensitivity cliff --
 were found by looking at a stack sample and a points-to set, not by reasoning
 from the source.
+
+## Re-measured 2026-11-12: the cadical-only negatives, under minisat2
+
+Three results had only ever been measured with `--sat-solver cadical`, which
+the backend comparison then showed to be the wrong default (it loses to
+minisat2 on four of five models, by 4.5x on one). They were re-run under
+minisat2 with a 9000 s budget, up from the 3000 s they originally had.
+
+| artefact | before | re-measured |
+|---|---|---|
+| xmit step, ring 32, part 1 | no verdict in 3000 s (cadical) | **TIMEOUT at 9000 s** (minisat2) |
+| cleanup step, ring 64, part 2 | no verdict in 3000 s (cadical) | **TIMEOUT at 9000 s** (minisat2) |
+
+**Both negatives stand, and are now stronger claims** than they were: a better
+solver and three times the budget do not reach a verdict. The rows are in
+`metrics/cbmc-runs.csv` as `xmit_step_p1` and `r10`, both `TIMEOUT`, captured
+by the wrapper's timeout handling.
+
+This also means the earlier conclusion holds for the right reason. The xmit
+step's bottleneck is the driver's own data flow -- a symbolic slot index into
+`tx_buffer_info[n]`, costing about 18x per ring doubling -- and not the
+solver. Changing the solver moves the constant, not the exponent.

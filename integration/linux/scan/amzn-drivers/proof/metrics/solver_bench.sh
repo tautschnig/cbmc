@@ -22,6 +22,13 @@ CSV=${CSV:-$(cd "$(dirname "$0")" && pwd)/solver-bench.csv}
 TO=${TO:-1800}
 MEM=${MEM:-150000000}
 MODEL=${1:?model.gb}; LABEL=${2:?label}; shift 2
+# A missing model makes every backend "crash" at 0.0s, which looks like a real
+# and unanimous failure.  That artefact has twice put bogus rows in the CSV,
+# so refuse to run rather than record them.
+if [ ! -f "$MODEL" ]; then
+  echo "solver_bench: no such model: $MODEL" >&2
+  exit 2
+fi
 FLAGS=${*:---bounds-check --unwinding-assertions --unwind 12 --slice-formula}
 # Space inside an option is written as ~ because the list is word-split.
 BACKENDS=${BACKENDS:-"minisat2:--sat-solver~minisat2 cadical:--sat-solver~cadical glucose:--sat-solver~glucose z3:--z3 cvc5:--cvc5 bitwuzla:--bitwuzla cprover-smt2:--cprover-smt2 smt2-default:--smt2"}

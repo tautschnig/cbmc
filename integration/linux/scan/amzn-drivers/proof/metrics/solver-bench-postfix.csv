@@ -1,0 +1,13 @@
+label,backend,kind,wall_s,cpu_s,peak_rss_kb,outcome,failures,props,detail
+freelist_eq_ring4,z3,SMT2,2.8,2.8,77276,SUCCESSFUL,0,7128,""
+freelist_eq_ring4,cvc5,SMT2,3.7,3.7,77272,SUCCESSFUL,0,7128,""
+freelist_eq_ring4,bitwuzla,SMT2,3.2,3.2,104756,SUCCESSFUL,0,7128,""
+freelist_eq_ring4,smt2-default,SMT2,2.7,2.7,77272,SUCCESSFUL,0,7128,""
+freelist_eq_ring4,minisat2,SAT,2.7,2.7,82652,SUCCESSFUL,0,7128,""
+aenq_qd4,z3,SMT2,4.6,4.6,103500,FAILED,1,11808,""
+aenq_qd4,cvc5,SMT2,4.6,4.6,103500,FAILED,1,11808,""
+aenq_qd4,bitwuzla,SMT2,4.6,4.6,103504,FAILED,1,11808,""
+aenq_qd4,smt2-default,SMT2,4.7,4.7,103500,FAILED,1,11808,""
+aenq_qd4,minisat2,SAT,4.6,4.6,102736,FAILED,1,11808,""
+admin_cq_qd4,z3,SMT2,1800.2,545.0,4779096,TIMEOUT,0,0,""
+admin_cq_qd4,cvc5,SMT2,557.1,553.5,4780308,ERROR,0,5189,""
