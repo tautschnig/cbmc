@@ -1440,12 +1440,30 @@ the single bare `return rc` the source reading found.
 **Fix.** `goto err_device_destroy;` in place of `return rc;`. That is the
 label the two neighbouring failure paths already use.
 
-**Severity.** Needs `ena_set_queues_placement_policy` to fail, which happens
-when the device's LLQ configuration is not acceptable -- a device-influenced
-but not device-controlled condition. The consequence is a permanent leak of
-the admin queue, the mmio read-request buffer and the metrics buffer per
-failed probe, with no path that recovers them. Unveil class D. DPDK-specific:
-this is DPDK's own probe function.
+**Severity, raised 2026-11-13.** The leak is **not confined to probe**.
+`ena_dev_reset` is `eth_ena_dev_uninit` followed by `eth_ena_dev_init`
+(`ena_ethdev.c:950-969`), so it runs the same function and the same failure
+path. `harness_leaks.c -DRESET` confirms it:
+
+| obligation | result |
+|---|---|
+| `DR_RC_SOUND` -- the reset returns 0 only if the adapter came back up | SUCCESS |
+| `DR_NO_LEAK` -- a reset that fails leaks nothing | **FAILURE** |
+
+clean run, both witnesses failing, `check_hygiene.sh --refuted`: CLAIM STANDS.
+
+That changes the severity rather than the mechanism. **A probe happens once; a
+reset recurs.** Each failed reset leaks the admin queue, the mmio read-request
+buffer and the metrics buffer again, with no path that recovers them, so the
+loss accumulates over the life of the process. The trigger is still
+`ena_set_queues_placement_policy` failing, which depends on the LLQ
+configuration the device offers -- so a device that intermittently offers an
+unacceptable configuration drives the leak repeatedly.
+
+The return code itself is sound on both paths, which is worth stating: this is
+a class D finding and not a class S one. `DR_RC_SOUND` holds.
+
+Unveil class D. DPDK-specific: `eth_ena_dev_init` is DPDK's own.
 
 **Caveat on the evidence.** `ena_com.c` is not in this build, so the five
 acquire/release pairs are models rather than the real allocators. The control

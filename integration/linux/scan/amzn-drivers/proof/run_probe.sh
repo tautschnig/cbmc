@@ -12,11 +12,15 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ena-proof/probe}; mkdir -p "$OUT"
 F="--max-field-sensitivity-array-size 256 --unwind 40 \
   --unwindset vsnprintf.1:300 $SOLVER --slice-formula --unwinding-assertions"
+# PROBE drives eth_ena_dev_init directly; RESET reaches it through
+# ena_dev_reset, where the same leak recurs -- and resets recur where a probe
+# happens once.
+CFG=${CFG:-PROBE}
 for V in 0 1; do
   vd=""; [ $V = 1 ] && vd=-DVACUITY_CHECK
   rm -f "$OUT/p$V.gb"
   ( cd /tmp/dpdk/build-ql && ulimit -v 32000000 &&
-    "$BIN/goto-cc" $(cat /tmp/ena-proof/flags.txt) -DPEDANTIC -DPROBE $vd \
+    "$BIN/goto-cc" $(cat /tmp/ena-proof/flags.txt) -DPEDANTIC -D$CFG $vd \
       "$HERE/harness_leaks.c" "$HERE/rdtsc_stub.c" -o "$OUT/p$V.gb" \
       2>&1 | grep -i " error" | head -3 )
   [ -f "$OUT/p$V.gb" ] || { echo "BUILD FAILED, refusing to run stale binaries"; exit 1; }
@@ -24,9 +28,9 @@ done
 echo "CBMC-CMD: cbmc $OUT/p0.gb --bounds-check $F" > "$OUT/p0.log"
 ( ulimit -v ${MEM:-90000000}; timeout ${TO:-3000} "$BIN/cbmc" "$OUT/p0.gb" \
     --bounds-check $F ) >> "$OUT/p0.log" 2>&1
-sed -E 's/\] line [0-9]+ /] /; s/^/   /' "$OUT/p0.log" | grep -E 'PR_|^   VERIFICATION' | sort -u
+sed -E 's/\] line [0-9]+ /] /; s/^/   /' "$OUT/p0.log" | grep -E 'PR_|DR_|^   VERIFICATION' | sort -u
 printf '   other FAILURE: %s   no-body reached: %s   UNKNOWN: %s   unwind FAIL: %s\n' \
-  "$(grep -E ': FAILURE$' "$OUT/p0.log" | grep -vcE 'PR_|witness')" \
+  "$(grep -E ': FAILURE$' "$OUT/p0.log" | grep -vcE 'PR_|DR_|witness')" \
   "$(grep -cE 'no body for callee.*FAILURE' "$OUT/p0.log")" \
   "$(grep -cE ': UNKNOWN$' "$OUT/p0.log")" \
   "$(grep -cE 'unwind.*: FAILURE' "$OUT/p0.log")"

@@ -144,8 +144,10 @@ void ena_com_admin_destroy(struct ena_com_dev *d)
 }
 
 
-#ifdef PROBE
-/* Models for the two EAL services ena_init_once touches.  Both are reached on
+#if defined(PROBE) || defined(RESET)
+/* Models for the two EAL services ena_init_once touches.  Shared with the
+ * RESET configuration, which reaches eth_ena_dev_init through ena_dev_reset
+ * and so needs the same scaffolding.  Both are reached on
  * the probe path, and a REACHED bodyless callee cuts it -- which would leave
  * the ladder obligations holding for want of a path rather than because the
  * ladder is correct. */
@@ -439,6 +441,71 @@ int main(void)
   g_double_frees = 0;
   g_wild_frees = 0;
 
+#ifdef RESET
+  /* Class S and class D for ena_dev_reset, which is eth_ena_dev_uninit
+   * followed by eth_ena_dev_init (ena_ethdev.c:950-969).  Two questions:
+   *
+   *   DR_RC_SOUND  the reset returns 0 only if the adapter came back up
+   *   DR_NO_LEAK   a reset that fails leaks nothing
+   *
+   * The second matters more than it looks.  F25 is a leak on one failure path
+   * of eth_ena_dev_init, found through probe; a reset runs that same function
+   * again, so the leak is reachable a second way -- and resets RECUR, where a
+   * probe happens once.  A leak per failed reset accumulates. */
+  static struct rte_pci_device reset_pci;
+  static uint8_t reset_regs[4096];
+  static uint8_t reset_mem[4096];
+  reset_pci.mem_resource[ENA_REGS_BAR].addr = reset_regs;
+  reset_pci.mem_resource[ENA_REGS_BAR].len = sizeof(reset_regs);
+  reset_pci.mem_resource[ENA_MEM_BAR].addr = reset_mem;
+  reset_pci.mem_resource[ENA_MEM_BAR].len = sizeof(reset_mem);
+  dev.device = &reset_pci.device;
+  g_init_once_ok = true;
+  g_alloc_fails = true;
+  for(int i = 0; i < NSLOTS; i++)
+  {
+    live[i] = false;
+    ever[i] = false;
+  }
+  adapter.drv_stats = NULL;
+  adapter.state = ENA_ADAPTER_STATE_RUNNING;
+  g_ladder_entries = 0;
+  /* Reset with no queues configured.  ena_dev_reset unwinds through
+   * ena_close, which releases every queue, and releasing a ring that was
+   * never set up dereferences unset pointers -- that is F10, with its own
+   * harness, and entangling it here would say nothing new about the reset. A
+   * device may legitimately be reset before its queues are set up. */
+  data.nb_rx_queues = 0;
+  data.nb_tx_queues = 0;
+
+  const int rc_reset = ena_dev_reset(&dev);
+
+  __CPROVER_assert(
+    rc_reset != 0 || adapter.state == ENA_ADAPTER_STATE_INIT,
+    "DR_RC_SOUND: ena_dev_reset returns 0 only if the adapter came back up");
+  if(rc_reset != 0)
+  {
+    unsigned live_cnt = 0;
+    for(int i = 0; i < NSLOTS; i++)
+      if(live[i])
+        live_cnt++;
+    __CPROVER_assert(
+      live_cnt == 0, "DR_NO_LEAK: a reset that fails leaks nothing");
+  }
+#  ifdef VACUITY_CHECK
+  __CPROVER_assert(rc_reset == 0, "witness: the reset can fail");
+  {
+    unsigned ever_cnt = 0;
+    for(int i = 0; i < NSLOTS; i++)
+      if(ever[i])
+        ever_cnt++;
+    __CPROVER_assert(
+      ever_cnt == 0, "witness: the reset acquires at least one resource");
+  }
+#  endif
+  return 0;
+#endif
+
 #ifdef PROBE
   /*
    * Probe, the lifecycle end nothing covered: eth_ena_dev_init's error ladder.
@@ -575,7 +642,7 @@ int main(void)
     g_wild_frees == 0, "LK_NO_WILD: nothing is freed that was never allocated");
 #endif
 
-#if defined(VACUITY_CHECK) && !defined(PROBE)
+#if defined(VACUITY_CHECK) && !defined(PROBE) && !defined(RESET)
   {
     unsigned ever_cnt = 0;
     for(int i = 0; i < NSLOTS; i++)
@@ -583,7 +650,8 @@ int main(void)
         ever_cnt++;
     /* must FAIL: the cycle really does allocate several things.  Guarded
      * against PROBE, which returns before this point, so leaving it
-     * unguarded reported a passing witness for a path that is not taken. */
+     * unguarded reported a passing witness for a path that is not taken.
+     * RESET returns early as well, for the same reason. */
     __CPROVER_assert(ever_cnt < 4, "vacuity witness: the cycle allocates");
   }
 #endif
