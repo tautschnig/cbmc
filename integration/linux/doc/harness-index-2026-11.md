@@ -310,10 +310,9 @@ Class E, deadlock and lockup: the admin-lock discipline.
 
 | configuration | assumes |
 |---|---|
-| `-DBREAK_RETA_UNLOCK` | **UNDESCRIBED** |
-| `-DENTRY` | **UNDESCRIBED** |
+| `-DBREAK_RETA_UNLOCK` | mutation test -- drops the first unlock in ena_rss_reta_update so LKO_RELEASED must catch a missing unlock |
 
-* run by `run_lock_order.sh`: `-DBREAK_RETA_UNLOCK`, `-DENTRY`
+* run by `run_lock_order.sh`: `-DBREAK_RETA_UNLOCK`
 
 * vacuity witness: yes, 3
 

@@ -30,6 +30,7 @@ ASSUMPTIONS = os.path.join(HERE, "harness-assumptions.txt")
 # Macros that are harness mechanics rather than statements about the driver.
 MECHANICAL = {
     "VACUITY_CHECK", "WITNESS", "PEDANTIC", "RING", "RING_SIZE", "PART",
+    "ENTRY",
     "NPKT", "NPKTS", "MC", "NB", "QD", "MAXBUFS", "MAX_BUFS", "NQ",
     "CONCRETE_RING", "EXPERIMENT_NAMED_STORE",
 }
