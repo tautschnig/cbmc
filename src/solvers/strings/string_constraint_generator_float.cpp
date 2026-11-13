@@ -203,6 +203,42 @@ string_constraintst string_constraint_generatort::float_string_axioms(
         equal_exprt{res[offset], from_integer('0' + k, char_type)},
         equal_exprt{res[after_first], point}}});
   }
+
+  // The first digit after the point of a magnitude in [1, 10): d where the
+  // magnitude is at least the nearest value to k.d and below the nearest
+  // to the next tenth. (A string of fewer digits that rounds to the value is
+  // on the same side of k.d as the value.) Checked against Float.toString
+  // for every float in [1, 10), Double.toString for 30 million doubles and
+  // Python's repr for 3 million.
+  // Without it, `s.startsWith("1.5")` took a refinement round per value.
+  {
+    const bool single_type = single;
+    const auto nearest = [&](int tenths) -> exprt
+    {
+      const std::string text =
+        std::to_string(tenths / 10) + "." + std::to_string(tenths % 10);
+      return single_type
+               ? float_constant(std::strtof(text.c_str(), nullptr), type)
+               : float_constant(std::strtod(text.c_str(), nullptr), type);
+    };
+    const plus_exprt after_point{after_first, from_integer(1, index_type)};
+    for(int tenths = 10; tenths < 100; ++tenths)
+    {
+      const exprt lower = nearest(tenths);
+      const exprt upper = nearest(tenths + 1);
+      const exprt in_range = or_exprt{
+        and_exprt{
+          binary_relation_exprt{value, ID_ge, lower},
+          binary_relation_exprt{value, ID_lt, upper}},
+        and_exprt{
+          binary_relation_exprt{value, ID_le, unary_minus_exprt{lower}},
+          binary_relation_exprt{value, ID_gt, unary_minus_exprt{upper}}}};
+      constraints.existential.push_back(implies_exprt{
+        in_range,
+        equal_exprt{
+          res[after_point], from_integer('0' + tenths % 10, char_type)}});
+    }
+  }
   return constraints;
 }
 

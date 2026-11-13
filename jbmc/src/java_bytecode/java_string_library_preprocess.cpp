@@ -965,12 +965,27 @@ code_blockt java_string_library_preprocesst::make_float_to_string_code(
   // solution, which made every path through a negative value infeasible.
   const if_exprt magnitude{
     binary_relation_exprt{arg, ID_lt, zero}, unary_minus_exprt{arg}, arg};
+  // Java uses plain notation for magnitudes in [10^-3, 10^7). The closest
+  // value to 10^-3 is above it in both precisions, so comparing with it is
+  // exact.
+  const constant_exprt bound_inf = constant(1e-3);
+  const constant_exprt bound_sup = constant(1e7);
+  const and_exprt in_plain_range{
+    binary_relation_exprt{magnitude, ID_ge, bound_inf},
+    binary_relation_exprt{magnitude, ID_lt, bound_sup}};
+  // Each notation converts the magnitude only in its own range, and 1.0
+  // elsewhere, where its string is not used: the refinement checks the
+  // string of every conversion in each model, and a value with a wrong
+  // string in the notation that is not used took a round to exclude.
+  const exprt one = constant(1.0);
+  const if_exprt scientific_magnitude{in_plain_range, one, magnitude};
+  const if_exprt plain_magnitude{in_plain_range, magnitude, one};
 
   // Case of computerized scientific notation
   condition_list.push_back(binary_relation_exprt(arg, ID_ge, zero));
   const refined_string_exprt sci_notation = string_expr_of_function(
     ID_cprover_string_of_float_scientific_notation_func,
-    {magnitude},
+    {scientific_magnitude},
     loc,
     symbol_table,
     code);
@@ -1022,18 +1037,16 @@ code_blockt java_string_library_preprocesst::make_float_to_string_code(
   string_expr_list.push_back(minus_zero_string);
 
   // Case of simple notation
-  // Java uses plain notation for magnitudes in [10^-3, 10^7). The closest
-  // value to 10^-3 is above it in both precisions, so comparing with it is
-  // exact.
-  const constant_exprt bound_inf = constant(1e-3);
-  const constant_exprt bound_sup = constant(1e7);
-
   const and_exprt is_simple_float{binary_relation_exprt(arg, ID_ge, bound_inf),
                                   binary_relation_exprt(arg, ID_lt, bound_sup)};
   condition_list.push_back(is_simple_float);
 
   const refined_string_exprt simple_notation = string_expr_of_function(
-    ID_cprover_string_of_float_func, {magnitude}, loc, symbol_table, code);
+    ID_cprover_string_of_float_func,
+    {plain_magnitude},
+    loc,
+    symbol_table,
+    code);
   string_expr_list.push_back(simple_notation);
 
   // Case of a negative number in simple notation

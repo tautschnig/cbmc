@@ -1670,6 +1670,9 @@ bool string_refinementt::check_float_conversions()
     if(actual == expected)
       continue;
 
+    log.debug() << "string refinement: the string of a floating-point value "
+                << "is " << (actual.has_value() ? *actual : "unknown")
+                << " in the model rather than " << expected << messaget::eom;
     all_right = false;
     // This value gives this string.
     const auto string_is = [&](const std::string &text)
@@ -1737,6 +1740,24 @@ bool string_refinementt::check_float_conversions()
         }
         add_lemma(
           implies_exprt{conversion.guard, not_exprt{conjunction(prefix)}});
+        // A character that no string of the format has, at that position,
+        // is excluded there whatever the characters before it: otherwise
+        // each round excluded one such prefix only.
+        const std::string alphabet = conversion.format == float_formatt::PYTHON
+                                       ? "0123456789.-+einfa"
+                                       : "0123456789.-EInfintyNa";
+        const mp_integer &c = actual_characters[viable];
+        if(
+          c <= 0 || c >= 128 ||
+          alphabet.find(static_cast<char>(c.to_ulong())) == std::string::npos)
+        {
+          const exprt at = result[from_integer(viable, index_type)];
+          exprt::operandst allowed{binary_relation_exprt{
+            length, ID_le, from_integer(viable, index_type)}};
+          for(const char a : alphabet)
+            allowed.push_back(equal_exprt{at, from_integer(a, char_type)});
+          add_lemma(implies_exprt{conversion.guard, disjunction(allowed)});
+        }
       }
       else
       {
