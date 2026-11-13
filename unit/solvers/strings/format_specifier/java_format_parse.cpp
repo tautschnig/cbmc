@@ -9,7 +9,10 @@ Author: Diffblue Ltd.
 #include <solvers/strings/format_specifier.h>
 #include <testing-utils/use_catch.h>
 
+#include <cctype>
+#include <regex>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -138,4 +141,117 @@ TEST_CASE(
   // the flags that do not fit: the first up to Java 18, all since 19
   REQUIRE(parse("%#(+tY", versiont::JAVA_16) == "E X Y#");
   REQUIRE(parse("%#(+tY", versiont::JAVA_19) == "E X Y#+(");
+}
+
+// The expected strings are those of String.format of Java 25 (the same in
+// Java 8, 11, 16, 17 and 21 but for the cases at the end), from the core
+// (the string without flags, width or precision), as java_format_decorate
+// takes it.
+TEST_CASE(
+  "java_format_decorate as java.util.Formatter",
+  "[core][solvers][strings][format_specifier]")
+{
+  const std::regex specifier{"%([-#+ 0(,]*)(\\d*)(\\.\\d+)?([a-zA-Z%])"};
+  const auto decorate = [&](
+                          const std::string &spec,
+                          const std::string &core,
+                          bool numeric,
+                          java_format_print_versiont version)
+  {
+    std::smatch m;
+    REQUIRE(std::regex_match(spec, m, specifier));
+    const char conversion = m[4].str()[0];
+    return java_format_decorate(
+      static_cast<char>(std::tolower(conversion)),
+      java_format_flags(m[1].str(), conversion),
+      m[2].str().empty() ? -1 : std::stoi(m[2].str()),
+      m[3].str().empty() ? -1 : std::stoi(m[3].str().substr(1)),
+      core,
+      numeric,
+      version);
+  };
+  const std::vector<std::tuple<std::string, std::string, bool, std::string>>
+    cases{
+      {"%-3%", "%", false, "%  "},
+      {"%12%", "%", false, "           %"},
+      {"%5%", "%", false, "    %"},
+      {"%#.1A", "-0x0.0p0", true, "-0X0.0P0"},
+      {"%+.12A", "0x1.52d02c7e14afp76", true, "+0X1.52D02C7E14AFP76"},
+      {"% 25.1A", "0x1.5p76", true, "                 0X1.5P76"},
+      {"%-3.1B", "false", false, "F  "},
+      {"%.12B", "false", false, "FALSE"},
+      {"%1.3B", "false", false, "FAL"},
+      {"%5C", "%", false, "    %"},
+      {"%12C", "%", false, "           %"},
+      {"%25C", "a", false, "                        A"},
+      {"%25.0E", "1e+06", true, "                    1E+06"},
+      {"% 12.12E", "1.500000000000e+00", true, " 1.500000000000E+00"},
+      {"%.1E", "2.5e+00", true, "2.5E+00"},
+      {"%1.12G", "NaN", true, "NAN"},
+      {"%05.12G", "-0.00000000000", true, "-0.00000000000"},
+      {"%0( 25G", "Infinity", true, "                 INFINITY"},
+      {"%3.12H", "ffffffff", false, "FFFFFFFF"},
+      {"%3H", "ffffffff", false, "FFFFFFFF"},
+      {"%1.0H", "1c6d1", false, " "},
+      {"%25.0S", "null", false, "                         "},
+      {"%-3S", "false", false, "FALSE"},
+      {"%25S", "null", false, "                     NULL"},
+      {"%0 3X", "null", false, "NULL"},
+      {"%#12X", "null", false, "        NULL"},
+      {"%12X", "2a", true, "          2A"},
+      {"%25.0a", "NaN", true, "                      NaN"},
+      {"%0+5a", "-0x1.8p0", true, "-0x1.8p0"},
+      {"%12.12a", "0x1.b7cdfd9d7bdcp-34", true, "0x1.b7cdfd9d7bdcp-34"},
+      {"%1b", "false", false, "false"},
+      {"%b", "true", false, "true"},
+      {"%.0b", "false", false, ""},
+      {"%25c", "%", false, "                        %"},
+      {"%12c", "%", false, "           %"},
+      {"%-3c", "Z", false, "Z  "},
+      {"%3d", "-9223372036854775808", true, "-9223372036854775808"},
+      {"%3d", "-7", true, " -7"},
+      {"%+-12d", "127", true, "+127        "},
+      {"%1e", "NaN", true, "NaN"},
+      {"% 12e", "-1.000000e-01", true, "-1.000000e-01"},
+      {"%+12e", "1.000000e-10", true, "+1.000000e-10"},
+      {"%(.12f", "1.500000000000", true, "1.500000000000"},
+      {"%1f",
+       "339999995214436420000000000000000000000.000000",
+       true,
+       "339999995214436420000000000000000000000.000000"},
+      {"% 5.12f", "1.500000000000", true, " 1.500000000000"},
+      {"%3.0g", "-0.1", true, "-0.1"},
+      {"%3.3g", "Infinity", true, "Infinity"},
+      {"%-(12g", "null", false, "null        "},
+      {"%3.3h", "null", false, "nul"},
+      {"%.12h", "80000000", false, "80000000"},
+      {"%3h", "4cf", false, "4cf"},
+      {"%#1o", "0", true, "00"},
+      {"%25o", "null", false, "                     null"},
+      {"% o", "null", false, "null"},
+      {"%3.0s", "x y", false, "   "},
+      {"%5.3s", "null", false, "  nul"},
+      {"%12.0s", "a", false, "            "},
+      {"%+#x", "null", false, "null"},
+      {"%x", "1cbe991a14", true, "1cbe991a14"},
+      {"%25x", "null", false, "                     null"},
+    };
+  for(const auto &c : cases)
+  {
+    INFO("specifier " << std::get<0>(c) << " of " << std::get<1>(c));
+    REQUIRE(
+      decorate(std::get<0>(c), std::get<1>(c), std::get<2>(c), {}) ==
+      std::get<3>(c));
+  }
+  // Java 8 prints %% without its width; the zeros of %a count the sign
+  // since Java 17
+  REQUIRE(decorate("%5%", "%", false, {false, false}) == "%");
+  REQUIRE(decorate("%5%", "%", false, {true, false}) == "    %");
+  REQUIRE(
+    decorate("%+012A", "-0x0.0p0", true, {true, false}) == "-0X000000.0P0");
+  REQUIRE(decorate("%+012A", "-0x0.0p0", true, {true, true}) == "-0X00000.0P0");
+  // the grouping depends on the locale
+  REQUIRE_FALSE(decorate("%,d", "1234", true, {}).has_value());
+  // null with the precision of a float
+  REQUIRE(decorate("%.2e", "null", false, {}) == "nu");
 }

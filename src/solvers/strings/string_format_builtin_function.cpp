@@ -12,6 +12,7 @@ Author: Romain Brenguier, Joel Allred
 #include "string_format_builtin_function.h"
 
 #include <util/bitvector_expr.h>
+#include <util/floatbv_expr.h>
 #include <util/ieee_float.h>
 #include <util/message.h>
 #include <util/range.h>
@@ -534,6 +535,350 @@ add_axioms_for_format_specifier(
     "format specifier must belong to [bBhHsScCdoxXeEfgGaAtT%n]");
 }
 
+/// Pieces of strings for add_axioms_for_decorated_specifier, whose axioms
+/// they collect.
+class format_piecest
+{
+public:
+  format_piecest(
+    string_constraint_generatort &generator,
+    const typet &index_type,
+    const typet &char_type,
+    message_handlert &message_handler)
+    : generator(generator),
+      pool(generator.array_pool),
+      index_type(index_type),
+      char_type(char_type),
+      message_handler(message_handler)
+  {
+  }
+
+  string_constraintst constraints;
+
+  array_string_exprt fresh()
+  {
+    return pool.fresh_string(index_type, char_type);
+  }
+
+  exprt length(const array_string_exprt &s)
+  {
+    return pool.get_or_create_length(s);
+  }
+
+  exprt index(long i) const
+  {
+    return from_integer(i, index_type);
+  }
+
+  exprt character(char c) const
+  {
+    return from_integer(static_cast<unsigned char>(c), char_type);
+  }
+
+  array_string_exprt constant(const std::string &text)
+  {
+    const array_string_exprt res = fresh();
+    merge(constraints, generator.add_axioms_for_constant(res, text).second);
+    return res;
+  }
+
+  array_string_exprt concat(const std::vector<array_string_exprt> &parts)
+  {
+    PRECONDITION(!parts.empty());
+    array_string_exprt result = parts.front();
+    for(std::size_t i = 1; i < parts.size(); ++i)
+    {
+      const array_string_exprt next = fresh();
+      merge(
+        constraints,
+        generator.add_axioms_for_concat(next, result, parts[i]).second);
+      result = next;
+    }
+    return result;
+  }
+
+  /// The substring from \p start to \p end (bounded by the length).
+  array_string_exprt
+  substring(const array_string_exprt &s, const exprt &start, const exprt &end)
+  {
+    const array_string_exprt res = fresh();
+    merge(
+      constraints,
+      generator.add_axioms_for_substring(res, s, start, end).second);
+    return res;
+  }
+
+  /// \p count (none if negative) characters \p c.
+  array_string_exprt repeat(char c, const exprt &count)
+  {
+    const array_string_exprt res = fresh();
+    constraints.existential.push_back(
+      equal_exprt{length(res), zero_if_negative(count)});
+    const symbol_exprt qvar =
+      generator.fresh_symbol("QA_format_repeat", index_type);
+    constraints.universal.emplace_back(
+      qvar,
+      zero_if_negative(length(res)),
+      equal_exprt{res[qvar], character(c)},
+      generator.ns,
+      message_handler);
+    return res;
+  }
+
+  /// The string that is the one of the first of \p cases whose condition
+  /// holds, any if none.
+  array_string_exprt
+  choice(const std::vector<std::pair<exprt, array_string_exprt>> &cases)
+  {
+    const array_string_exprt res = fresh();
+    exprt earlier = false_exprt{};
+    for(const auto &c : cases)
+    {
+      string_equals_if(
+        generator,
+        and_exprt{not_exprt{earlier}, c.first},
+        res,
+        c.second,
+        constraints,
+        message_handler);
+      earlier = or_exprt{earlier, c.first};
+    }
+    return res;
+  }
+
+  string_constraint_generatort &generator;
+  array_poolt &pool;
+  const typet &index_type;
+  const typet &char_type;
+  message_handlert &message_handler;
+};
+
+/// The string of a specifier with flags, a width or a precision (see
+/// format_specifiert::has_decoration): its core, the string of the
+/// conversion without them (see add_axioms_for_format_specifier), with the
+/// signs, zeros, prefixes, precision, case and spaces that
+/// java.util.Formatter adds (see java_format_decorate, whose versions it
+/// follows: where they differ, either).
+static std::pair<array_string_exprt, string_constraintst>
+add_axioms_for_decorated_specifier(
+  string_constraint_generatort &generator,
+  const format_specifiert &fs,
+  const array_string_exprt &arg,
+  const typet &index_type,
+  const typet &char_type,
+  message_handlert &message_handler)
+{
+  using namespace java_format_flagst;
+  format_piecest p{generator, index_type, char_type, message_handler};
+  const char c = fs.dt ? 't' : static_cast<char>(tolower(fs.conversion));
+  const int flags = java_format_flags(fs.flag, fs.dt ? 't' : fs.conversion) |
+                    (fs.dt && fs.conversion == 'T' ? uppercase : 0);
+  const auto has = [&](int f) { return (flags & f) != 0; };
+  const int width = fs.width;
+  const int precision = fs.precision;
+  const bool is_float = c == 'e' || c == 'f' || c == 'g' || c == 'a';
+  const std::vector<java_format_print_versiont> versions =
+    java_format_print_versions();
+  const auto versions_agree = [&](bool java_format_print_versiont::*field)
+  {
+    for(const auto &v : versions)
+    {
+      if(v.*field != versions.front().*field)
+        return false;
+    }
+    return true;
+  };
+
+  // the core: the lower-case conversion, with the precision of a float
+  format_specifiert core_fs = fs;
+  core_fs.flag.clear();
+  core_fs.width = -1;
+  if(fs.dt)
+    core_fs.conversion = 't';
+  else
+    core_fs.conversion = c;
+  if(!is_float)
+    core_fs.precision = -1;
+  array_string_exprt core;
+  if(c == '%')
+    core = p.constant("%");
+  else
+  {
+    auto core_result = add_axioms_for_format_specifier(
+      generator, core_fs, arg, index_type, char_type, message_handler);
+    merge(p.constraints, std::move(core_result.second));
+    core = core_result.first;
+  }
+
+  // whether the argument is a number that the conversion prints as one
+  exprt numeric = false_exprt{};
+  if(c == 'd' || c == 'o' || c == 'x')
+    numeric = kind_is_one_of(arg, integral_kinds);
+  else if(is_float)
+    numeric = kind_is_one_of(arg, std::string{kind_float, kind_double});
+
+  // the body for a number
+  std::optional<array_string_exprt> number_body;
+  bool number_body_known = true;
+  if(c == 'd' || is_float)
+  {
+    if(has(group))
+      number_body_known = false; // the grouping depends on the locale
+    else if(
+      c == 'a' && has(zero_pad) &&
+      (precision != -1 ||
+       !versions_agree(&java_format_print_versiont::hex_float_counts_sign)))
+    {
+      number_body_known = false;
+    }
+    else
+    {
+      const exprt negative = equal_exprt{core[p.index(0)], p.character('-')};
+      exprt nan = false_exprt{};
+      exprt infinite = false_exprt{};
+      if(is_float)
+      {
+        const exprt value = typecast_exprt{
+          typecast_exprt{
+            format_arg_from_string(arg, ID_int, p.pool), bv_typet{64}},
+          ieee_float_spect::double_precision().to_type()};
+        nan = isnan_exprt{value};
+        infinite = isinf_exprt{value};
+      }
+      const array_string_exprt magnitude_plain = p.substring(
+        core, if_exprt{negative, p.index(1), p.index(0)}, p.length(core));
+      array_string_exprt magnitude = magnitude_plain;
+      if(has(alternate) && precision == 0 && (c == 'e' || c == 'f'))
+      {
+        // the point of `#`, for a finite value
+        const array_string_exprt dotted =
+          c == 'f'
+            ? p.concat({magnitude_plain, p.constant(".")})
+            : p.concat(
+                {p.substring(magnitude_plain, p.index(0), p.index(1)),
+                 p.constant("."),
+                 p.substring(
+                   magnitude_plain, p.index(1), p.length(magnitude_plain))});
+        magnitude = p.choice(
+          {{or_exprt{nan, infinite}, magnitude_plain}, {true_exprt{}, dotted}});
+      }
+      // the sign
+      std::vector<std::pair<exprt, array_string_exprt>> leads;
+      leads.emplace_back(negative, p.constant(has(parentheses) ? "(" : "-"));
+      leads.emplace_back(
+        true_exprt{},
+        p.constant(
+          has(plus)            ? "+"
+          : has(leading_space) ? " "
+                               : std::string{}));
+      const array_string_exprt lead = p.choice(leads);
+      const bool paren = has(parentheses);
+      const array_string_exprt trail = p.choice(
+        {{paren ? negative : false_exprt{}, p.constant(")")},
+         {true_exprt{}, p.constant("")}});
+      // the zeros
+      exprt zeros_count = p.index(0);
+      if(has(zero_pad))
+      {
+        const exprt adjusted =
+          paren ? exprt{if_exprt{negative, p.index(width - 1), p.index(width)}}
+                : p.index(width);
+        const bool counts_sign =
+          c != 'a' || versions.front().hex_float_counts_sign;
+        zeros_count = if_exprt{
+          infinite,
+          p.index(0),
+          minus_exprt{
+            minus_exprt{adjusted, counts_sign ? p.length(lead) : p.index(0)},
+            p.length(magnitude)}};
+      }
+      const array_string_exprt zeros = p.repeat('0', zeros_count);
+      const array_string_exprt finite =
+        c == 'a' ? p.concat(
+                     {lead,
+                      p.substring(magnitude, p.index(0), p.index(2)),
+                      zeros,
+                      p.substring(magnitude, p.index(2), p.length(magnitude)),
+                      trail})
+                 : p.concat({lead, zeros, magnitude, trail});
+      // NaN without a sign or zeros; Infinity without zeros (see
+      // zeros_count), as the others
+      number_body = p.choice({{nan, core}, {true_exprt{}, finite}});
+    }
+  }
+  else if(c == 'o' || c == 'x')
+  {
+    const array_string_exprt prefix =
+      p.constant(has(alternate) ? (c == 'o' ? "0" : "0x") : std::string{});
+    const exprt zeros_count =
+      has(zero_pad)
+        ? exprt{minus_exprt{
+            minus_exprt{p.index(width), p.length(prefix)}, p.length(core)}}
+        : p.index(0);
+    number_body = p.concat({prefix, p.repeat('0', zeros_count), core});
+  }
+
+  // the body otherwise: the core with the precision (as "null" for %.2f)
+  const array_string_exprt text_body =
+    precision != -1 ? p.substring(core, p.index(0), p.index(precision)) : core;
+  std::vector<std::pair<exprt, array_string_exprt>> bodies;
+  if(number_body.has_value())
+    bodies.emplace_back(numeric, *number_body);
+  else if(!number_body_known)
+    bodies.emplace_back(numeric, p.fresh());
+  bodies.emplace_back(true_exprt{}, text_body);
+  const array_string_exprt body =
+    bodies.size() == 1 ? text_body : p.choice(bodies);
+
+  // the case
+  array_string_exprt cased = body;
+  if(has(uppercase))
+  {
+    cased = p.fresh();
+    const exprt return_code =
+      generator.fresh_symbol("return_code_upper_case", get_return_code_type());
+    const string_to_upper_case_builtin_functiont upper{
+      return_code, cased, body, p.pool};
+    merge(p.constraints, upper.constraints(generator, message_handler));
+  }
+
+  // the width
+  array_string_exprt justified = cased;
+  if(width != -1)
+  {
+    const array_string_exprt spaces =
+      p.repeat(' ', minus_exprt{p.index(width), p.length(cased)});
+    justified =
+      has(left_justify) ? p.concat({cased, spaces}) : p.concat({spaces, cased});
+    if(c == '%')
+    {
+      // Java 8 prints %% without its width
+      if(!versions_agree(&java_format_print_versiont::percent_width))
+      {
+        justified = p.choice(
+          {{generator.fresh_symbol("format_percent_width", bool_typet{}),
+            justified},
+           {true_exprt{}, cased}});
+      }
+      else if(!versions.front().percent_width)
+        justified = cased;
+    }
+  }
+
+  // formatTo of a Formattable, which %s calls, is not modelled
+  if(c == 's')
+  {
+    const exprt properties = arg[p.index(properties_offset)];
+    const exprt formattable = and_exprt{
+      kind_is_one_of(arg, object_kinds),
+      notequal_exprt{
+        bitand_exprt{properties, from_integer(formattable_property, char_type)},
+        from_integer(0, char_type)}};
+    justified = p.choice({{formattable, p.fresh()}, {true_exprt{}, justified}});
+  }
+  return {justified, std::move(p.constraints)};
+}
+
 /// Deserialize an argument for format from \p string (see kind_null).
 /// \p id should be one of: string_expr, int, boolean.
 /// The characters of `string` must be of type `unsignedbv_typet(16)`.
@@ -633,9 +978,7 @@ static std::pair<exprt, string_constraintst> add_axioms_for_format(
       if(!fs.is_modelled() || (takes_argument(fs) && !position.has_value()))
       {
         generator.approximation_warning(
-          "String.format",
-          "is not modelled for flags, widths, precisions or missing "
-          "arguments");
+          "String.format", "is not modelled for missing arguments");
         intermediary_strings.push_back(
           array_pool.fresh_string(index_type, char_type));
         continue;
@@ -643,8 +986,17 @@ static std::pair<exprt, string_constraintst> add_axioms_for_format(
       if(takes_argument(fs))
         string_arg = args[*position];
 
-      auto result = add_axioms_for_format_specifier(
-        generator, fs, string_arg, index_type, char_type, message_handler);
+      auto result =
+        fs.has_decoration()
+          ? add_axioms_for_decorated_specifier(
+              generator, fs, string_arg, index_type, char_type, message_handler)
+          : add_axioms_for_format_specifier(
+              generator,
+              fs,
+              string_arg,
+              index_type,
+              char_type,
+              message_handler);
       merge(constraints, std::move(result.second));
       intermediary_strings.push_back(result.first);
     }
@@ -922,6 +1274,64 @@ static std::optional<std::vector<mp_integer>> eval_format_specifier(
   INVARIANT(false, "format specifier must belong to [bBhHsScCdoxXeEfgGaAtT%n]");
 }
 
+/// The string of a specifier with a decoration (see
+/// add_axioms_for_decorated_specifier) and the encoded argument \p arg
+/// (none for %%), if known: where the versions of Java that may run the
+/// program print it differently, it is not.
+static std::optional<std::vector<mp_integer>> eval_decorated_specifier(
+  const format_specifiert &fs,
+  const std::vector<mp_integer> &arg)
+{
+  using namespace java_format_flagst;
+  const char c = fs.dt ? 't' : static_cast<char>(tolower(fs.conversion));
+  const int flags = java_format_flags(fs.flag, fs.dt ? 't' : fs.conversion) |
+                    (fs.dt && fs.conversion == 'T' ? uppercase : 0);
+  std::string core = "%";
+  bool numeric = false;
+  if(c != '%')
+  {
+    if(
+      c == 's' && arg[0] != kind_null && arg[0] != kind_string &&
+      (arg[properties_offset].to_ulong() & formattable_property) != 0)
+    {
+      return {};
+    }
+    format_specifiert core_fs = fs;
+    core_fs.flag.clear();
+    core_fs.width = -1;
+    core_fs.conversion = c;
+    const bool is_float = c == 'e' || c == 'f' || c == 'g' || c == 'a';
+    if(!is_float)
+      core_fs.precision = -1;
+    const auto evaluated = eval_format_specifier(core_fs, arg);
+    if(!evaluated.has_value())
+      return {};
+    core.clear();
+    for(const mp_integer &ch : *evaluated)
+    {
+      if(ch <= 0 || ch >= 128)
+        return {};
+      core.push_back(static_cast<char>(ch.to_ulong()));
+    }
+    if(c == 'd' || c == 'o' || c == 'x')
+      numeric = eval_kind_is_one_of(arg, integral_kinds);
+    else if(is_float)
+      numeric = arg[0] == kind_float || arg[0] == kind_double;
+  }
+  std::optional<std::string> text;
+  for(const java_format_print_versiont &version : java_format_print_versions())
+  {
+    const auto t = java_format_decorate(
+      c, flags, fs.width, fs.precision, core, numeric, version);
+    if(!t.has_value() || (text.has_value() && *text != *t))
+      return {};
+    text = t;
+  }
+  if(!text.has_value())
+    return {};
+  return characters(*text, false);
+}
+
 std::optional<exprt> string_format_builtin_functiont::eval(
   const std::function<exprt(const exprt &)> &get_value) const
 {
@@ -948,7 +1358,9 @@ std::optional<exprt> string_format_builtin_functiont::eval(
         // (a missing argument is "", and Java throws)
         if(!arg_value.has_value() || arg_value->size() < text_offset)
           return {};
-        auto evaluated = eval_format_specifier(fs, *arg_value);
+        auto evaluated = fs.has_decoration()
+                           ? eval_decorated_specifier(fs, *arg_value)
+                           : eval_format_specifier(fs, *arg_value);
         if(!evaluated.has_value())
           return {};
         std::vector<mp_integer> evaluated_char_vector = std::move(*evaluated);
@@ -959,7 +1371,13 @@ std::optional<exprt> string_format_builtin_functiont::eval(
       }
       else if(fs.conversion == format_specifiert::PERCENT_SIGN)
       {
-        result_vector.push_back('%');
+        const auto evaluated = fs.has_decoration()
+                                 ? eval_decorated_specifier(fs, {})
+                                 : std::vector<mp_integer>{'%'};
+        if(!evaluated.has_value())
+          return {};
+        result_vector.insert(
+          result_vector.end(), evaluated->begin(), evaluated->end());
       }
       else
       {
@@ -1183,7 +1601,8 @@ bool string_format_builtin_functiont::length_is_exact() const
     if(!fe.is_format_specifier())
       continue;
     const format_specifiert &fs = fe.get_format_specifier();
-    if(!fs.is_modelled())
+    // (no length formulas for flags, widths and precisions)
+    if(!fs.is_modelled() || fs.has_decoration())
       return false;
     if(!takes_argument(fs))
       continue;
@@ -1233,7 +1652,9 @@ exprt string_format_builtin_functiont::length_constraint() const
       if(position.has_value())
         arg = inputs[*position];
       std::optional<exprt> length;
-      if(fs.is_modelled() && (!takes_argument(fs) || position.has_value()))
+      if(
+        fs.is_modelled() && !fs.has_decoration() &&
+        (!takes_argument(fs) || position.has_value()))
         length = length_for_format_specifier(fs, arg, index_type, array_pool);
       if(!length.has_value())
       {

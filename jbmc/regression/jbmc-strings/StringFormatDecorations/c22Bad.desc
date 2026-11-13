@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.c22Bad --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+The negation of c22: String.format("%- 1.3G", Double.MIN_VALUE) gives " 4.90E-324", as in Java 8, 11, 16, 17, 21 and 25.

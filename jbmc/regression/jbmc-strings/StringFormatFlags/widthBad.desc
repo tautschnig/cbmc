@@ -4,7 +4,7 @@ Test
 ^EXIT=10$
 ^SIGNAL=0$
 ^VERIFICATION FAILED$
-^string refinement: .* so a counterexample may be spurious$
 --
+^string refinement: .* so a counterexample may be spurious$
 --
 The width used to be ignored, so the length was taken to be 1.

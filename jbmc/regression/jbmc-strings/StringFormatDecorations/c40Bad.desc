@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.c40Bad --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+The negation of c40: String.format("%12X", 5L) gives "           5", as in Java 8, 11, 16, 17, 21 and 25.

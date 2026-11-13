@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.c42Bad --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+The negation of c42: String.format("%12.1a", 1234567.0) gives "    0x1.3p20", as in Java 8, 11, 16, 17, 21 and 25.

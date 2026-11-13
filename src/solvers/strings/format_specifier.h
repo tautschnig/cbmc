@@ -66,15 +66,20 @@ public:
   /// UnknownFormatConversionException).
   bool unknown_conversion = false;
 
-  /// Whether the specifier is one that the string solver models: one
-  /// without flags or width, and without a precision but for a
-  /// floating-point conversion, as these are not modelled.
+  /// Whether the specifier is one that the string solver models.
   bool is_modelled() const
   {
-    const bool takes_precision =
+    return !unsupported && !unknown_conversion;
+  }
+
+  /// Whether the specifier has flags, a width, or a precision but for a
+  /// floating-point conversion (which its core takes, see
+  /// java_format_decorate).
+  bool has_decoration() const
+  {
+    const bool core_precision =
       !dt && std::string{"eEfgGaA"}.find(conversion) != std::string::npos;
-    return !unsupported && !unknown_conversion && flag.empty() && width == -1 &&
-           (precision == -1 || takes_precision);
+    return !flag.empty() || width != -1 || (precision != -1 && !core_precision);
   }
 
   format_specifiert(
@@ -275,5 +280,52 @@ int java_format_bad_flags(
   int flags,
   std::initializer_list<int> bad,
   java_formatter_versiont version);
+
+/// The Formatter flags of the flag characters \p flags ("-#+ 0,(<"), with
+/// UPPERCASE if \p conversion is an upper-case one.
+int java_format_flags(const std::string &flags, char conversion);
+
+/// The versions of java.util.Formatter whose printing of flags and widths
+/// differs.
+struct java_format_print_versiont
+{
+  /// Whether %% takes its width (since Java 9 or later: not in Java 8).
+  bool percent_width = true;
+  /// Whether the zeros of %a count the sign (since Java 17).
+  bool hex_float_counts_sign = true;
+};
+
+/// The versions of the Java runtimes that may run the program (see
+/// configt::javat::may_run_on), Java 9 and 10 as either of their
+/// neighbours, which were not compared.
+std::vector<java_format_print_versiont> java_format_print_versions();
+
+/// What java.util.Formatter prints for a specifier, from its \p core: the
+/// string of the conversion without flags, width or precision, in lower
+/// case, as the string solver models it:
+/// - for %d of a Byte, Short, Integer or Long, Long.toString of the value;
+/// - for %o and %x of one, the digits of its unsigned value;
+/// - for %e, %f, %g and %a of a Float or Double, java_format_float with the
+///   precision;
+/// - for the other conversions, and for null, the string that Formatter
+///   prints (as "null"), before the precision and the case.
+/// \param conversion: the conversion, in lower case ('t' for a date/time)
+/// \param flags: the flags (see java_format_flagst), with UPPERCASE for an
+///   upper-case conversion
+/// \param width: the width, -1 for none
+/// \param precision: the precision, -1 for none
+/// \param numeric: whether the argument is a number that the conversion
+///   prints as one (not null)
+/// \return the string, or nothing where it depends on the locale (the
+///   grouping of `,`, the case of other than ASCII) or is not modelled (%a
+///   with `0` and a precision)
+std::optional<std::string> java_format_decorate(
+  char conversion,
+  int flags,
+  int width,
+  int precision,
+  const std::string &core,
+  bool numeric,
+  java_format_print_versiont version = {});
 
 #endif // CPROVER_SOLVERS_STRINGS_FORMAT_SPECIFIER_H

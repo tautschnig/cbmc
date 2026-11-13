@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.c49 --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+String.format("%1b", "") gives "true", as in Java 8, 11, 16, 17, 21 and 25.

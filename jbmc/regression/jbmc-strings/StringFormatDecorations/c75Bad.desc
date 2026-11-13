@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.c75Bad --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+The negation of c75: String.format("%1.12g", 1e-10) gives "1.00000000000e-10", as in Java 8, 11, 16, 17, 21 and 25.

@@ -474,3 +474,146 @@ java_format_parse(const std::string &s, java_formatter_versiont version)
   }
   return result;
 }
+
+int java_format_flags(const std::string &flags, char conversion)
+{
+  using namespace java_format_flagst;
+  const std::string chars = "-#+ 0,(<";
+  const int bits[] = {
+    left_justify,
+    alternate,
+    plus,
+    leading_space,
+    zero_pad,
+    group,
+    parentheses,
+    previous};
+  int result = 0;
+  for(const char c : flags)
+  {
+    const std::size_t i = chars.find(c);
+    if(i != std::string::npos)
+      result |= bits[i];
+  }
+  if(std::isupper(static_cast<unsigned char>(conversion)))
+    result |= uppercase;
+  return result;
+}
+
+std::vector<java_format_print_versiont> java_format_print_versions()
+{
+  std::vector<java_format_print_versiont> versions;
+  if(config.java.may_run_on(1, 10))
+    versions.push_back({false, false});
+  if(config.java.may_run_on(9, 16))
+    versions.push_back({true, false});
+  if(config.java.may_run_on(17, 0))
+    versions.push_back({true, true});
+  return versions;
+}
+
+std::optional<std::string> java_format_decorate(
+  char conversion,
+  int flags,
+  int width,
+  int precision,
+  const std::string &core,
+  bool numeric,
+  java_format_print_versiont version)
+{
+  using namespace java_format_flagst;
+  const auto has = [&](int f) { return (flags & f) != 0; };
+  std::string body;
+  const char c = conversion;
+  const bool is_float = c == 'e' || c == 'f' || c == 'g' || c == 'a';
+  if(numeric && (c == 'd' || is_float))
+  {
+    // Formatter.print(long) and print(double): the sign, the magnitude
+    // with zeros before it, and the closing parenthesis
+    if(has(group))
+      return {};
+    if(is_float && core == "NaN")
+      body = core;
+    else
+    {
+      const bool negative = !core.empty() && core[0] == '-';
+      std::string magnitude = core.substr(negative ? 1 : 0);
+      // `#` with a precision of 0: the point (for %e before the exponent)
+      if(
+        has(alternate) && precision == 0 && magnitude != "Infinity" &&
+        (c == 'e' || c == 'f'))
+      {
+        const std::size_t mark =
+          c == 'e' ? magnitude.find('e') : magnitude.size();
+        magnitude.insert(mark, 1, '.');
+      }
+      std::string lead;
+      if(negative)
+        lead = has(parentheses) ? "(" : "-";
+      else if(has(plus))
+        lead = "+";
+      else if(has(leading_space))
+        lead = " ";
+      const std::string trail = negative && has(parentheses) ? ")" : "";
+      std::string zeros;
+      if(has(zero_pad) && magnitude != "Infinity")
+      {
+        if(c == 'a' && precision != -1)
+          return {};
+        // adjustWidth, and the characters before the magnitude (for %a
+        // before Java 17, as if there were no sign)
+        const long w = width - (negative && has(parentheses) ? 1 : 0);
+        const std::size_t sign =
+          c == 'a' && !version.hex_float_counts_sign ? 0 : lead.size();
+        const long n = w - static_cast<long>(sign + magnitude.size());
+        if(n > 0)
+          zeros.assign(static_cast<std::size_t>(n), '0');
+      }
+      if(c == 'a' && magnitude != "Infinity")
+        body = lead + magnitude.substr(0, 2) + zeros + magnitude.substr(2);
+      else
+        body = lead + zeros + magnitude + trail;
+    }
+  }
+  else if(numeric && (c == 'o' || c == 'x'))
+  {
+    // Formatter.print(long): the radix prefix, then zeros
+    const std::string prefix =
+      has(alternate) ? (c == 'o' ? "0" : "0x") : std::string{};
+    std::string zeros;
+    if(has(zero_pad))
+    {
+      const long n = width - static_cast<long>(prefix.size() + core.size());
+      if(n > 0)
+        zeros.assign(static_cast<std::size_t>(n), '0');
+    }
+    body = prefix + zeros + core;
+  }
+  else
+  {
+    // Formatter.print(String): the precision (which only the general
+    // conversions take, and the floating-point ones for "null")
+    body = core;
+    if(precision != -1)
+      body = body.substr(0, std::min<std::size_t>(precision, body.size()));
+  }
+  if(has(uppercase))
+  {
+    for(char &ch : body)
+    {
+      if(static_cast<unsigned char>(ch) >= 0x80)
+        return {};
+      ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    }
+  }
+  // appendJustified (Java 8 prints %% without it)
+  if(c == '%' && !version.percent_width)
+    return body;
+  if(width != -1 && static_cast<long>(body.size()) < width)
+  {
+    const std::string spaces(
+      static_cast<std::size_t>(width) - body.size(), ' ');
+    body = has(left_justify) ? body + spaces : spaces + body;
+  }
+  return body;
+}
