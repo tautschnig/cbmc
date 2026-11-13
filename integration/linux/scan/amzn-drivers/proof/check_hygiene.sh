@@ -62,15 +62,26 @@ n=$(grep -cE ': UNKNOWN$' "$main" || true)
 n=$(grep -cE 'no body for callee.*FAILURE' "$main" || true)
 [ "$n" -eq 0 ] && say ok "no reached bodyless callee" || bad "$n reached bodyless callee(s): the path is cut, so later assertions may hold vacuously"
 
-# 4. unwinding assertions
-if grep -qE 'unwind(ing)?( assertion)?.*: (SUCCESS|FAILURE)' "$main"; then
-  n=$(grep -cE 'unwind.*: FAILURE' "$main" || true)
-  [ "$n" -eq 0 ] && say ok "unwinding assertions present and passing" \
-                 || bad "$n failing unwinding assertion(s): a loop was cut, so the result covers only the unwound prefix"
+# 4. unwinding assertions.
+# --slice-formula discards unwinding assertions that are trivially true, so
+# their ABSENCE from a log does not mean the flag was omitted.  A log alone
+# cannot distinguish the two, which is why runners record their invocation on
+# a "CBMC-CMD:" line; when that is present it is the authority.
+nfail=$(grep -cE 'unwind.*: FAILURE' "$main" || true)
+if [ "$nfail" -gt 0 ]; then
+  bad "$nfail failing unwinding assertion(s): a loop was cut, so the result covers only the unwound prefix"
+elif grep -q '^CBMC-CMD:' "$main"; then
+  if grep '^CBMC-CMD:' "$main" | grep -q -- '--unwinding-assertions'; then
+    say ok "--unwinding-assertions was passed (recorded command) and none fail"
+  else
+    bad "the recorded command does not pass --unwinding-assertions, so no loop bound is justified"
+  fi
+elif grep -qE 'unwind(ing)?( assertion)?.*: SUCCESS' "$main"; then
+  say ok "unwinding assertions present and passing"
 elif [ "$noloops" = 1 ]; then
   say ok "no unwinding assertion, and --no-loops asserts there are no loops"
 else
-  bad "no unwinding assertion in the log: pass --unwinding-assertions to CBMC, or --no-loops here to state that this harness has none"
+  bad "cannot tell whether --unwinding-assertions was used: no unwind property in the log and no CBMC-CMD line. Record the invocation, or pass --no-loops if this harness has none"
 fi
 
 # 5. failing properties

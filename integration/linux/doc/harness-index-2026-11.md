@@ -4,7 +4,7 @@
 
 One row per harness: what it puts under test, the obligations it asserts, whether it carries a vacuity witness, and -- the column this index exists for -- what each configuration macro assumes away. A finding was once reported and retracted because that last column did not exist anywhere.
 
-41 harnesses.
+42 harnesses.
 
 ## Harnesses with no vacuity witness
 
@@ -661,6 +661,32 @@ The xmit step without a burst bound: a hand-written loop invariant for eth_ena_x
 | `-DASSUME_PREPARE_TX_OK` | assumes ena_com_prepare_tx never fails, which masks F12 (the slot keeps the mbuf on failure) |
 
 * run by `run_xmit_step.sh`: `-DASSUME_PREPARE_TX_OK`
+
+* vacuity witness: yes, 3
+
+### `harness_xmit_step_offloads.c`
+
+The xmit step without a burst bound: a hand-written loop invariant for eth_ena_xmit_pkts, machine-checked in two parts.
+
+| obligation | asserts |
+|---|---|
+| `XS_STARTED` | one submit preserves INV_STARTED |
+| `XS_FREE_LIST` | one submit preserves INV_FREE_LIST |
+| `XS_DESC_SUM` | one submit preserves INV_DESC_SUM |
+| `XS_OWN_TRANSFER` | an accepted packet is recorded in its req_id slot |
+| `XS_OWN_NO_LOSS` | a packet in flight keeps its slot |
+| `XS_DB_PENDING` | an accepted packet leaves a doorbell owing |
+| `XS_WAKEUP` | after the exit block no packet is left pushed without a |
+| `XS_EXIT_STARTED` | the exit block preserves INV_STARTED |
+| `XS_EXIT_FREE_LIST` | the exit block preserves INV_FREE_LIST |
+
+| configuration | assumes |
+|---|---|
+| `-DASSUME_HEADERS_INSIDE_PACKET` | assumes DPDK's TSO contract that l2_len + l3_len + sizeof(rte_tcp_hdr) lies within data_len, i.e. assumes F24 away |
+| `-DASSUME_PREPARE_TX_OK` | assumes ena_com_prepare_tx never fails, which masks F12 (the slot keeps the mbuf on failure) |
+| `-DWITH_OFFLOADS` | enables offloads, so meta_valid and the meta fields are nondeterministic as ena_tx_mbuf_prepare leaves them |
+
+* run by `run_xmit_step_offloads.sh`: `-DASSUME_HEADERS_INSIDE_PACKET`, `-DASSUME_PREPARE_TX_OK`, `-DWITH_OFFLOADS`
 
 * vacuity witness: yes, 3
 

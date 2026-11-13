@@ -1308,6 +1308,79 @@ device misbehaviour. It is the second consequence found of the driver not
 validating mbuf geometry — F15 was the first — and the more serious of the
 two, since the eventual write is to a stack array rather than a ring slot.
 
+## F24: `GET_L4_HDR_LEN` dereferences at an application-supplied offset with no bounds check (DPDK ENA)
+
+Found by lifting the `offloads == 0` restriction that every earlier xmit and
+cleanup harness carried. That restriction excluded `ena_tx_mbuf_prepare`
+entirely, and with it the point where the application's `ol_flags` and
+header-length fields enter the driver.
+
+When TSO is requested and enabled, the driver computes the L4 header length
+with (`ena_ethdev.c:30-32`):
+
+```c
+#define GET_L4_HDR_LEN(mbuf)					\
+	((rte_pktmbuf_mtod_offset(mbuf,	struct rte_tcp_hdr *,	\
+		mbuf->l3_len + mbuf->l2_len)->data_off) >> 4)
+```
+
+`rte_pktmbuf_mtod_offset` is pointer arithmetic on
+`buf_addr + data_off + offset`; it performs **no bounds check**. Both
+`l2_len` and `l3_len` are application-supplied mbuf fields, 7 and 9 bits wide,
+so their sum reaches 638 while the packet's `data_len` may be far smaller.
+Nothing compares the two, although `data_len` is right there in the same
+structure.
+
+The byte read is not merely discarded: its top nibble becomes
+`ena_meta->l4_hdr_len`, which is written into the meta descriptor and read by
+the device.
+
+**Evidence.** `proof/harness_xmit_step_offloads.c` with
+`proof/run_xmit_step_offloads.sh`, ring 8, part 1:
+
+| configuration | result |
+|---|---|
+| `noffl` -- `offloads == 0`, the previous restriction, as a control | SUCCESSFUL |
+| `offl` -- offloads and the mbuf metadata nondeterministic | **FAILED**: `ena_tx_mbuf_prepare.pointer_dereference` -- "pointer outside object bounds" at the `rte_tcp_hdr` dereference |
+| `offl_contract` -- the same, plus DPDK's TSO header contract | SUCCESSFUL |
+
+Both `SUCCESSFUL` configurations pass `proof/check_hygiene.sh --proved`: no
+UNKNOWN, no reached bodyless callee, `--unwinding-assertions` recorded and
+none failing, and both vacuity witnesses FAILING.
+
+The `offl` run carries 139 UNKNOWN properties, all of the
+`byte_extract`-over-anonymous-union kind that CBMC cannot decide on these
+structs. That is a tool limitation and it does not undermine this result,
+because the result there is a **counterexample**, not a proof: the failing
+dereference is concrete.
+
+**Fix.** Compare before dereferencing, which the driver has everything it
+needs to do:
+
+```c
+if (mbuf->l2_len + mbuf->l3_len + sizeof(struct rte_tcp_hdr) > mbuf->data_len)
+        return -EINVAL;   /* or fall back to no TSO */
+```
+
+**Severity.** Needs TSO enabled on the queue, the application requesting
+`RTE_MBUF_F_TX_TCP_SEG`, and header-length fields inconsistent with the
+packet. DPDK's contract does require the application to set them correctly, so
+this is an application-contract violation in the same family as F15 and F22 --
+the third found. Consequence is an out-of-bounds **read** of up to 638 bytes
+past the data start, four bits of which reach the device. DPDK-specific: the
+macro uses `rte_pktmbuf_mtod_offset`, and the Linux and FreeBSD drivers take
+header lengths from the socket buffer instead.
+
+## Depth: the `offloads == 0` restriction is lifted
+
+Separately from F24, this is the depth result. Every xmit-step obligation --
+`XS_STARTED`, `XS_FREE_LIST`, `XS_DESC_SUM`, `XS_OWN_TRANSFER`,
+`XS_OWN_NO_LOSS`, `XS_DB_PENDING`, `XS_WAKEUP`, `XS_EXIT_STARTED`,
+`XS_EXIT_FREE_LIST` -- **holds with offloads enabled and the meta-descriptor
+path live**, provided the application honours the TSO header contract
+(`offl_contract` above). The invariants did not need strengthening to survive
+the meta path, which was the open question.
+
 ## Retracted: "F23" (2026-11-12)
 
 A section numbered F23 was committed in `d4f73ec48ad` and is withdrawn. It
