@@ -1,0 +1,11 @@
+label,backend,kind,wall_s,cpu_s,peak_rss_kb,outcome,failures,props,detail
+freelist_eq_ring4,cprover-smt2,SMT2,3.3,3.3,71132,SUCCESSFUL,0,7128,""
+freelist_eq_ring4,minisat2,SAT,2.8,2.8,82652,SUCCESSFUL,0,7128,""
+aenq_qd4,cprover-smt2,SMT2,4.5,4.5,103500,FAILED,1,11808,""
+aenq_qd4,minisat2,SAT,4.6,4.6,102736,FAILED,1,11808,""
+admin_cq_qd4,cprover-smt2,SMT2,518.7,518.5,7230300,SUCCESSFUL,0,5294,""
+admin_cq_qd4,minisat2,SAT,27.7,27.7,712140,SUCCESSFUL,0,5294,""
+cleanup_step_p1_r8,cprover-smt2,SMT2,5.2,5.2,91688,SUCCESSFUL,0,8301,""
+cleanup_step_p1_r8,minisat2,SAT,5.1,5.1,94480,SUCCESSFUL,0,8301,""
+xmit_step_p1_r16,cprover-smt2,SMT2,4.7,4.7,98976,FAILED,1,8912,""
+xmit_step_p1_r16,minisat2,SAT,4.6,4.6,98980,FAILED,1,8912,""

@@ -141,9 +141,15 @@ struct/datatype encoding path, and any backend configured with
 `use_datatypes` would hit it. That is a more useful conclusion than the one it
 replaces: it localises the defect rather than crediting a solver.
 
-`cprover-smt2` also leaves `use_datatypes` unset, so its failure is unrelated:
-it returns `ERROR` for the byte-extract properties over the driver's anonymous
-unions, the same limitation that makes `--pointer-check` report ERROR there.
+`cprover-smt2` also leaves `use_datatypes` unset, and its failure was not a
+failure at all. **Corrected 2026-11-13:** every `cprover-smt2` row in the
+original table was an artefact of `smt2_solver` not being on `PATH`. CBMC
+reports an unexecutable solver binary as per-property `ERROR` with no
+diagnostic whatsoever, which is indistinguishable from a solver that cannot
+decide the properties. The anonymous-union explanation I gave was invented
+around the first failing case I inspected, which happened to contain a union;
+a one-line program with a single `int` reproduces the same ERROR. See
+`proof/cbmc-limitations/solver_binary_missing_no_diagnostic.md`.
 
 **I could not reduce the crash to a minimal reproducer.** Five synthetic
 shapes under `--z3` all verify normally: a self-referential struct through a
@@ -232,3 +238,41 @@ a discrepancy rather than a speedup.
 because the list is word-split. (The first version of the script did not do
 this, and the resulting three bogus `CRASH` rows for the SAT backends were
 purged from the CSV once identified.)
+
+## Corrected 2026-11-13: `cprover-smt2` re-measured, and it works
+
+The original table recorded `cprover-smt2` as 0 ok / 6 ERROR. That was entirely
+an artefact of `smt2_solver` not being on `PATH`; CBMC reports an unexecutable
+solver binary as per-property `ERROR` with no diagnostic
+(`proof/cbmc-limitations/solver_binary_missing_no_diagnostic.md`).
+
+Re-run with `build/bin` on `PATH`, against `minisat2` on the same binaries:
+
+| model | cprover-smt2 | minisat2 | agree? |
+|---|---|---|---|
+| `freelist_eq_ring4` | SUCCESSFUL, 3.3 s, 69 MB | SUCCESSFUL, 2.8 s, 81 MB | yes |
+| `aenq_qd4` | FAILED, 4.5 s, 101 MB | FAILED, 4.6 s, 100 MB | yes |
+| `admin_cq_qd4` | SUCCESSFUL, **518.7 s, 7061 MB** | SUCCESSFUL, **27.7 s, 695 MB** | yes |
+| `cleanup_step_p1_r8` | SUCCESSFUL, 5.2 s, 90 MB | SUCCESSFUL, 5.1 s, 92 MB | yes |
+| `xmit_step_p1_r16` | FAILED, 4.7 s, 97 MB | FAILED, 4.6 s, 97 MB | yes |
+
+**It agrees with the SAT backend on all five.** On four it is within noise; on
+`admin_cq` it costs 19x the time and 10x the memory. So it is usable as an
+independent cross-check on the cheaper models, alongside Bitwuzla, and is not
+a backend to reach for on the expensive ones.
+
+### A process note on this and the Bitwuzla error
+
+Three claims in this document have now been corrected, and all three failed
+the same way: a tool behaved unexpectedly, I produced a plausible mechanism
+from reading, and wrote it down without testing it. The Bitwuzla "native API"
+claim, the SMT2 CPU-attribution claim and the `cprover-smt2` "anonymous union"
+claim were each refuted in minutes once actually measured -- by reading
+`smt2_dec.cpp`, by grouping the CSV by outcome, and by putting a directory on
+`PATH`.
+
+The pattern worth guarding against is that an unexplained tool failure invites
+a mechanism, and a mechanism that fits the one case in front of you feels like
+an explanation. The cheap defence is the one that worked here each time:
+reproduce the failure in a program small enough that only one thing can
+explain it, before writing any prose about why.
