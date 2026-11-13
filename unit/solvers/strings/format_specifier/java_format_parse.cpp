@@ -117,3 +117,25 @@ TEST_CASE(
   REQUIRE(to_string(parentheses | left_justify | alternate) == "-#(");
   REQUIRE(to_string(previous | zero_pad | plus) == "+0<");
 }
+
+// The expected results are those of Formatter of Java 8 (as of 8 to 15),
+// 16 (as of 16 to 18) and 19 (as of 19 and later).
+TEST_CASE(
+  "java_format_parse of the versions of java.util.Formatter",
+  "[core][solvers][strings][format_specifier]")
+{
+  using versiont = java_formatter_versiont;
+  const auto parse = [](const std::string &s, versiont v)
+  { return show(java_format_parse(s, v)); };
+  // Java 8 to 15: an index of 0 is ordinary, and a number beyond int is
+  // ignored (an index is then relative, here without a previous argument)
+  REQUIRE(parse("%0$s", versiont::JAVA_8) == "OK [%s|1]");
+  REQUIRE(parse("%99999999999$s", versiont::JAVA_8) == "OK [%s|0]");
+  REQUIRE(parse("%s %99999999999$s", versiont::JAVA_8) == "OK [%s|1] [%s|1]");
+  REQUIRE(parse("%99999999999d", versiont::JAVA_8) == "OK [%d|1]");
+  REQUIRE(parse("%0$s", versiont::JAVA_16) == "E I 0");
+  REQUIRE(parse("%99999999999d", versiont::JAVA_16) == "E W -2147483648");
+  // the flags that do not fit: the first up to Java 18, all since 19
+  REQUIRE(parse("%#(+tY", versiont::JAVA_16) == "E X Y#");
+  REQUIRE(parse("%#(+tY", versiont::JAVA_19) == "E X Y#+(");
+}

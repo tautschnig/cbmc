@@ -14,6 +14,7 @@ Author: Romain Brenguier, Joel Allred
 
 #include <util/invariant.h>
 
+#include <initializer_list>
 #include <optional>
 #include <string>
 #include <vector>
@@ -239,9 +240,40 @@ const int previous = 1 << 8;
 std::string to_string(int flags);
 } // namespace java_format_flagst
 
-/// Parse \p s as java.util.Formatter (JDK 17 and later) parses a format
+/// The versions of java.util.Formatter whose parse of format strings
+/// differ.
+enum class java_formatter_versiont
+{
+  /// Java 8 to 15: an argument index of 0 is ordinary, and an index, width
+  /// or precision beyond the range of int is ignored (the index is then
+  /// relative, as with `<`).
+  JAVA_8,
+  /// Java 16 to 18: those throw, and a FormatFlagsConversionMismatch names
+  /// the first flag that does not fit.
+  JAVA_16,
+  /// Java 19 and later: a FormatFlagsConversionMismatch names all the flags
+  /// that do not fit.
+  JAVA_19
+};
+
+/// The versions of Formatter of the Java runtimes that may run the program
+/// (see configt::javat::may_run_on).
+std::vector<java_formatter_versiont> java_formatter_versions();
+
+/// Parse \p s as java.util.Formatter of \p version parses a format
 /// string, with the checks that its specifiers make when they are parsed:
 /// the first error, or the specifiers.
-java_format_parset java_format_parse(const std::string &s);
+java_format_parset java_format_parse(
+  const std::string &s,
+  java_formatter_versiont version = java_formatter_versiont::JAVA_19);
+
+/// The flags of \p flags among \p bad (in the order of Formatter's checks)
+/// that Formatter of \p version reports in a
+/// FormatFlagsConversionMismatchException: all of them since Java 19, the
+/// first before. 0 for none.
+int java_format_bad_flags(
+  int flags,
+  std::initializer_list<int> bad,
+  java_formatter_versiont version);
 
 #endif // CPROVER_SOLVERS_STRINGS_FORMAT_SPECIFIER_H

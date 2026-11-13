@@ -13,6 +13,8 @@ Date:   June 2019
 
 #include "format_specifier.h"
 
+#include <util/config.h>
+
 #include <cctype>
 #include <regex>
 
@@ -26,10 +28,11 @@ Date:   June 2019
 static format_specifiert format_specifier_of_match(std::smatch &m)
 {
   PRECONDITION(m.size() == 7);
-  // Java throws for a number beyond the range of int (see
-  // java_format_parse).
-  bool out_of_range = false;
-  const auto number = [&out_of_range](const std::string &digits)
+  // A number beyond the range of int is ignored, an index then relative,
+  // and an index of 0 is ordinary, as in Java 8 to 15. Java 16 and later
+  // throw for these (see java_format_parse), so that what they print does
+  // not matter.
+  const auto number = [](const std::string &digits) -> std::optional<int>
   {
     long long value = 0;
     for(const char c : digits)
@@ -38,18 +41,27 @@ static format_specifiert format_specifier_of_match(std::smatch &m)
         break;
       value = value * 10 + (c - '0');
       if(value > 2147483647LL)
-      {
-        out_of_range = true;
-        return 0;
-      }
+        return {};
     }
     return static_cast<int>(value);
   };
-  int index = m[1].str().empty() ? -1 : number(m[1].str());
   std::string flag = m[2].str();
-  int width = m[3].str().empty() ? -1 : number(m[3].str());
+  int index = -1;
+  if(!m[1].str().empty())
+  {
+    const auto value = number(m[1].str());
+    if(!value.has_value())
+      flag += '<';
+    else if(*value > 0)
+      index = *value;
+  }
+  const auto width_value = number(m[3].str());
+  int width =
+    m[3].str().empty() || !width_value.has_value() ? -1 : *width_value;
   // The precision is matched with its leading '.'.
-  int precision = m[4].str().empty() ? -1 : number(m[4].str().substr(1));
+  const auto precision_value =
+    m[4].str().empty() ? std::optional<int>{} : number(m[4].str().substr(1));
+  int precision = precision_value.has_value() ? *precision_value : -1;
   // `tT` values:  "t" = date/time, "T" = uppercase date/time
   std::string tT = m[5].str();
 
@@ -64,7 +76,6 @@ static format_specifiert format_specifier_of_match(std::smatch &m)
   format_specifiert fs(index, flag, width, precision, dt, conversion);
   if(dt)
     fs.date_time_field = m[6].str()[0];
-  fs.unsupported = out_of_range;
   const std::string known = dt ? "tT" : "bBhHsScCdoxXeEfgGaAtT%n";
   if(known.find(conversion) == std::string::npos)
     fs.unknown_conversion = true;
@@ -144,6 +155,38 @@ std::string java_format_flagst::to_string(int flags)
   return result;
 }
 
+std::vector<java_formatter_versiont> java_formatter_versions()
+{
+  std::vector<java_formatter_versiont> versions;
+  if(config.java.may_run_on(8, 15))
+    versions.push_back(java_formatter_versiont::JAVA_8);
+  if(config.java.may_run_on(16, 18))
+    versions.push_back(java_formatter_versiont::JAVA_16);
+  if(config.java.may_run_on(19, 0))
+    versions.push_back(java_formatter_versiont::JAVA_19);
+  // (a runtime before Java 8 runs as Java 8 here)
+  if(versions.empty())
+    versions.push_back(java_formatter_versiont::JAVA_8);
+  return versions;
+}
+
+int java_format_bad_flags(
+  int flags,
+  std::initializer_list<int> bad,
+  java_formatter_versiont version)
+{
+  int result = 0;
+  for(const int f : bad)
+  {
+    if((flags & f) == 0)
+      continue;
+    if(version != java_formatter_versiont::JAVA_19)
+      return f;
+    result |= f;
+  }
+  return result;
+}
+
 /// Integer.parseInt of decimal digits, or nullopt beyond the range of int.
 static std::optional<int> java_parse_int(const std::string &digits)
 {
@@ -157,8 +200,10 @@ static std::optional<int> java_parse_int(const std::string &digits)
   return static_cast<int>(value);
 }
 
-java_format_parset java_format_parse(const std::string &s)
+java_format_parset
+java_format_parse(const std::string &s, java_formatter_versiont version)
 {
+  const bool before_16 = version == java_formatter_versiont::JAVA_8;
   using namespace java_format_flagst;
   namespace error = java_format_errort;
   java_format_parset result;
@@ -217,11 +262,17 @@ java_format_parset java_format_parse(const std::string &s)
       {
         const std::string digits = m[1].str().substr(0, m[1].length() - 1);
         const auto value = java_parse_int(digits);
-        if(!value.has_value())
+        if(before_16)
+        {
+          // NumberFormatException ignored: the index stays -1, relative
+          index = value.has_value() ? *value : -1;
+        }
+        else if(!value.has_value())
           return fail(error::argument_index, int_min);
-        if(*value <= 0)
+        else if(*value <= 0)
           return fail(error::argument_index, std::to_string(*value));
-        index = *value;
+        else
+          index = *value;
       }
       for(const char c : m[2].str())
       {
@@ -245,16 +296,16 @@ java_format_parset java_format_parse(const std::string &s)
       if(m[3].matched)
       {
         const auto value = java_parse_int(m[3].str());
-        if(!value.has_value())
+        if(!value.has_value() && !before_16)
           return fail(error::width, int_min);
-        width = *value;
+        width = value.has_value() ? *value : -1;
       }
       if(m[4].matched)
       {
         const auto value = java_parse_int(m[4].str().substr(1));
-        if(!value.has_value())
+        if(!value.has_value() && !before_16)
           return fail(error::precision, int_min);
-        precision = *value;
+        precision = value.has_value() ? *value : -1;
       }
       if(m[5].matched)
       {
@@ -299,10 +350,14 @@ java_format_parset java_format_parse(const std::string &s)
     const char c = fs.conversion;
     const int flags = fs.flags;
     const auto contains = [&](int f) { return (flags & f) == f; };
-    const auto bad_flags = [&](int bad) -> std::optional<std::string>
+    // the flags among \p bad that the exception names (in the order of the
+    // checks of Formatter, which matters before Java 19)
+    const auto bad_flags =
+      [&](std::initializer_list<int> bad) -> std::optional<std::string>
     {
-      if((flags & bad) != 0)
-        return std::string(1, c) + to_string(flags & bad);
+      const int found = java_format_bad_flags(flags, bad, version);
+      if(found != 0)
+        return std::string(1, c) + to_string(found);
       return std::nullopt;
     };
     const bool no_width = width == -1;
@@ -325,7 +380,7 @@ java_format_parset java_format_parse(const std::string &s)
           return fail(error::unknown_conversion, std::string("t") + c);
         if(
           auto x = bad_flags(
-            alternate | plus | leading_space | zero_pad | group | parentheses))
+            {alternate, plus, leading_space, zero_pad, group, parentheses}))
           return fail(error::flags_mismatch, *x);
         if(no_width && contains(left_justify))
           return fail(error::missing_width, fs.text);
@@ -338,7 +393,7 @@ java_format_parset java_format_parse(const std::string &s)
           return fail(error::missing_width, fs.text);
         if(
           auto x =
-            bad_flags(plus | leading_space | zero_pad | group | parentheses))
+            bad_flags({plus, leading_space, zero_pad, group, parentheses}))
           return fail(error::flags_mismatch, *x);
       }
       else if(c == 'c')
@@ -347,7 +402,7 @@ java_format_parset java_format_parse(const std::string &s)
           return fail(error::precision, std::to_string(precision));
         if(
           auto x = bad_flags(
-            alternate | plus | leading_space | zero_pad | group | parentheses))
+            {alternate, plus, leading_space, zero_pad, group, parentheses}))
           return fail(error::flags_mismatch, *x);
         if(no_width && contains(left_justify))
           return fail(error::missing_width, fs.text);
@@ -358,18 +413,21 @@ java_format_parset java_format_parse(const std::string &s)
           return fail(e->first, e->second);
         if(precision != -1)
           return fail(error::precision, std::to_string(precision));
-        if(auto x = bad_flags(c == 'd' ? alternate : group))
+        if(auto x = bad_flags({c == 'd' ? alternate : group}))
           return fail(error::flags_mismatch, *x);
       }
       else if(c == 'e' || c == 'f' || c == 'g' || c == 'a')
       {
         if(auto e = check_numeric())
           return fail(e->first, e->second);
-        const int bad = c == 'a'   ? parentheses | group
-                        : c == 'e' ? group
-                        : c == 'g' ? alternate
-                                   : 0;
-        if(auto x = bad_flags(bad))
+        std::optional<std::string> x;
+        if(c == 'a')
+          x = bad_flags({parentheses, group});
+        else if(c == 'e')
+          x = bad_flags({group});
+        else if(c == 'g')
+          x = bad_flags({alternate});
+        if(x.has_value())
           return fail(error::flags_mismatch, *x);
       }
       else

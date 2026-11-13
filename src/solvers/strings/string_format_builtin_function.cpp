@@ -1315,7 +1315,8 @@ static std::vector<std::pair<exprt, format_error_textt>> print_errors(
   string_constraint_generatort &generator,
   const java_format_specifiert &fs,
   const exprt &n,
-  const std::vector<array_string_exprt> &args)
+  const std::vector<array_string_exprt> &args,
+  java_formatter_versiont version)
 {
   namespace error = java_format_errort;
   using namespace java_format_flagst;
@@ -1342,9 +1343,11 @@ static std::vector<std::pair<exprt, format_error_textt>> print_errors(
   };
   const char c = fs.conversion;
   const std::string conversion{c};
-  const int bad_flags = (c == 'o' || c == 'x')
-                          ? fs.flags & (parentheses | leading_space | plus)
-                          : 0;
+  const int bad_flags =
+    (c == 'o' || c == 'x')
+      ? java_format_bad_flags(
+          fs.flags, {parentheses, leading_space, plus}, version)
+      : 0;
   const bool alternate_string = c == 's' && (fs.flags & alternate) != 0;
   // The argument, where the arguments of the model have it: beyond them, any
   // of the errors may occur, and the model checks the one that does.
@@ -1447,9 +1450,10 @@ static std::vector<std::pair<exprt, format_error_textt>> print_errors(
 }
 
 /// The first error of Java's String.format with a format string and its
-/// arguments, in the order of java.util.Formatter (JDK 17 and later): the
-/// errors of its parse, then those of each specifier in turn as it is
-/// printed. The result is "" for none, or the code of the error (see
+/// arguments, in the order of java.util.Formatter: the errors of its parse,
+/// then those of each specifier in turn as it is printed. Where the Java
+/// runtimes that may run the program (see configt::javat) parse it
+/// differently (see java_formatter_versiont), any of their errors. The result is "" for none, or the code of the error (see
 /// java_format_errort) and its detail:
 /// - for an error of the parse, the detail of java_format_parse, with the
 ///   index, width or precision as two characters (the most significant 16
@@ -1489,8 +1493,8 @@ string_constraint_generatort::add_axioms_for_format_error(
     return {return_code, constraints};
   }
   const auto size = numeric_cast_v<std::size_t>(to_constant_expr(length));
-  const java_format_parset parsed = java_format_parse(
-    utf16_constant_array_to_java(to_array_expr(str.content()), size));
+  const std::string format =
+    utf16_constant_array_to_java(to_array_expr(str.content()), size);
 
   const typet &index_type = res.length_type();
   const typet &char_type = to_type_with_subtype(res.content().type()).subtype();
@@ -1506,27 +1510,44 @@ string_constraint_generatort::add_axioms_for_format_error(
     }
     return conjunction(conjuncts);
   };
-  if(parsed.error.has_value())
+  // The errors of each version of Formatter of the runtimes that may run
+  // the program, of which one, any, gives the result.
+  const std::vector<java_formatter_versiont> versions =
+    java_formatter_versions();
+  const symbol_exprt chosen =
+    fresh_symbol("format_error_version", unsignedbv_typet{8});
+  constraints.existential.push_back(binary_relation_exprt{
+    chosen, ID_lt, from_integer(versions.size(), chosen.type())});
+  for(std::size_t v = 0; v < versions.size(); ++v)
   {
-    constraints.existential.push_back(res_is(parse_error_text(*parsed.error)));
-    return {return_code, constraints};
-  }
-
-  // The first error whose condition holds gives the result.
-  exprt earlier = false_exprt{};
-  for(const java_format_specifiert &fs : parsed.specifiers)
-  {
-    if(!fs.takes_argument)
-      continue;
-    for(auto &error : print_errors(*this, fs, n, args))
+    const exprt this_version =
+      versions.size() == 1
+        ? exprt{true_exprt{}}
+        : exprt{equal_exprt{chosen, from_integer(v, chosen.type())}};
+    const java_format_parset parsed = java_format_parse(format, versions[v]);
+    if(parsed.error.has_value())
     {
-      constraints.existential.push_back(implies_exprt{
-        and_exprt{not_exprt{earlier}, error.first}, res_is(error.second)});
-      earlier = or_exprt{earlier, error.first};
+      constraints.existential.push_back(
+        implies_exprt{this_version, res_is(parse_error_text(*parsed.error))});
+      continue;
     }
+    // The first error whose condition holds gives the result.
+    exprt earlier = false_exprt{};
+    for(const java_format_specifiert &fs : parsed.specifiers)
+    {
+      if(!fs.takes_argument)
+        continue;
+      for(auto &error : print_errors(*this, fs, n, args, versions[v]))
+      {
+        constraints.existential.push_back(implies_exprt{
+          and_exprt{this_version, not_exprt{earlier}, error.first},
+          res_is(error.second)});
+        earlier = or_exprt{earlier, error.first};
+      }
+    }
+    constraints.existential.push_back(
+      implies_exprt{and_exprt{this_version, not_exprt{earlier}}, res_is({})});
   }
-  constraints.existential.push_back(
-    implies_exprt{not_exprt{earlier}, res_is({})});
   return {return_code, constraints};
 }
 
@@ -1547,17 +1568,22 @@ string_constraint_generatort::add_axioms_for_format_uses(
   if(!length.is_constant() || str.content().id() != ID_array)
     return {fresh_symbol("format_uses", f.type()), {}};
   const auto size = numeric_cast_v<std::size_t>(to_constant_expr(length));
-  const java_format_parset parsed = java_format_parse(
-    utf16_constant_array_to_java(to_array_expr(str.content()), size));
+  const std::string format =
+    utf16_constant_array_to_java(to_array_expr(str.content()), size);
+  // (those of any of the versions of Formatter that may run the program)
   std::uint32_t uses = 0;
-  for(const java_format_specifiert &fs : parsed.specifiers)
+  for(const java_formatter_versiont version : java_formatter_versions())
   {
-    if(!fs.takes_argument || fs.argument < 1 || fs.argument > 10)
-      continue;
-    if(fs.conversion == 's' && !fs.date_time)
-      uses |= std::uint32_t{1} << (2 * (fs.argument - 1));
-    else if(fs.conversion == 'h' && !fs.date_time)
-      uses |= std::uint32_t{1} << (2 * (fs.argument - 1) + 1);
+    for(const java_format_specifiert &fs :
+        java_format_parse(format, version).specifiers)
+    {
+      if(!fs.takes_argument || fs.argument < 1 || fs.argument > 10)
+        continue;
+      if(fs.conversion == 's' && !fs.date_time)
+        uses |= std::uint32_t{1} << (2 * (fs.argument - 1));
+      else if(fs.conversion == 'h' && !fs.date_time)
+        uses |= std::uint32_t{1} << (2 * (fs.argument - 1) + 1);
+    }
   }
   return {from_integer(uses, f.type()), {}};
 }

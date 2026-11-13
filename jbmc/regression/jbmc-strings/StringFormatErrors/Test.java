@@ -79,4 +79,16 @@ public class Test {
   public static void c38Bad() { String.format("%11$s %1$d", 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11); assert false; }
   public static void c39() { String r = String.format("%10$d", 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11); assert r.equals("10"); }
   public static void c39Bad() { String r = String.format("%10$d", 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11); assert !r.equals("10"); }
+  public static void c1Java11() { String r = String.format("%0$d", 1); assert r.equals("1"); }
+  public static void c1Java11Bad() { String r = String.format("%0$d", 1); assert !r.equals("1"); }
+  public static void c2Java11() { try { String.format("%99999999999$d", 1); assert false; } catch(java.util.MissingFormatArgumentException e) { assert e.getMessage().equals("Format specifier '%d'"); } }
+  public static void c2Java11Bad() { try { String.format("%99999999999$d", 1); } catch(java.util.MissingFormatArgumentException e) { assert !e.getMessage().equals("Format specifier '%d'"); } }
+  public static void c4Java11() { String r = String.format("%99999999999d", 1); assert r.equals("1"); }
+  public static void c4Java11Bad() { String r = String.format("%99999999999d", 1); assert !r.equals("1"); }
+  public static void c5Java11() { String r = String.format("%.99999999999f", 1.0); assert r.equals("1.000000"); }
+  public static void c5Java11Bad() { String r = String.format("%.99999999999f", 1.0); assert !r.equals("1.000000"); }
+  public static void flagsJava17() { try { String.format("%(+x", 5); assert false; } catch(java.util.FormatFlagsConversionMismatchException e) { assert e.getMessage().equals("Conversion = x, Flags = ("); } }
+  public static void flagsJava21() { try { String.format("%(+x", 5); assert false; } catch(java.util.FormatFlagsConversionMismatchException e) { assert e.getMessage().equals("Conversion = x, Flags = +("); } }
+  public static void flagsAny() { try { String.format("%(+x", 5); assert false; } catch(java.util.FormatFlagsConversionMismatchException e) { assert e.getMessage().equals("Conversion = x, Flags = +(") || e.getMessage().equals("Conversion = x, Flags = ("); } }
+  public static void flagsAnyBad() { try { String.format("%(+x", 5); assert false; } catch(java.util.FormatFlagsConversionMismatchException e) { assert e.getMessage().equals("Conversion = x, Flags = +("); } }
 }
