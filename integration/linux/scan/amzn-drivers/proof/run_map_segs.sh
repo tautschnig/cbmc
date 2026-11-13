@@ -19,10 +19,12 @@ mkdir -p "$OUT"
 [ -f "$OUT/flags.txt" ] || { echo "run run.sh first (it writes flags.txt)"; exit 1; }
 
 for L in 1 0; do
+ for V in 0 1; do
+  vd=""; [ $V = 1 ] && vd=-DVACUITY_CHECK
   cd "$DPDK/build-ql"
   ( ulimit -v 32000000
     "$BIN/goto-cc" $(cat "$OUT/flags.txt") -DPEDANTIC \
-      -DMAX_SEGS=$SEGS -DSEGS_LEGAL=$L \
+      -DMAX_SEGS=$SEGS -DSEGS_LEGAL=$L $vd \
       "$HERE/harness_map_segs.c" -o "$OUT/ms$L.gb" )
   cd "$OUT"
   ( ulimit -v 32000000
@@ -31,8 +33,9 @@ for L in 1 0; do
   ( ulimit -v 48000000
     timeout 900 "$BIN/cbmc" "ms${L}_rm.gb" --bounds-check --pointer-check \
       --unwind $((SEGS + 4)) --unwinding-assertions > "ms$L.log" 2>&1 ) || true
-  echo "== SEGS_LEGAL=$L (chain $([ "$L" = 1 ] && echo '<=' || echo '>') sgl_size)"
+  echo "== SEGS_LEGAL=$L$([ $V = 1 ] && echo ' (vacuity witnesses, must FAIL)') (chain $([ "$L" = 1 ] && echo '<=' || echo '>') sgl_size)"
   grep -E 'main\.assertion' "ms$L.log" | sed 's/^/  /'
   grep ': FAILURE' "ms$L.log" | grep -v 'no body for callee' \
     | sed -E 's/\].*in /] /' | sort -u | sed 's/^/  /' | head -3
+ done
 done

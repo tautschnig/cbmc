@@ -76,5 +76,26 @@ int main(void)
   __CPROVER_assert(
     tx_info.num_of_bufs <= ENA_PKT_MAX_BUFS,
     "num_of_bufs stays within tx_info->bufs[]");
+
+#ifdef VACUITY_CHECK
+  /* Both must FAIL.  A bound on num_of_bufs says nothing if the mapping never
+   * fills a descriptor, or if the count can never approach the bound -- the
+   * assertion would then hold because the interesting states do not arise. */
+  __CPROVER_assert(
+    tx_info.num_of_bufs == 0,
+    "witness: the mapping can fill at least one descriptor");
+#  if !SEGS_LEGAL
+  /* Only for an over-long chain, and only once MAX_SEGS >= 18.  With a legal
+   * chain (SEGS_LEGAL=1) num_of_bufs is bounded by sgl_size, which is below
+   * ENA_PKT_MAX_BUFS, so it CANNOT reach the bound and this witness would
+   * pass legitimately.  Measured: at MAX_SEGS 6 and 17 the bound is
+   * unreachable in both configurations, so the obligation above holds with a
+   * margin and would not catch an off-by-one; at 18 with an illegal chain it
+   * is reached and the obligation becomes meaningful. */
+  __CPROVER_assert(
+    tx_info.num_of_bufs < ENA_PKT_MAX_BUFS,
+    "witness: num_of_bufs can reach the bound it is checked against");
+#  endif
+#endif
   return 0;
 }

@@ -80,10 +80,21 @@ int main(void)
   __CPROVER_assume(tx_pkts != NULL);
 
   /* ---- one arbitrary operation ---- */
+  const uint16_t ntu_before = ring.next_to_use;
   sent = eth_ena_xmit_pkts(&ring, tx_pkts, nb_pkts);
 
   /* ---- obligations ---- */
   __CPROVER_assert(sent <= nb_pkts, "API: sent <= nb_pkts");
   __CPROVER_assert(INV(&ring), "INV preserved by eth_ena_xmit_pkts");
+
+#ifdef VACUITY_CHECK
+  /* Both must FAIL.  "sent <= nb_pkts" and a preserved invariant are satisfied
+   * trivially by a submit that accepts nothing, so witness that the transmit
+   * can actually accept a packet and move the producer. */
+  __CPROVER_assert(sent == 0, "witness: a packet can be accepted");
+  __CPROVER_assert(
+    ring.next_to_use == ntu_before,
+    "witness: an accepted packet moves the producer index");
+#endif
   return 0;
 }

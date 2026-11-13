@@ -59,3 +59,12 @@ one reset_flag    run_reset_flag.sh
 one rss_reta      run_rss_reta.sh
 one freelist_eq   run_freelist_equiv.sh
 one cleanup_step  run_cleanup_step.sh
+
+# Adjudicate the whole sweep rather than trusting the per-runner summary
+# above.  That summary counted witness FAILURES, so a harness with a witness
+# that PASSED, or with no witness at all, was indistinguishable from a clean
+# run -- and a passing witness is exactly the signal that a proof may be
+# empty.  check_sweep.py applies the check_hygiene.sh rules across the corpus.
+echo
+echo "== adjudication"
+"$HERE/check_sweep.py" "$LOG" --expect-fail "$(echo ${EXPECT_FAIL:-} | tr ' ' ',')"

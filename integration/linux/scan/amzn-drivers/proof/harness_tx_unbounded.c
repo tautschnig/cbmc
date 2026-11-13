@@ -64,6 +64,7 @@ int main(void)
 	tx_pkts = malloc((size_t)nb_pkts * sizeof(*tx_pkts));
 	__CPROVER_assume(tx_pkts != NULL);
 
+	const uint16_t ntu_before = ring.next_to_use;
 	sent = eth_ena_xmit_pkts(&ring, tx_pkts, nb_pkts);
 
 	__CPROVER_assert(sent <= nb_pkts, "API: sent <= nb_pkts");
@@ -81,6 +82,20 @@ int main(void)
   __CPROVER_assert(
     !ring.pkts_without_db,
     "INV_wakeup: no packet left pushed without a doorbell");
+
+#ifdef VACUITY_CHECK
+  /* All three must FAIL.  Every obligation here is satisfied trivially by a
+   * submit that accepts nothing: sent <= nb_pkts holds, the invariant is
+   * untouched, and no packet is left owing a doorbell because no packet was
+   * pushed.  Witness that each interesting state arises. */
+  __CPROVER_assert(sent == 0, "witness: a packet can be accepted");
+  __CPROVER_assert(
+    ring.next_to_use == ntu_before,
+    "witness: an accepted packet moves the producer index");
+  __CPROVER_assert(
+    !(sent > 0 && ring.pkts_without_db == 0),
+    "witness: a submit can accept a packet and still clear the doorbell debt");
+#endif
   /* referenced so goto-instrument --add-library pulls in the model that
 	 * DFCC's write-set bookkeeping needs */
 	free(tx_pkts);

@@ -147,6 +147,13 @@ int main(void)
     __CPROVER_assert(
       g_live_allocs == 0,
       "ERR_NO_LEAK: a failed setup releases everything it allocated");
+#ifdef VACUITY_CHECK
+    /* Must FAIL.  These three obligations all sit inside `if (rc != 0)`, so
+     * they hold vacuously if the setup can never fail.  Witness that the
+     * failing path is reachable, and that the allocator actually refused
+     * rather than the failure coming from somewhere uninteresting. */
+    __CPROVER_assert(0, "witness: a failing ena_tx_queue_setup is reachable");
+#endif
 
 #if RELEASE_AFTER_FAILURE
     /*

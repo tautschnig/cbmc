@@ -97,7 +97,10 @@ def obligations(text):
 
 
 def witnesses(text):
-    return sorted(set(re.findall(r'"(vacuity witness[^"]*)"', text)))
+    # Label conventions vary: "vacuity witness: ...", "witness: ...", and
+    # "zero-length witness: ..." all appear.  Matching only the first of
+    # those once undercounted harness_rx_reqid.c as having none.
+    return sorted(set(re.findall(r'"([^"]*witness[^"]*)"', text)))
 
 
 def macros(text):

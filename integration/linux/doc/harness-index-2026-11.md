@@ -8,14 +8,7 @@ One row per harness: what it puts under test, the obligations it asserts, whethe
 
 ## Harnesses with no vacuity witness
 
-A harness with no witness can pass because the state its property describes never arises. These need one, or a note saying why not:
-
-* `harness_map_segs.c`
-* `harness_rx_errorpath.c`
-* `harness_rx_reqid.c`
-* `harness_setup_errorpath.c`
-* `harness_tx_allseq.c`
-* `harness_tx_unbounded.c`
+None.
 
 ## Index
 
@@ -281,7 +274,7 @@ Phase 6: leaks (Unveil class D, 17 findings / 9%).
 
 * run by `run_leaks.sh`: no restricting macros
 
-* vacuity witness: yes, 1
+* vacuity witness: yes, 2
 
 ### `harness_llq_path.c`
 
@@ -316,7 +309,7 @@ Focused obligation: can ena_tx_map_mbuf() overrun tx_info->bufs[] ?
 
 * run by `run_map_segs.sh`: `-DMAX_SEGS`, `-DSEGS_LEGAL`
 
-* vacuity witness: **none**
+* vacuity witness: yes, 2
 
 ### `harness_prepare_tx.c`
 
@@ -343,7 +336,7 @@ Discharge ASSUME_PREPARE_TX_OK: check the contract that harness_tx_callees.c stu
 * run by `run_induction.sh`: `-DASSUME_NO_F14`
 * run by `run_prepare_tx.sh`: `-DASSUME_NO_F14`, `-DCLAIM_NB_POSITIVE`, `-DFIXED_ESTIMATE`
 
-* vacuity witness: yes, 4
+* vacuity witness: yes, 6
 
 ### `harness_reset_flag.c`
 
@@ -404,7 +397,7 @@ RX error paths: the F10 shape on the RX side, and the interrupt-enable operation
 
 * run by `run_rx_errorpath.sh`: no restricting macros
 
-* vacuity witness: **none**
+* vacuity witness: yes, 1
 
 ### `harness_rx_recv.c`
 
@@ -452,7 +445,7 @@ F16: DPDK ena_rx_mbuf dereferences rx_buffer_info[req_id].mbuf for a device-supp
 |---|---|
 | `RX_REQID_POSTED` | ena_rx_mbuf only dereferences posted slots |
 
-* vacuity witness: **none**
+* vacuity witness: yes, 1
 
 ### `harness_rx_setup.c`
 
@@ -518,7 +511,7 @@ Error-path obligations for ena_tx_queue_setup (Unveil class C, and the 61% error
 
 * run by `run_setup_errorpath.sh`: no restricting macros
 
-* vacuity witness: **none**
+* vacuity witness: yes, 1
 
 ### `harness_setup_rx_intr.c`
 
@@ -575,7 +568,7 @@ Pilot: all-sequences safety proof for the DPDK ENA TX path.
 |---|---|
 | `API` | sent <= nb_pkts |
 
-* vacuity witness: **none**
+* vacuity witness: yes, 2
 
 ### `harness_tx_callees.c`
 
@@ -607,7 +600,7 @@ Stage 1 of doc/cbmc-driver-proof-design-2026-11.md: discharge the callee contrac
 * run by `run_stage1_callees.sh`: `-DMAX_BURST`, `-DMAX_SEGS`
 * run by `run_xmit_variant.sh`: `-DASSUME_PREPARE_TX_OK`, `-DMAX_BURST`, `-DMAX_SEGS`
 
-* vacuity witness: yes, 2
+* vacuity witness: yes, 3
 
 ### `harness_tx_unbounded.c`
 
@@ -619,7 +612,7 @@ Stage 2: remove the burst bound.  Same induction step as harness_tx_allseq.c, bu
 
 * run by `run_stage2_unbounded.sh`: no restricting macros
 
-* vacuity witness: **none**
+* vacuity witness: yes, 3
 
 ### `harness_watchdog.c`
 
@@ -725,7 +718,7 @@ FreeBSD ENA: ena_tx_cleanup, with the free discipline and the DMA-ownership obli
 * run by `run_fbsd_cleanup.sh`: `-DASSUME_DEVICE_REQ_ID_IN_RANGE`
 * run by `run_fbsd_cleanup_perf.sh`: no restricting macros
 
-* vacuity witness: yes, 1
+* vacuity witness: yes, 2
 
 ### `fbsd/harness_fbsd_xmit.c`
 
@@ -747,5 +740,5 @@ FreeBSD ENA: ena_xmit_mbuf, the TX submit step.
 
 * run by `run_fbsd_xmit.sh`: `-DASSUME_NO_F14`
 
-* vacuity witness: yes, 3
+* vacuity witness: yes, 5
 

@@ -119,6 +119,12 @@ int main(void)
   __CPROVER_assert(
     rx_queues[0] != NULL,
     "RX_RELEASE_NONNULL: the queue released after a failed setup is non-NULL");
+#  ifdef VACUITY_CHECK
+  /* Must FAIL.  This harness assumes the setup failed; if that assumption
+   * were unsatisfiable, every obligation after it would hold for want of a
+   * path.  Witness that a failing ena_rx_queue_setup is actually reachable. */
+  __CPROVER_assert(0, "witness: a failing ena_rx_queue_setup is reachable");
+#  endif
 #  if RELEASE_AFTER_FAILURE
   /* the call rte_eth_dev_close is entitled to make next */
   ena_rx_queue_release_all(&dev);

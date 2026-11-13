@@ -73,17 +73,23 @@ because they reproduce a finding by design (`proof-sweep-2026-11.txt`).
 
 ## A caveat that limits several claims below
 
-Six harnesses carry **no vacuity witness at all**
-(`harness_map_segs.c`, `harness_rx_errorpath.c`, `harness_rx_reqid.c`,
-`harness_setup_errorpath.c`, `harness_tx_allseq.c`,
-`harness_tx_unbounded.c`). A harness without one can pass because the state
-its property describes never arises; the doorbell harness looked like a clean
-pass through four rounds for exactly that reason.
+**Resolved 2026-11-13. Every harness now carries a vacuity witness.**
 
-Three of the six -- `setup_errorpath`, `rx_errorpath`, `rx_reqid` -- are the
-ones backing the error-path coverage claimed for class C below. **That
-coverage should be read as unconfirmed until those harnesses have witnesses.**
-Adding them is the single cheapest piece of work on this list.
+The count was also wrong: it was five, not six. `harness_rx_reqid.c` had a
+witness all along, labelled `"witness: ..."` rather than
+`"vacuity witness: ..."`, and the index matched only the longer form. Both
+the index and the sweep adjudicator now match any label mentioning a witness.
+
+Adding the missing witnesses immediately found a soft spot of exactly the kind
+they exist to find. `harness_map_segs.c` asserts
+`num_of_bufs <= ENA_PKT_MAX_BUFS` (17), and the new witness showed that at
+`MAX_SEGS` of 6 and 17 the bound **cannot be approached in either
+configuration** -- so the obligation held with a wide margin and would not
+have caught an off-by-one at the real limit. It becomes meaningful only at
+`MAX_SEGS >= 18` with an over-long chain; with a legal chain `num_of_bufs` is
+bounded by `sgl_size`, which is below the limit, so the bound is unreachable
+by construction. The witness is now scoped to the configuration where
+reaching it is possible, and the measurement is recorded in the harness.
 
 ## Class by class
 
