@@ -12,8 +12,10 @@ Author: Romain Brenguier, Joel Allred
 #ifndef CPROVER_SOLVERS_STRINGS_FORMAT_SPECIFIER_H
 #define CPROVER_SOLVERS_STRINGS_FORMAT_SPECIFIER_H
 
-#include <string>
 #include <util/invariant.h>
+
+#include <optional>
+#include <string>
 #include <vector>
 
 // Format specifier describes how a value should be printed.
@@ -172,5 +174,68 @@ private:
 /// \param s: a string
 /// \return A vector of format_elementt.
 std::vector<format_elementt> parse_format_string(std::string s);
+
+/// A format specifier as java.util.Formatter parses it, for the checks of
+/// its print step (see java_format_parse).
+struct java_format_specifiert
+{
+  /// Whether the specifier takes an argument (not %n or %%).
+  bool takes_argument = false;
+  /// The argument, from 1, or 0 for a `<` without a previous argument.
+  int argument = 0;
+  /// The conversion, lower case unless it is the field of a date/time.
+  char conversion = 0;
+  bool date_time = false;
+  /// The flags, as Formatter's Flags bits.
+  int flags = 0;
+  /// Formatter's toString of the specifier (for the exception messages).
+  std::string text;
+};
+
+/// The result of java_format_parse: the error of the parsing, as a code
+/// character and the detail of its message (see java_format_errort), or the
+/// specifiers.
+struct java_format_parset
+{
+  std::optional<std::pair<char, std::string>> error;
+  std::vector<java_format_specifiert> specifiers;
+};
+
+/// The codes of the errors of String.format, with the detail of their
+/// message: an exception of java.util and the argument of its constructor.
+namespace java_format_errort
+{
+const char unknown_conversion = 'U';  // the conversion
+const char argument_index = 'I';      // the index, decimal
+const char duplicate_flags = 'D';     // the flag
+const char width = 'W';               // the width, decimal
+const char precision = 'P';           // the precision, decimal
+const char illegal_flags = 'F';       // the flags
+const char flags_mismatch = 'X';      // the conversion, then the flags
+const char missing_width = 'M';       // the specifier
+const char missing_argument = 'A';    // the specifier
+const char conversion_mismatch = 'C'; // the conversion, then the argument
+const char code_point = 'K';          // the argument, from 0
+} // namespace java_format_errort
+
+/// Formatter's Flags bits.
+namespace java_format_flagst
+{
+const int left_justify = 1 << 0;
+const int uppercase = 1 << 1;
+const int alternate = 1 << 2;
+const int plus = 1 << 3;
+const int leading_space = 1 << 4;
+const int zero_pad = 1 << 5;
+const int group = 1 << 6;
+const int parentheses = 1 << 7;
+const int previous = 1 << 8;
+std::string to_string(int flags);
+} // namespace java_format_flagst
+
+/// Parse \p s as java.util.Formatter (JDK 17 and later) parses a format
+/// string, with the checks that its specifiers make when they are parsed:
+/// the first error, or the specifiers.
+java_format_parset java_format_parse(const std::string &s);
 
 #endif // CPROVER_SOLVERS_STRINGS_FORMAT_SPECIFIER_H

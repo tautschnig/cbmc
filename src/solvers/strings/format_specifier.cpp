@@ -12,6 +12,8 @@ Date:   June 2019
 ///  Format specifiers for String.format
 
 #include "format_specifier.h"
+
+#include <cctype>
 #include <regex>
 
 /// Helper function for parsing format strings.
@@ -97,4 +99,298 @@ std::vector<format_elementt> parse_format_string(std::string s)
 
   al.emplace_back(s);
   return al;
+}
+
+std::string java_format_flagst::to_string(int flags)
+{
+  std::string result;
+  const std::pair<int, char> order[] = {
+    {left_justify, '-'},
+    {uppercase, '^'},
+    {alternate, '#'},
+    {plus, '+'},
+    {leading_space, ' '},
+    {zero_pad, '0'},
+    {group, ','},
+    {parentheses, '('},
+    {previous, '<'}};
+  for(const auto &flag : order)
+  {
+    if((flags & flag.first) == flag.first)
+      result += flag.second;
+  }
+  return result;
+}
+
+/// Integer.parseInt of decimal digits, or nullopt beyond the range of int.
+static std::optional<int> java_parse_int(const std::string &digits)
+{
+  long long value = 0;
+  for(const char c : digits)
+  {
+    value = value * 10 + (c - '0');
+    if(value > 2147483647LL)
+      return std::nullopt;
+  }
+  return static_cast<int>(value);
+}
+
+java_format_parset java_format_parse(const std::string &s)
+{
+  using namespace java_format_flagst;
+  namespace error = java_format_errort;
+  java_format_parset result;
+  const auto fail = [&](char code, const std::string &detail)
+  {
+    result.error = std::make_pair(code, detail);
+    result.specifiers.clear();
+    return result;
+  };
+  const std::string valid = "bBsShHcCdoxXeEgGfaAn%";
+  const std::string date_time = "HIklMNLQpsSTzZaAbBCdehjmyYrRcDF";
+  const std::regex specifier(
+    "%(\\d+\\$)?([-#+ 0,(\\<]*)?(\\d+)?(\\.\\d+)?([tT])?([a-zA-Z%])");
+  const std::string int_min = "-2147483648";
+
+  std::size_t i = 0;
+  while(i < s.size())
+  {
+    const std::size_t n = s.find('%', i);
+    if(n == std::string::npos)
+      break;
+    i = n + 1;
+    if(i >= s.size())
+      return fail(error::unknown_conversion, "%");
+    java_format_specifiert fs;
+    int width = -1;
+    int precision = -1;
+    // 0 for an ordinary index, -1 for '<', -2 for no argument
+    int index = 0;
+    const char first = s[i];
+    // A specifier of just a conversion is not checked (FormatSpecifier(char)).
+    const bool direct = valid.find(first) != std::string::npos;
+    if(direct)
+    {
+      fs.conversion = first;
+      if(std::isupper(static_cast<unsigned char>(first)))
+      {
+        fs.flags = uppercase;
+        fs.conversion = static_cast<char>(std::tolower(first));
+      }
+      if(first == '%' || first == 'n')
+        index = -2;
+      ++i;
+    }
+    else
+    {
+      std::smatch m;
+      const std::string rest = s.substr(n);
+      if(!std::regex_search(
+           rest, m, specifier, std::regex_constants::match_continuous))
+      {
+        return fail(error::unknown_conversion, std::string(1, first));
+      }
+      i = n + m.length(0);
+      if(m[1].matched)
+      {
+        const std::string digits = m[1].str().substr(0, m[1].length() - 1);
+        const auto value = java_parse_int(digits);
+        if(!value.has_value())
+          return fail(error::argument_index, int_min);
+        if(*value <= 0)
+          return fail(error::argument_index, std::to_string(*value));
+        index = *value;
+      }
+      for(const char c : m[2].str())
+      {
+        const std::string chars = "-#+ 0,(<";
+        const int bits[] = {
+          left_justify,
+          alternate,
+          plus,
+          leading_space,
+          zero_pad,
+          group,
+          parentheses,
+          previous};
+        const int v = bits[chars.find(c)];
+        if((fs.flags & v) == v)
+          return fail(error::duplicate_flags, to_string(v));
+        fs.flags |= v;
+      }
+      if((fs.flags & previous) != 0)
+        index = -1;
+      if(m[3].matched)
+      {
+        const auto value = java_parse_int(m[3].str());
+        if(!value.has_value())
+          return fail(error::width, int_min);
+        width = *value;
+      }
+      if(m[4].matched)
+      {
+        const auto value = java_parse_int(m[4].str().substr(1));
+        if(!value.has_value())
+          return fail(error::precision, int_min);
+        precision = *value;
+      }
+      if(m[5].matched)
+      {
+        fs.date_time = true;
+        if(m[5].str() == "T")
+          fs.flags |= uppercase;
+      }
+      char c = m[6].str()[0];
+      if(!fs.date_time)
+      {
+        if(valid.find(c) == std::string::npos)
+          return fail(error::unknown_conversion, std::string(1, c));
+        if(std::isupper(static_cast<unsigned char>(c)))
+        {
+          fs.flags |= uppercase;
+          c = static_cast<char>(std::tolower(c));
+        }
+        if(c == '%' || c == 'n')
+          index = -2;
+      }
+      fs.conversion = c;
+    }
+
+    // Formatter's toString of the specifier
+    {
+      std::string text = "%" + to_string(fs.flags & ~uppercase);
+      if(index > 0)
+        text += std::to_string(index) + "$";
+      if(width != -1)
+        text += std::to_string(width);
+      if(precision != -1)
+        text += "." + std::to_string(precision);
+      const bool upper = (fs.flags & uppercase) != 0;
+      if(fs.date_time)
+        text += upper ? 'T' : 't';
+      text +=
+        upper ? static_cast<char>(std::toupper(fs.conversion)) : fs.conversion;
+      fs.text = text;
+    }
+
+    // the checks of the constructor of FormatSpecifier
+    const char c = fs.conversion;
+    const int flags = fs.flags;
+    const auto contains = [&](int f) { return (flags & f) == f; };
+    const auto bad_flags = [&](int bad) -> std::optional<std::string>
+    {
+      if((flags & bad) != 0)
+        return std::string(1, c) + to_string(flags & bad);
+      return std::nullopt;
+    };
+    const bool no_width = width == -1;
+    const auto check_numeric =
+      [&]() -> std::optional<std::pair<char, std::string>>
+    {
+      if(no_width && (flags & (left_justify | zero_pad)) != 0)
+        return std::make_pair(error::missing_width, fs.text);
+      if(contains(plus | leading_space) || contains(left_justify | zero_pad))
+        return std::make_pair(error::illegal_flags, to_string(flags));
+      return std::nullopt;
+    };
+    if(!direct)
+    {
+      if(fs.date_time)
+      {
+        if(precision != -1)
+          return fail(error::precision, std::to_string(precision));
+        if(date_time.find(c) == std::string::npos)
+          return fail(error::unknown_conversion, std::string("t") + c);
+        if(
+          auto x = bad_flags(
+            alternate | plus | leading_space | zero_pad | group | parentheses))
+          return fail(error::flags_mismatch, *x);
+        if(no_width && contains(left_justify))
+          return fail(error::missing_width, fs.text);
+      }
+      else if(c == 'b' || c == 's' || c == 'h')
+      {
+        if((c == 'b' || c == 'h') && contains(alternate))
+          return fail(error::flags_mismatch, std::string(1, c) + "#");
+        if(no_width && contains(left_justify))
+          return fail(error::missing_width, fs.text);
+        if(
+          auto x =
+            bad_flags(plus | leading_space | zero_pad | group | parentheses))
+          return fail(error::flags_mismatch, *x);
+      }
+      else if(c == 'c')
+      {
+        if(precision != -1)
+          return fail(error::precision, std::to_string(precision));
+        if(
+          auto x = bad_flags(
+            alternate | plus | leading_space | zero_pad | group | parentheses))
+          return fail(error::flags_mismatch, *x);
+        if(no_width && contains(left_justify))
+          return fail(error::missing_width, fs.text);
+      }
+      else if(c == 'd' || c == 'o' || c == 'x')
+      {
+        if(auto e = check_numeric())
+          return fail(e->first, e->second);
+        if(precision != -1)
+          return fail(error::precision, std::to_string(precision));
+        if(auto x = bad_flags(c == 'd' ? alternate : group))
+          return fail(error::flags_mismatch, *x);
+      }
+      else if(c == 'e' || c == 'f' || c == 'g' || c == 'a')
+      {
+        if(auto e = check_numeric())
+          return fail(e->first, e->second);
+        const int bad = c == 'a'   ? parentheses | group
+                        : c == 'e' ? group
+                        : c == 'g' ? alternate
+                                   : 0;
+        if(auto x = bad_flags(bad))
+          return fail(error::flags_mismatch, *x);
+      }
+      else
+      {
+        // %% or %n
+        if(precision != -1)
+          return fail(error::precision, std::to_string(precision));
+        if(c == '%')
+        {
+          if(flags != left_justify && flags != 0)
+            return fail(error::illegal_flags, to_string(flags));
+          if(no_width && contains(left_justify))
+            return fail(error::missing_width, fs.text);
+        }
+        else
+        {
+          if(width != -1)
+            return fail(error::width, std::to_string(width));
+          if(flags != 0)
+            return fail(error::illegal_flags, to_string(flags));
+        }
+      }
+    }
+    fs.takes_argument = index != -2;
+    fs.argument = index;
+    result.specifiers.push_back(fs);
+  }
+
+  // The arguments of ordinary and relative indices, as Formatter.format
+  // assigns them: an ordinary one advances, a relative one takes the last
+  // (0 without one).
+  int last = 0;
+  int ordinary = 0;
+  for(auto &fs : result.specifiers)
+  {
+    if(!fs.takes_argument)
+      continue;
+    if(fs.argument == 0)
+      fs.argument = last = ++ordinary;
+    else if(fs.argument == -1)
+      fs.argument = last;
+    else
+      last = fs.argument;
+  }
+  return result;
 }
