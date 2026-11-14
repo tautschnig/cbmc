@@ -45,9 +45,12 @@ Date:   December 2014
 /// instructions, or call a suitable library function (see
 /// `library/x86_assembler.c`).
 ///
-/// At present only a small number of x86 and Power instructions are supported.
-/// Unrecognised assembly instructions are ignored (i.e., they are simply
-/// removed from the goto program).
+/// Statements are lowered soundly: each is either interpreted exactly, when
+/// every instruction in it is understood, or approximated conservatively,
+/// when it is not, by havocking everything it may change (and a warning is
+/// printed).  See \ref inline-assembly (doc/architectural/inline-assembly.md)
+/// for the design and for how to extend the instruction and architecture
+/// coverage.
 
 #ifndef CPROVER_ASSEMBLER_REMOVE_ASM_H
 #define CPROVER_ASSEMBLER_REMOVE_ASM_H

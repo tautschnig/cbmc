@@ -1,0 +1,14 @@
+CORE
+main.c
+
+^VERIFICATION SUCCESSFUL$
+^EXIT=0$
+^SIGNAL=0$
+--
+^warning: ignoring
+inline assembly not understood
+--
+Inline x86 assembly is interpreted exactly. The expected values in main.c
+were observed on x86-64 hardware, see scripts/asm_differential/. If CBMC
+approximated any statement here (havocking its outputs) the assertions would
+no longer hold, which is the point of the test.

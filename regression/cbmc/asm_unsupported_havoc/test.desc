@@ -1,0 +1,13 @@
+CORE
+main.c
+
+^\[main\.assertion\.1\] line 14 SHOULD FAIL: out havocked: FAILURE$
+^VERIFICATION FAILED$
+^EXIT=10$
+^SIGNAL=0$
+inline assembly not understood \(unsupported directive '.*'\); approximating it by havocking
+--
+--
+An asm statement that is not understood is approximated: its outputs are
+havocked and the conservative approximation is reported with a warning, so a
+property depending on the asm's effect is no longer falsely proven.

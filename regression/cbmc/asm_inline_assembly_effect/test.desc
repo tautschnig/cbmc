@@ -1,0 +1,16 @@
+CORE
+main.c
+
+^\[main\.assertion\.1\] line 14 the asm set the bit: SUCCESS$
+^\[main\.assertion\.2\] line 16 SHOULD FAIL: asm wrote nothing: FAILURE$
+^\[main\.assertion\.3\] line 21 set_bit set bit 3: SUCCESS$
+^VERIFICATION FAILED$
+^EXIT=10$
+^SIGNAL=0$
+--
+^warning: ignoring
+inline assembly not understood
+--
+Regression test for the "inline assembly assumed to do nothing" defect. The
+write performed by the asm is observed, so the first and third assertions
+hold and the second (which held vacuously before the fix) now fails.

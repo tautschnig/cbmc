@@ -1,0 +1,12 @@
+CORE
+main.c
+--arch arm64
+^VERIFICATION SUCCESSFUL$
+^EXIT=0$
+^SIGNAL=0$
+--
+^warning: ignoring
+inline assembly not understood
+--
+Inline AArch64 assembly is interpreted exactly. The expected values in main.c
+were observed with the Unicorn emulator, see scripts/asm_differential/.
