@@ -38,7 +38,9 @@ one() {
 # driver's missing barrier permits -- CC_REASON_SOUND fails, and that failure
 # IS the unsynchronised-RMW observation the harness was written to make.  It
 # was omitted, so the sweep adjudicator reported it as an unsupported claim.
-EXPECT_FAIL="prepare_tx doorbell reset_flag rss_reta conc_admin conc_reset"
+EXPECT_FAIL="prepare_tx doorbell reset_flag rss_reta conc_admin conc_reset \
+class_s xstats_byid conc_datapath admin_reuse probe lock_order \
+cleanup_fastfree xmit_offloads setup_rx_intr fbsd_mtu fbsd_sysctl fbsd_down"
 one stop          run_stop.sh
 # MC=2 so the multi-descriptor chain path is covered: at the default MC=1
 # it cannot arise, and the witness for it passed, which the sweep
@@ -72,6 +74,32 @@ one cleanup_step  run_cleanup_step.sh
 # that PASSED, or with no witness at all, was indistinguishable from a clean
 # run -- and a passing witness is exactly the signal that a proof may be
 # empty.  check_sweep.py applies the check_hygiene.sh rules across the corpus.
+# ---- registered 2026-11-14: the runners added since the sweep was written.
+# Those omitted are staged or experimental (run_stage*, run_item1*,
+# run_cleanup_lc, run_xmit_variant, run_fbsd_cleanup_perf) and have no
+# obligation of their own.
+one cleanup       run_cleanup.sh
+one cleanup_fastfree run_cleanup_fastfree.sh
+one xmit_step     run_xmit_step.sh
+one xmit_offloads run_xmit_step_offloads.sh
+one map_segs      run_map_segs.sh
+one llq_path      run_llq_path.sh
+one setup_errorpath run_setup_errorpath.sh
+one setup_rx_intr run_setup_rx_intr.sh
+one rx_errorpath  run_rx_errorpath.sh
+one class_s       run_class_s.sh
+one xstats_byid   run_xstats_byid.sh
+one conc_datapath run_conc_datapath.sh
+one admin_reuse   run_admin_reuse.sh
+one probe         run_probe.sh
+one lock_order    run_lock_order.sh
+one fbsd_xmit     fbsd/run_fbsd_xmit.sh
+one fbsd_cleanup  fbsd/run_fbsd_cleanup.sh
+one fbsd_rx       fbsd/run_fbsd_rx.sh
+one fbsd_down     fbsd/run_fbsd_down.sh
+one fbsd_mtu      fbsd/run_fbsd_mtu.sh
+one fbsd_sysctl   fbsd/run_fbsd_sysctl.sh
+
 # Citations rot: a harness's `file.c:N-M` claim is about a location, and
 # harness_cleanup_step.c goes further and SLICES its citation into the proof.
 # Check both before believing any verdict below.
