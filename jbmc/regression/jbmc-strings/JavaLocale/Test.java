@@ -4,6 +4,8 @@ public class Test {
   public static void asciiBad() { String r = String.format("%d|%.2f|%05d|%e", -12, 1.5, 3, 2.0); assert !r.equals("-12|1.50|00003|2.000000e+00"); }
   public static void arabic() { String r = String.format("%d|%.1f|%05d", -12, 1.5, 3); assert r.equals("-\u0661\u0662|\u0661\u066b\u0665|\u0660\u0660\u0660\u0660\u0663") || r.equals("-12|1.5|00003"); }
   public static void arabicBad() { String r = String.format("%d|%.1f|%05d", -12, 1.5, 3); assert r.equals("-12|1.5|00003"); }
+  public static void mexican() { String r = String.format("%.1f", 1.5); assert r.equals("1.5") || r.equals("1,5"); }
+  public static void mexicanBad() { String r = String.format("%.1f", 1.5); assert r.equals("1.5"); }
   public static void german() { String r = String.format("%.2f", 1.5); assert r.equals("1,50"); }
   public static void turkish() { String r = String.format("%S|%x|%X", "i", 255, 255); assert r.equals("\u0130|ff|FF"); }
   public static void anyLength(int x) { String r = String.format("%05d", x); assert r.length() >= 5; }

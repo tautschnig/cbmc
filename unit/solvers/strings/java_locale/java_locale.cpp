@@ -9,22 +9,33 @@ Author: Diffblue Ltd.
 #include <solvers/strings/java_locale.h>
 #include <testing-utils/use_catch.h>
 
-// The expected symbols are those of Java 8 to 25 with the locale providers
-// CLDR and COMPAT.
+// The expected symbols are those of Java 8 to 25 with their locale
+// providers.
 TEST_CASE("java_locale_symbols", "[core][solvers][strings][java_locale]")
 {
-  using pairs = std::vector<std::pair<unsigned, unsigned>>;
+  using numbers = std::vector<java_number_symbolst>;
   const auto en = java_locale_symbols("en-US");
   REQUIRE(en.numbers_are_ascii());
   REQUIRE(en.cases_are_root());
   // a comma, and tags are case-insensitive, with _ as of Locale.toString
-  REQUIRE(java_locale_symbols("de_de").numbers == pairs{{0x30, 0x2c}});
+  REQUIRE(
+    java_locale_symbols("de_de").numbers == numbers{{0x30, 0x2c, 0x2e, 3}});
   // Arabic-Indic digits from Java 11 on, ASCII ones in Java 8 and COMPAT
   REQUIRE(
     java_locale_symbols("ar-EG").numbers ==
-    pairs{{0x30, 0x2e}, {0x660, 0x66b}});
+    numbers{{0x30, 0x2e, 0x2c, 3}, {0x660, 0x66b, 0x66c, 3}});
+  // a comma as the decimal separator in Java 8 with CLDR
+  REQUIRE(
+    java_locale_symbols("es-MX").numbers ==
+    numbers{{0x30, 0x2c, 0x2e, 3}, {0x30, 0x2e, 0x2c, 3}});
+  // no grouping (Java 11 and later) or a division by zero (Java 8 with
+  // CLDR, 9 and 10)
+  REQUIRE(
+    java_locale_symbols("en-US-POSIX").numbers ==
+    numbers{{0x30, 0x2e, 0, 0}, {0x30, 0x2e, 0x2c, 3}});
   // a region that the data do not have falls back to the language
-  REQUIRE(java_locale_symbols("de-XX").numbers == pairs{{0x30, 0x2c}});
+  REQUIRE(
+    java_locale_symbols("de-XX").numbers == numbers{{0x30, 0x2c, 0x2e, 3}});
   // an extension may select any digits, and an unknown language any data
   REQUIRE_FALSE(java_locale_symbols("en-US-u-nu-thai").numbers.has_value());
   REQUIRE_FALSE(java_locale_symbols("qqq").numbers.has_value());

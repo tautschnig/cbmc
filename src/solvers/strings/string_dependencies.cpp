@@ -72,7 +72,7 @@ static std::unique_ptr<string_builtin_functiont> to_string_builtin_function(
     for(const exprt &call : calls)
       f->call_texts.push_back(get_string_expr(array_pool, call));
     if(kind.has_value() && *kind == 1)
-      f->locale.numbers = {{{0x30, 0x2e}}};
+      f->locale.numbers = {{{0x30, 0x2e, 0x2c, 3}}};
     else if(!kind.has_value() || *kind != 0)
       f->locale = java_any_locale_symbols();
     return f;

@@ -1150,11 +1150,11 @@ static std::pair<exprt, string_constraintst> add_axioms_for_format(
   if(locale.numbers.has_value() && !locale.numbers_are_ascii())
   {
     exprt::operandst pairs;
-    for(const auto &pair : *locale.numbers)
+    for(const java_number_symbolst &numbers : *locale.numbers)
     {
       pairs.push_back(and_exprt{
-        equal_exprt{zero, from_integer(pair.first, char_type)},
-        equal_exprt{separator, from_integer(pair.second, char_type)}});
+        equal_exprt{zero, from_integer(numbers.zero, char_type)},
+        equal_exprt{separator, from_integer(numbers.decimal, char_type)}});
     }
     constraints.existential.push_back(disjunction(pairs));
   }
@@ -1623,16 +1623,21 @@ std::optional<exprt> string_format_builtin_functiont::eval(
         // the digits and the decimal separator of the locale
         if(localizes_numbers(fs) && !locale.numbers_are_ascii())
         {
-          if(!locale.numbers.has_value() || locale.numbers->size() != 1)
+          if(!locale.numbers.has_value() || locale.numbers->empty())
             return {};
-          const auto &pair = locale.numbers->front();
+          const java_number_symbolst &first = locale.numbers->front();
+          for(const java_number_symbolst &numbers : *locale.numbers)
+          {
+            if(numbers.zero != first.zero || numbers.decimal != first.decimal)
+              return {};
+          }
           const bool all_characters = fs.dt && (*arg_value)[0] == kind_long;
           for(mp_integer &c : *evaluated)
           {
             if(all_characters || ('0' <= c && c <= '9'))
-              c = (c - '0' + pair.first) % 0x10000;
+              c = (c - '0' + first.zero) % 0x10000;
             else if(c == '.')
-              c = pair.second;
+              c = first.decimal;
           }
         }
         std::vector<mp_integer> evaluated_char_vector = std::move(*evaluated);
