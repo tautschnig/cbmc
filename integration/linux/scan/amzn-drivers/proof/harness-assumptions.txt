@@ -79,3 +79,6 @@ RESET: drives ena_dev_reset with the probe scaffolding and the leak ledger; show
 WITH_GENERATION_CHECK: models a per-slot generation check for class R; no protocol field carries a generation, so it is a model of what a fix must achieve rather than a patch
 WITH_SRD_FIX: models the F27 fix, reading the local the device filled as the full ena_xstats_get does, rather than adapter->srd_stats
 NIDS_BYID: see NIDS -- number of statistics ids the application asks for in the by-id harness
+WHEN: selects where the datapath lands relative to ena_queue_stop's two steps -- 0 before the destroy, 1 in the window, 2 after the release
+WITH_STATE_CHECK: compiles in the adapter-state check that eth_ena_xmit_pkts only has under RTE_ETHDEV_DEBUG_TX
+WITH_EARLY_STATE: models the F28 fix, leaving ENA_ADAPTER_STATE_RUNNING before the teardown rather than nineteen lines after it

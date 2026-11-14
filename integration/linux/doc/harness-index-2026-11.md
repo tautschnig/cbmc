@@ -4,7 +4,7 @@
 
 One row per harness: what it puts under test, the obligations it asserts, whether it carries a vacuity witness, and -- the column this index exists for -- what each configuration macro assumes away. A finding was once reported and retracted because that last column did not exist anywhere.
 
-49 harnesses.
+50 harnesses.
 
 ## Harnesses with no vacuity witness
 
@@ -153,6 +153,26 @@ Phase 8, pair 2: the admin-queue submit/complete handshake.
 | `-DWELL_BEHAVED_DEVICE` | assumes the admin device completes only commands it was actually told about |
 
 * run by `run_conc_admin.sh`: `-DWELL_BEHAVED_DEVICE`
+
+* vacuity witness: yes, 2
+
+### `harness_conc_datapath.c`
+
+Concurrency pair 3: the TX datapath against a control-path stop.
+
+| obligation | asserts |
+|---|---|
+| `CC3_NO_DOUBLE_FREE` | no mbuf is released twice |
+| `CC3_NO_SUBMIT_AFTER_DESTROY` | no descriptor is submitted to an io queue |
+| `CC3_NO_LOST_MBUF` | an accepted mbuf is either owned by a slot or freed |
+
+| configuration | assumes |
+|---|---|
+| `-DWHEN` | selects where the datapath lands relative to ena_queue_stop's two steps -- 0 before the destroy, 1 in the window, 2 after the release |
+| `-DWITH_EARLY_STATE` | models the F28 fix, leaving ENA_ADAPTER_STATE_RUNNING before the teardown rather than nineteen lines after it |
+| `-DWITH_STATE_CHECK` | compiles in the adapter-state check that eth_ena_xmit_pkts only has under RTE_ETHDEV_DEBUG_TX |
+
+* run by `run_conc_datapath.sh`: `-DWHEN`, `-DWITH_EARLY_STATE`, `-DWITH_STATE_CHECK`
 
 * vacuity witness: yes, 2
 

@@ -1596,6 +1596,72 @@ size when it is computed (`ena_get_metrics_entries`, `:1849-1852`). That is
 exactly the check `ena_rss_reta_query` is missing in F19. Same driver, same
 shape, one guarded and one not.
 
+## F28: the datapath's guard against a concurrent stop is both compiled out and ordered too late (DPDK ENA)
+
+Concurrency pair 3, the TX datapath against a control-path stop. Two
+independent defects, and fixing either alone leaves the window open.
+
+`ena_queue_stop` destroys the io queue and *then* releases the ring's mbufs
+(`ena_ethdev.c:1474-1485`), so there is a window where the queue is gone but
+the ring still owns the application's packets.
+
+**Defect one: the guard is compiled out.** `eth_ena_xmit_pkts` checks the
+adapter state only under `RTE_ETHDEV_DEBUG_TX`, which a normal build does not
+set -- the same shape as F16's compiled-out `RTE_ASSERT`:
+
+```c
+#ifdef RTE_ETHDEV_DEBUG_TX
+        if (unlikely(tx_ring->adapter->state != ENA_ADAPTER_STATE_RUNNING)) {
+                return 0;
+        }
+#endif
+```
+
+**Defect two: compiling it back in does not help.** `ena_stop` assigns
+`ENA_ADAPTER_STATE_STOPPED` **nineteen lines after** it destroys the queues
+(`ena_ethdev.c:1379-1406`), so the state still reads `RUNNING` throughout the
+teardown window and the guard passes.
+
+`ena_start` orders it the other way round -- it starts the queues and only then
+assigns `RUNNING` (`:1323-1347`) -- so the safe convention exists in the same
+file and the stop path departs from it.
+
+**Evidence.** `proof/harness_conc_datapath.c` with
+`proof/run_conc_datapath.sh` interleaves one real `ena_xmit_mbuf` against the
+two real teardown steps. `WHEN` selects where the transmit lands: 0 before the
+destroy, 1 in the window, 2 after the release.
+
+| configuration | WHEN=0 | WHEN=1 | WHEN=2 |
+|---|---|---|---|
+| as built | holds | **FAILURE** | **FAILURE** |
+| guard compiled in | holds | **FAILURE** | **FAILURE** |
+| guard compiled in *and* state left before teardown | holds | holds | holds |
+
+`CC3_NO_DOUBLE_FREE` and `CC3_NO_LOST_MBUF` hold throughout, which is worth
+saying: the mbuf accounting survives the race even when the submission does
+not. Every run clean -- no other failing property, no reached bodyless callee,
+no UNKNOWN, no failing unwinding assertion -- and all six adjudicated by
+`check_hygiene.sh`.
+
+The fixed configuration is witnessed differently on purpose: with the fix the
+transmit is **declined**, so the obligation holds because nothing is
+submitted. Witnessing "the transmit can be accepted" there would have been
+wrong, and the gate caught it -- that witness passed, which is the signal for
+an empty proof. The witness is now "the transmit is declined", which fails as
+it should.
+
+**Fix.** Both parts are needed: leave `ENA_ADAPTER_STATE_RUNNING` (or enter a
+`STOPPING` state) *before* tearing the queues down, and make the datapath's
+state check unconditional rather than debug-only. The first without the second
+protects nothing; the second without the first is what the driver has now.
+
+**Severity.** DPDK's threading model makes it the application's job not to
+transmit on a queue it is stopping, so a failure here is an
+application-contract violation in the same standing as F15, F22 and F24 --
+*except* that the driver contains a guard against it, which a reader would
+reasonably assume works. It is compiled out, and it would not work if it were
+not. DPDK-specific.
+
 ## Class S confirmations: the return code and what the device did
 
 Class S is the largest group the Unveil class list had no name for -- an
