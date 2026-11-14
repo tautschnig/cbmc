@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.pi --max-nondet-string-length 40 --java-locale en-US --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+String.format("%012.12a", Math.PI) is "0x1.921fb54442d2p1" in Java 8 to 25
+(no zeros: the string is longer than the width).

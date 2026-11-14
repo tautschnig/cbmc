@@ -319,8 +319,7 @@ std::vector<java_format_print_versiont> java_format_print_versions();
 /// \param numeric: whether the argument is a number that the conversion
 ///   prints as one (not null)
 /// \return the string, or nothing where it depends on the locale (the
-///   grouping of `,`, the case of other than ASCII) or is not modelled (%a
-///   with `0` and a precision)
+///   grouping of `,`, the case of other than ASCII)
 std::optional<std::string> java_format_decorate(
   char conversion,
   int flags,
@@ -329,5 +328,17 @@ std::optional<std::string> java_format_decorate(
   const std::string &core,
   bool numeric,
   java_format_print_versiont version = {});
+
+/// The zeros that Formatter adds to the fraction of a %a with a precision:
+/// it rounds the value to the precision and takes Double.toHexString of
+/// it, whose fraction has no zeros at its end but for a single digit, then
+/// pads the fraction to the precision. Its `0` flag counts the string
+/// before that padding.
+/// \param magnitude: the %a of a finite value with the precision, without
+///   its sign (as "0x1.00p0", see java_format_float)
+/// \param precision: the precision (0 prints one digit)
+/// \return the number of zeros at the end of the fraction of \p magnitude
+///   that the padding added
+std::size_t java_hex_float_padding(const std::string &magnitude, int precision);
 
 #endif // CPROVER_SOLVERS_STRINGS_FORMAT_SPECIFIER_H

@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.upper17 --java-version 17 --max-nondet-string-length 40 --java-locale en-US --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+String.format("%030.2A", -123456.789) is "-0X000000000000000000001.E2P16" in
+Java 17 to 25.

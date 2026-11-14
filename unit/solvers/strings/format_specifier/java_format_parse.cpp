@@ -250,6 +250,22 @@ TEST_CASE(
   REQUIRE(
     decorate("%+012A", "-0x0.0p0", true, {true, false}) == "-0X000000.0P0");
   REQUIRE(decorate("%+012A", "-0x0.0p0", true, {true, true}) == "-0X00000.0P0");
+  // the zeros of %a with a precision count the string before the padding
+  // of its fraction (Java 8 and 17)
+  REQUIRE(
+    decorate("%012.2a", "-0x1.00p0", true, {true, false}) == "-0x000001.00p0");
+  REQUIRE(
+    decorate("%012.2a", "-0x1.00p0", true, {true, true}) == "-0x00001.00p0");
+  REQUIRE(
+    decorate("%020.15a", "0x1.800000000000000p0", true, {true, true}) ==
+    "0x00000000000001.800000000000000p0");
+  REQUIRE(
+    decorate("%012.12a", "0x1.921fb54442d2p1", true, {true, true}) ==
+    "0x1.921fb54442d2p1");
+  REQUIRE(java_hex_float_padding("0x1.00p0", 2) == 1);
+  REQUIRE(java_hex_float_padding("0x1.80p0", 2) == 1);
+  REQUIRE(java_hex_float_padding("0x1.0p0", 0) == 0);
+  REQUIRE(java_hex_float_padding("0x1.92p1", 2) == 0);
   // the grouping depends on the locale
   REQUIRE_FALSE(decorate("%,d", "1234", true, {}).has_value());
   // null with the precision of a float

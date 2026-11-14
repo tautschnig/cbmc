@@ -717,6 +717,33 @@ public:
   message_handlert &message_handler;
 };
 
+/// The zeros that pad the fraction of \p magnitude, the %a of a finite
+/// value with \p precision without its sign (see java_hex_float_padding):
+/// those at its end, but for its first digit. Beyond 13 digits (those of
+/// Double.toHexString), the fraction is all padding.
+static exprt hex_float_padding(
+  format_piecest &p,
+  const array_string_exprt &magnitude,
+  int precision)
+{
+  const std::size_t digits = static_cast<std::size_t>(std::max(precision, 1));
+  const std::size_t significant = std::min<std::size_t>(digits, 13);
+  // "0x", the digit before the point and the point
+  const std::size_t fraction = 4;
+  exprt padding = p.index(static_cast<int>(significant - 1));
+  for(std::size_t k = significant - 1; k-- > 0;)
+  {
+    // k zeros at the end of the significant digits, then another digit
+    padding = if_exprt{
+      notequal_exprt{
+        magnitude[p.index(static_cast<int>(fraction + significant - 1 - k))],
+        p.character('0')},
+      p.index(static_cast<int>(k)),
+      padding};
+  }
+  return plus_exprt{padding, p.index(static_cast<int>(digits - significant))};
+}
+
 /// The string of a specifier with flags, a width or a precision (see
 /// format_specifiert::has_decoration): its core, the string of the
 /// conversion without them (see add_axioms_for_format_specifier), with the
@@ -799,13 +826,6 @@ add_axioms_for_decorated_specifier(
   {
     if(has(group))
       number_body_known = false; // the grouping depends on the locale
-    else if(
-      c == 'a' && has(zero_pad) &&
-      (precision != -1 ||
-       !versions_agree(&java_format_print_versiont::hex_float_counts_sign)))
-    {
-      number_body_known = false;
-    }
     else
     {
       const exprt negative = equal_exprt{core[p.index(0)], p.character('-')};
@@ -858,14 +878,30 @@ add_axioms_for_decorated_specifier(
         const exprt adjusted =
           paren ? exprt{if_exprt{negative, p.index(width - 1), p.index(width)}}
                 : p.index(width);
-        const bool counts_sign =
-          c != 'a' || versions.front().hex_float_counts_sign;
+        // (%a before Java 17 counts no sign; where the versions differ,
+        // either)
+        exprt counts_sign = true_exprt{};
+        if(c == 'a')
+        {
+          if(!versions_agree(
+               &java_format_print_versiont::hex_float_counts_sign))
+            counts_sign = generator.fresh_symbol("format_sign", bool_typet{});
+          else if(!versions.front().hex_float_counts_sign)
+            counts_sign = false_exprt{};
+        }
+        // %a with a precision counts the string without the zeros that pad
+        // its fraction (see java_hex_float_padding)
+        exprt counted = p.length(magnitude);
+        if(c == 'a' && precision != -1)
+          counted =
+            minus_exprt{counted, hex_float_padding(p, magnitude, precision)};
         zeros_count = if_exprt{
           infinite,
           p.index(0),
           minus_exprt{
-            minus_exprt{adjusted, counts_sign ? p.length(lead) : p.index(0)},
-            p.length(magnitude)}};
+            minus_exprt{
+              adjusted, if_exprt{counts_sign, p.length(lead), p.index(0)}},
+            counted}};
       }
       const array_string_exprt zeros = p.repeat('0', zeros_count);
       const array_string_exprt finite =

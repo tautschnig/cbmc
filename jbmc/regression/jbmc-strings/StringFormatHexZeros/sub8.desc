@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.sub8 --java-version 8 --max-nondet-string-length 40 --java-locale en-US --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+String.format("%012.2a", -Double.MIN_VALUE) is "-0x01.00p-1074" in Java 8
+to 16 (hexDouble gives "1.0p-1074", normalized).

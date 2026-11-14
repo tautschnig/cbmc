@@ -15,6 +15,7 @@ Date:   June 2019
 
 #include <util/config.h>
 
+#include <algorithm>
 #include <cctype>
 #include <regex>
 
@@ -514,6 +515,18 @@ std::vector<java_format_print_versiont> java_format_print_versions()
   return versions;
 }
 
+std::size_t java_hex_float_padding(const std::string &magnitude, int precision)
+{
+  // "0x", the digit before the point, the point, then the fraction
+  const std::size_t digits = static_cast<std::size_t>(std::max(precision, 1));
+  if(magnitude.size() < 4 + digits)
+    return 0;
+  std::size_t padding = 0;
+  while(padding + 1 < digits && magnitude[4 + digits - 1 - padding] == '0')
+    ++padding;
+  return padding;
+}
+
 std::optional<std::string> java_format_decorate(
   char conversion,
   int flags,
@@ -560,14 +573,19 @@ std::optional<std::string> java_format_decorate(
       std::string zeros;
       if(has(zero_pad) && magnitude != "Infinity")
       {
-        if(c == 'a' && precision != -1)
-          return {};
         // adjustWidth, and the characters before the magnitude (for %a
         // before Java 17, as if there were no sign)
         const long w = width - (negative && has(parentheses) ? 1 : 0);
         const std::size_t sign =
           c == 'a' && !version.hex_float_counts_sign ? 0 : lead.size();
-        const long n = w - static_cast<long>(sign + magnitude.size());
+        // For %a with a precision, Formatter counts the hexadecimal string
+        // before it pads the fraction to the precision: without the zeros
+        // of the padding (see java_hex_float_padding).
+        const std::size_t counted =
+          c == 'a' && precision != -1
+            ? magnitude.size() - java_hex_float_padding(magnitude, precision)
+            : magnitude.size();
+        const long n = w - static_cast<long>(sign + counted);
         if(n > 0)
           zeros.assign(static_cast<std::size_t>(n), '0');
       }

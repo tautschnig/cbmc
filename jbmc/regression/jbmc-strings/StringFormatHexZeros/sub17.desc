@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.sub17 --java-version 17 --max-nondet-string-length 40 --java-locale en-US --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+As sub8, "-0x1.00p-1074" from Java 17.

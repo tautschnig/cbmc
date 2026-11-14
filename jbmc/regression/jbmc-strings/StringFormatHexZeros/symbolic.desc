@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.symbolic --max-nondet-string-length 40 --java-locale en-US --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+%015.3a of a finite double is at least as long as its width: the zeros
+count the string before the padding of the fraction, which only adds.

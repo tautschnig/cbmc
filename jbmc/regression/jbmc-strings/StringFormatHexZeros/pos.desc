@@ -1,0 +1,11 @@
+CORE
+Test
+--function Test.pos --max-nondet-string-length 40 --java-locale en-US --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+String.format("%012.2a", 1.0) is "0x000001.00p0" in Java 8 to 25: the zeros
+of `0` count the hexadecimal string before its fraction is padded to
+the precision (Formatter.hexDouble, then addZeros).

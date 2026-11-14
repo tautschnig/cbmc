@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.wide --max-nondet-string-length 40 --java-locale en-US --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+String.format("%020.15a", 1.5) is "0x00000000000001.800000000000000p0" in
+Java 8 to 25: Double.toHexString gives "1.8p0", which the zeros count.

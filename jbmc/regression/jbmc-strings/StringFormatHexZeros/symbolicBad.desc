@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.symbolicBad --max-nondet-string-length 40 --java-locale en-US --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+As symbolic, where the string can have the width (as "0x00001.123p0"
+for 0x1.123p0).
