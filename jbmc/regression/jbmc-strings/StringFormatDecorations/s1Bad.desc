@@ -1,9 +1,10 @@
 CORE
 Test
---function Test.s1Bad --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+--java-locale en-US --function Test.s1Bad --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
 ^EXIT=10$
 ^SIGNAL=0$
 ^VERIFICATION FAILED$
 --
 --
 String.format: %05d of an int up to 999 may start with 00 only.
+(With --java-locale en-US, whose digits and case the expected string has.)

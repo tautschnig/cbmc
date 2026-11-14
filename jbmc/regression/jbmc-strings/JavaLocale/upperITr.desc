@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.upperITr --max-nondet-string-length 20 --java-locale tr --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+With tr, "i".toUpperCase() is "\\u0130", as in Java.

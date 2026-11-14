@@ -1,6 +1,6 @@
 CORE
 Test
---function Test.formatD --max-nondet-string-length 30 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+--java-locale en-US --function Test.formatD --max-nondet-string-length 30 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
@@ -8,3 +8,4 @@ Test
 ^string refinement: .* so a counterexample may be spurious$
 --
 Behaviour that was already right and must stay so: %d of a negative int.
+(With --java-locale en-US, whose digits and case the expected string has.)

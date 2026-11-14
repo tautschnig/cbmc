@@ -673,12 +673,16 @@ protected:
     symex_assignt &symex_assign,
     const function_application_exprt &f_l1);
 
-  /// Attempt to constant propagate case changes, both upper and lower.
+  /// Attempt to constant propagate case changes, both upper and lower, by
+  /// Locale.ROOT, or where \p by_locale holds by a locale of Java (as the
+  /// default one), which may convert i, I and J otherwise (in tr, az and
+  /// lt).
   bool constant_propagate_case_change(
     statet &state,
     symex_assignt &symex_assign,
     const function_application_exprt &f_l1,
-    bool to_upper);
+    bool to_upper,
+    bool by_locale);
 
   /// Attempt to constant proagate character replacement.
   bool constant_propagate_replace(

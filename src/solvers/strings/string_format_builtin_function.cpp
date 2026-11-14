@@ -23,6 +23,8 @@ Author: Romain Brenguier, Joel Allred
 #include "string_float_format.h"
 #include "string_refinement_util.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstring>
 #include <iterator>
@@ -301,6 +303,8 @@ static std::pair<array_string_exprt, string_constraintst> argument_text(
 /// \param index_type: type for indexes in strings
 /// \param char_type: type of characters
 /// \param message_handler: message handler for warnings
+/// \param cases: the case families that the upper case may follow (see
+///   java_locale_symbolst)
 /// \return String expression representing the output of String.format.
 static std::pair<array_string_exprt, string_constraintst>
 add_axioms_for_format_specifier(
@@ -309,7 +313,8 @@ add_axioms_for_format_specifier(
   const array_string_exprt &string_arg,
   const typet &index_type,
   const typet &char_type,
-  message_handlert &message_handler)
+  message_handlert &message_handler,
+  const std::vector<java_case_familyt> &cases)
 {
   string_constraintst constraints;
   array_poolt &array_pool = generator.array_pool;
@@ -462,12 +467,20 @@ add_axioms_for_format_specifier(
     format_specifiert fs_lower = fs;
     fs_lower.conversion = tolower(fs.conversion);
     auto format_specifier_result = add_axioms_for_format_specifier(
-      generator, fs_lower, string_arg, index_type, char_type, message_handler);
+      generator,
+      fs_lower,
+      string_arg,
+      index_type,
+      char_type,
+      message_handler,
+      cases);
 
+    // by the locale (Formatter.toUpperCaseWithLocale)
     const exprt return_code_upper_case =
       generator.fresh_symbol("return_code_upper_case", get_return_code_type());
-    const string_to_upper_case_builtin_functiont upper_case_function(
+    string_to_upper_case_builtin_functiont upper_case_function(
       return_code_upper_case, res, format_specifier_result.first, array_pool);
+    upper_case_function.families = cases;
     auto upper_case_constraints =
       upper_case_function.constraints(generator, message_handler);
     merge(upper_case_constraints, std::move(format_specifier_result.second));
@@ -658,7 +671,8 @@ public:
 /// conversion without them (see add_axioms_for_format_specifier), with the
 /// signs, zeros, prefixes, precision, case and spaces that
 /// java.util.Formatter adds (see java_format_decorate, whose versions it
-/// follows: where they differ, either).
+/// follows: where they differ, either), and the upper case of the case
+/// families \p cases.
 static std::pair<array_string_exprt, string_constraintst>
 add_axioms_for_decorated_specifier(
   string_constraint_generatort &generator,
@@ -666,7 +680,8 @@ add_axioms_for_decorated_specifier(
   const array_string_exprt &arg,
   const typet &index_type,
   const typet &char_type,
-  message_handlert &message_handler)
+  message_handlert &message_handler,
+  const std::vector<java_case_familyt> &cases)
 {
   using namespace java_format_flagst;
   format_piecest p{generator, index_type, char_type, message_handler};
@@ -705,7 +720,7 @@ add_axioms_for_decorated_specifier(
   else
   {
     auto core_result = add_axioms_for_format_specifier(
-      generator, core_fs, arg, index_type, char_type, message_handler);
+      generator, core_fs, arg, index_type, char_type, message_handler, cases);
     merge(p.constraints, std::move(core_result.second));
     core = core_result.first;
   }
@@ -837,8 +852,9 @@ add_axioms_for_decorated_specifier(
     cased = p.fresh();
     const exprt return_code =
       generator.fresh_symbol("return_code_upper_case", get_return_code_type());
-    const string_to_upper_case_builtin_functiont upper{
+    string_to_upper_case_builtin_functiont upper{
       return_code, cased, body, p.pool};
+    upper.families = cases;
     merge(p.constraints, upper.constraints(generator, message_handler));
   }
 
@@ -945,12 +961,67 @@ argument_position(const format_specifiert &fs, std::size_t argument_count)
   return static_cast<std::size_t>(fs.index - 1);
 }
 
+/// Whether Formatter localizes the digits (and the decimal separator) of
+/// \p fs: those of %d, %e, %f and %g, and of %tQ and %ts (whose fields of
+/// numbers the solver gives; the others are any string).
+static bool localizes_numbers(const format_specifiert &fs)
+{
+  if(fs.dt)
+    return fs.date_time_field == 'Q' || fs.date_time_field == 's';
+  const char c = static_cast<char>(tolower(fs.conversion));
+  return c == 'd' || c == 'e' || c == 'f' || c == 'g';
+}
+
+/// Axioms that \p res is \p body with the digits and the decimal separator
+/// of a locale, as Formatter.localizedMagnitude gives them: an ASCII digit
+/// d becomes \p zero + d, and '.' becomes \p separator. Where
+/// \p all_characters holds (the Long of a %tQ or %ts), every character c
+/// becomes \p zero + (c - '0'), as for the '-' of a negative %tQ. (The
+/// strings of null, NaN and Infinity, and the signs and spaces, have no
+/// digits.)
+static void localize_numbers(
+  string_constraint_generatort &generator,
+  const array_string_exprt &res,
+  const array_string_exprt &body,
+  const exprt &all_characters,
+  const exprt &zero,
+  const exprt &separator,
+  string_constraintst &constraints,
+  message_handlert &message_handler)
+{
+  array_poolt &pool = generator.array_pool;
+  const typet &char_type = zero.type();
+  const exprt length = pool.get_or_create_length(body);
+  constraints.existential.push_back(
+    equal_exprt{pool.get_or_create_length(res), length});
+  const symbol_exprt qvar =
+    generator.fresh_symbol("QA_format_localize", res.length_type());
+  const exprt c = body[qvar];
+  const exprt shifted =
+    plus_exprt{minus_exprt{c, from_integer('0', char_type)}, zero};
+  const exprt mapped = if_exprt{
+    or_exprt{
+      all_characters,
+      and_exprt{
+        binary_relation_exprt{c, ID_ge, from_integer('0', char_type)},
+        binary_relation_exprt{c, ID_le, from_integer('9', char_type)}}},
+    shifted,
+    if_exprt{equal_exprt{c, from_integer('.', char_type)}, separator, c}};
+  constraints.universal.emplace_back(
+    qvar,
+    zero_if_negative(length),
+    equal_exprt{res[qvar], mapped},
+    generator.ns,
+    message_handler);
+}
+
 /// Parse `s` and add axioms ensuring the output corresponds to the output of
 /// String.format.
 /// \param generator: constraint generator
 /// \param res: string expression for the result of the format function
 /// \param s: a format string
 /// \param args: a vector of arguments
+/// \param locale: the locale of the numbers and the case
 /// \param message_handler: message handler for warnings
 /// \return code, 0 on success
 static std::pair<exprt, string_constraintst> add_axioms_for_format(
@@ -958,6 +1029,7 @@ static std::pair<exprt, string_constraintst> add_axioms_for_format(
   const array_string_exprt &res,
   const std::string &s,
   const std::vector<array_string_exprt> &args,
+  const java_locale_symbolst &locale,
   message_handlert &message_handler)
 {
   string_constraintst constraints;
@@ -968,6 +1040,23 @@ static std::pair<exprt, string_constraintst> add_axioms_for_format(
   const typet &index_type = res.length_type();
 
   array_string_exprt string_arg;
+
+  // the zero digit and the decimal separator of the locale, the same for
+  // the whole call (one of the pairs of the locale where they are known)
+  const symbol_exprt zero = generator.fresh_symbol("format_zero", char_type);
+  const symbol_exprt separator =
+    generator.fresh_symbol("format_decimal_separator", char_type);
+  if(locale.numbers.has_value() && !locale.numbers_are_ascii())
+  {
+    exprt::operandst pairs;
+    for(const auto &pair : *locale.numbers)
+    {
+      pairs.push_back(and_exprt{
+        equal_exprt{zero, from_integer(pair.first, char_type)},
+        equal_exprt{separator, from_integer(pair.second, char_type)}});
+    }
+    constraints.existential.push_back(disjunction(pairs));
+  }
 
   for(const format_elementt &fe : format_strings)
   {
@@ -986,18 +1075,39 @@ static std::pair<exprt, string_constraintst> add_axioms_for_format(
       if(takes_argument(fs))
         string_arg = args[*position];
 
-      auto result =
-        fs.has_decoration()
-          ? add_axioms_for_decorated_specifier(
-              generator, fs, string_arg, index_type, char_type, message_handler)
-          : add_axioms_for_format_specifier(
-              generator,
-              fs,
-              string_arg,
-              index_type,
-              char_type,
-              message_handler);
+      auto result = fs.has_decoration() ? add_axioms_for_decorated_specifier(
+                                            generator,
+                                            fs,
+                                            string_arg,
+                                            index_type,
+                                            char_type,
+                                            message_handler,
+                                            locale.cases)
+                                        : add_axioms_for_format_specifier(
+                                            generator,
+                                            fs,
+                                            string_arg,
+                                            index_type,
+                                            char_type,
+                                            message_handler,
+                                            locale.cases);
       merge(constraints, std::move(result.second));
+      // the digits and the decimal separator of the locale
+      if(localizes_numbers(fs) && !locale.numbers_are_ascii())
+      {
+        const array_string_exprt localized =
+          array_pool.fresh_string(index_type, char_type);
+        localize_numbers(
+          generator,
+          localized,
+          result.first,
+          fs.dt ? kind_is(string_arg, kind_long) : exprt{false_exprt{}},
+          zero,
+          separator,
+          constraints,
+          message_handler);
+        result.first = localized;
+      }
       intermediary_strings.push_back(result.first);
     }
     else
@@ -1363,6 +1473,33 @@ std::optional<exprt> string_format_builtin_functiont::eval(
                            : eval_format_specifier(fs, *arg_value);
         if(!evaluated.has_value())
           return {};
+        // The upper case of i is I or İ where the locale may be that of tr
+        // or az (eval_format_specifier gives that of Locale.ROOT).
+        const bool upper =
+          fs.dt ? fs.conversion == 'T'
+                : std::isupper(static_cast<unsigned char>(fs.conversion)) != 0;
+        if(
+          upper && !locale.cases_are_root() &&
+          std::find(evaluated->begin(), evaluated->end(), mp_integer{'I'}) !=
+            evaluated->end())
+        {
+          return {};
+        }
+        // the digits and the decimal separator of the locale
+        if(localizes_numbers(fs) && !locale.numbers_are_ascii())
+        {
+          if(!locale.numbers.has_value() || locale.numbers->size() != 1)
+            return {};
+          const auto &pair = locale.numbers->front();
+          const bool all_characters = fs.dt && (*arg_value)[0] == kind_long;
+          for(mp_integer &c : *evaluated)
+          {
+            if(all_characters || ('0' <= c && c <= '9'))
+              c = (c - '0' + pair.first) % 0x10000;
+            else if(c == '.')
+              c = pair.second;
+          }
+        }
         std::vector<mp_integer> evaluated_char_vector = std::move(*evaluated);
         std::move(
           evaluated_char_vector.begin(),
@@ -1408,7 +1545,7 @@ string_constraintst string_format_builtin_functiont::constraints(
   }
 
   auto result_constraint_pair = add_axioms_for_format(
-    generator, result, format_string.value(), inputs, message_handler);
+    generator, result, format_string.value(), inputs, locale, message_handler);
   INVARIANT(
     simplify_expr(result_constraint_pair.first, generator.ns) == 0,
     "add_axioms_for_format should return 0, meaning that formatting was"
@@ -1528,8 +1665,12 @@ std::optional<exprt> length_for_format_specifier(
   case format_specifiert::SCIENTIFIC:
   case format_specifiert::DECIMAL_FLOAT:
     return {};
-  case format_specifiert::CHARACTER:
   case format_specifiert::CHARACTER_UPPER:
+  case format_specifiert::STRING_UPPER:
+    // The upper case may be longer (ß is SS) or shorter (lt drops a dot
+    // above).
+    return {};
+  case format_specifiert::CHARACTER:
   {
     // "null", one char, or a surrogate pair for a code point beyond the
     // basic plane
@@ -1562,7 +1703,6 @@ std::optional<exprt> length_for_format_specifier(
                     from_integer(5, index_type)};
   }
   case format_specifiert::STRING:
-  case format_specifiert::STRING_UPPER:
     // the text after the kind and the value
     return minus_exprt{
       array_pool.get_or_create_length(arg),
@@ -1622,6 +1762,8 @@ bool string_format_builtin_functiont::length_is_exact() const
     case format_specifiert::HEXADECIMAL_FLOAT_UPPER:
     case format_specifiert::DATE_TIME:
     case format_specifiert::DATE_TIME_UPPER:
+    case format_specifiert::STRING_UPPER:
+    case format_specifiert::CHARACTER_UPPER:
       // No length formula.
       return false;
     default:

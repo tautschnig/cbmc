@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.arabic --max-nondet-string-length 20 --java-locale ar-EG --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+With ar-EG, %d, %f and the zeros of %05d have Arabic-Indic digits and the separator U+066B, as from Java 11 on, or ASCII ones, as in Java 8 and with the COMPAT locale provider (the strings of Java 17 with each).

@@ -12,6 +12,7 @@ Author: Romain Brenguier, Joel Allred
 #ifndef CPROVER_SOLVERS_STRINGS_STRING_FORMAT_BUILTIN_FUNCTION_H
 #define CPROVER_SOLVERS_STRINGS_STRING_FORMAT_BUILTIN_FUNCTION_H
 
+#include "java_locale.h"
 #include "string_builtin_function.h"
 
 class format_specifiert;
@@ -67,6 +68,10 @@ public:
   /// result will be non-deterministic
   std::optional<std::string> format_string;
   std::vector<array_string_exprt> inputs;
+  /// The locale (see java_locale_symbolst): by default the default locale
+  /// of the runtime, which Formatter localizes numbers and converts the
+  /// case by.
+  java_locale_symbolst locale = java_default_locale_symbols();
 
   /// Constructor from arguments of a function application.
   /// The arguments in `fun_args` should be in order:

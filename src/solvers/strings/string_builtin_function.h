@@ -4,10 +4,11 @@
 #ifndef CPROVER_SOLVERS_REFINEMENT_STRING_BUILTIN_FUNCTION_H
 #define CPROVER_SOLVERS_REFINEMENT_STRING_BUILTIN_FUNCTION_H
 
-#include "string_constraint_generator.h"
-
 #include <util/mathematical_expr.h>
 #include <util/string_expr.h>
+
+#include "java_locale.h"
+#include "string_constraint_generator.h"
 
 #include <vector>
 
@@ -265,6 +266,10 @@ public:
   {
   }
 
+  /// The possible case conversions of the locale (see
+  /// java_case_familyt): that of Locale.ROOT unless set.
+  std::vector<java_case_familyt> families = {java_case_familyt::ROOT};
+
   std::optional<exprt>
   eval(const std::function<exprt(const exprt &)> &get_value) const override;
 
@@ -316,6 +321,10 @@ public:
         array_pool)
   {
   }
+
+  /// The possible case conversions of the locale (see
+  /// java_case_familyt): that of Locale.ROOT unless set.
+  std::vector<java_case_familyt> families = {java_case_familyt::ROOT};
 
   std::optional<exprt>
   eval(const std::function<exprt(const exprt &)> &get_value) const override;

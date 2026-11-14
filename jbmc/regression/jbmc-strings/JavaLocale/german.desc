@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.german --max-nondet-string-length 20 --java-locale de-DE --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+With de-DE, %.2f of 1.5 is 1,50, as in Java.

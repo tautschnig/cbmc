@@ -1,7 +1,8 @@
 CORE
 test
---max-nondet-string-length 20 --function test.check_integer --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+--max-nondet-string-length 20 --java-locale en-US --function test.check_integer --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
+(With --java-locale en-US, whose digits and case the expected string has.)

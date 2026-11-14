@@ -1,9 +1,10 @@
 CORE
 Test
---function Test.s2 --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+--java-locale en-US --function Test.s2 --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
 --
 String.format: a double that %.2f prints as 3.14 is in [3.135, 3.145).
+(With --java-locale en-US, whose digits and case the expected string has.)

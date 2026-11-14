@@ -143,6 +143,7 @@ SRC += analyses/ai/ai.cpp \
        solvers/strings/string_constraint_generator_valueof/is_digit_with_radix.cpp \
        solvers/strings/string_format_builtin_function/length_for_format_specifier.cpp \
        solvers/strings/format_specifier/java_format_parse.cpp \
+       solvers/strings/java_locale/java_locale.cpp \
        solvers/strings/string_float_format/format_float.cpp \
        solvers/strings/string_format_builtin_function/length_of_decimal_int.cpp \
        solvers/strings/string_refinement/concretize_array.cpp \

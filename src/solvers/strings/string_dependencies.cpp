@@ -6,14 +6,19 @@ Author: Diffblue Ltd.
 
 \*******************************************************************/
 
-#include "array_pool.h"
 #include "string_dependencies.h"
-#include "string_concatenation_builtin_function.h"
-#include "string_format_builtin_function.h"
-#include <unordered_set>
+
+#include <util/arith_tools.h>
 #include <util/expr_iterator.h>
 #include <util/graph.h>
 #include <util/ssa_expr.h>
+
+#include "array_pool.h"
+#include "java_locale.h"
+#include "string_concatenation_builtin_function.h"
+#include "string_format_builtin_function.h"
+
+#include <unordered_set>
 
 /// Applies `f` on all strings contained in `e` that are not if-expressions.
 /// For instance on input `cond1?s1:cond2?s2:s3` we apply `f` on s1, s2 and s3.
@@ -49,6 +54,25 @@ static std::unique_ptr<string_builtin_functiont> to_string_builtin_function(
     return std::make_unique<string_format_builtin_functiont>(
       return_code, fun_app.arguments(), array_pool);
 
+  // String.format with the kind of a locale (0 for the default one, 1 for
+  // null, which does not localize numbers and converts the case by the
+  // default locale, 2 for another, which the models do not know), the
+  // format string and the ten encoded arguments
+  if(id == ID_cprover_string_format_locale_func)
+  {
+    std::vector<exprt> arguments = fun_app.arguments();
+    PRECONDITION(arguments.size() == 2 + 1 + 1 + 10);
+    const auto kind = numeric_cast<mp_integer>(arguments[2]);
+    arguments.erase(arguments.begin() + 2);
+    auto f = std::make_unique<string_format_builtin_functiont>(
+      return_code, arguments, array_pool);
+    if(kind.has_value() && *kind == 1)
+      f->locale.numbers = {{{0x30, 0x2e}}};
+    else if(!kind.has_value() || *kind != 0)
+      f->locale = java_any_locale_symbols();
+    return f;
+  }
+
   if(id == ID_cprover_string_of_int_func)
     return std::make_unique<string_of_int_builtin_functiont>(
       return_code, fun_app.arguments(), array_pool);
@@ -57,13 +81,35 @@ static std::unique_ptr<string_builtin_functiont> to_string_builtin_function(
     return std::make_unique<string_set_char_builtin_functiont>(
       return_code, fun_app.arguments(), array_pool);
 
-  if(id == ID_cprover_string_to_lower_case_func)
-    return std::make_unique<string_to_lower_case_builtin_functiont>(
+  // the case conversion of Locale.ROOT (as Character's, and Python's), of
+  // the default locale (see configt::javat::locale), or of any locale
+  if(
+    id == ID_cprover_string_to_lower_case_func ||
+    id == ID_cprover_string_to_lower_case_default_locale_func ||
+    id == ID_cprover_string_to_lower_case_any_locale_func)
+  {
+    auto f = std::make_unique<string_to_lower_case_builtin_functiont>(
       return_code, fun_app.arguments(), array_pool);
+    if(id == ID_cprover_string_to_lower_case_default_locale_func)
+      f->families = java_default_locale_symbols().cases;
+    else if(id == ID_cprover_string_to_lower_case_any_locale_func)
+      f->families = java_any_locale_symbols().cases;
+    return f;
+  }
 
-  if(id == ID_cprover_string_to_upper_case_func)
-    return std::make_unique<string_to_upper_case_builtin_functiont>(
+  if(
+    id == ID_cprover_string_to_upper_case_func ||
+    id == ID_cprover_string_to_upper_case_default_locale_func ||
+    id == ID_cprover_string_to_upper_case_any_locale_func)
+  {
+    auto f = std::make_unique<string_to_upper_case_builtin_functiont>(
       return_code, fun_app.arguments(), array_pool);
+    if(id == ID_cprover_string_to_upper_case_default_locale_func)
+      f->families = java_default_locale_symbols().cases;
+    else if(id == ID_cprover_string_to_upper_case_any_locale_func)
+      f->families = java_any_locale_symbols().cases;
+    return f;
+  }
 
   return std::make_unique<string_builtin_function_with_no_evalt>(
     return_code, fun_app, array_pool);

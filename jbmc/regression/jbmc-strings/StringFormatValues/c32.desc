@@ -1,9 +1,10 @@
 CORE
 Test
---function Test.c32 --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+--java-locale en-US --function Test.c32 --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
 --
 String.format("%ts", 1234567890123L) gives "1234567890", as in Java 17.
+(With --java-locale en-US, whose digits and case the expected string has.)

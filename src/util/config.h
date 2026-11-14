@@ -423,6 +423,13 @@ public:
     /// Whether --java-version set the version.
     bool version_is_set = false;
 
+    /// The default locale of the runtime throughout the run of the program,
+    /// as a BCP 47 language tag (as "en-US"), which --java-locale sets, or
+    /// empty for any locale. Formatter localizes digits and the decimal
+    /// separator by it, and String.toUpperCase() and toLowerCase() convert
+    /// the case by it.
+    std::string locale;
+
     /// Whether a runtime of a version from \p first to \p last (0 for no
     /// limit) may run the program.
     bool may_run_on(std::size_t first, std::size_t last) const

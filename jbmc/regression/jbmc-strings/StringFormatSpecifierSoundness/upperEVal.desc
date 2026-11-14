@@ -1,6 +1,6 @@
 CORE
 Test
---function Test.upperEVal --max-nondet-string-length 30 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+--java-locale en-US --function Test.upperEVal --max-nondet-string-length 30 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
@@ -8,3 +8,4 @@ Test
 --
 %E used to build a floating-point type without a width. %E of 1.5 is
 1.500000E+00, as in Java.
+(With --java-locale en-US, whose digits and case the expected string has.)

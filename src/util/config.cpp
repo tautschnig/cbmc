@@ -1060,6 +1060,16 @@ bool configt::set(const cmdlinet &cmdline)
     java.version_is_set = true;
   }
 
+  if(cmdline.isset("java-locale"))
+  {
+    java.locale = cmdline.get_value("java-locale");
+    if(java.locale.empty())
+    {
+      throw invalid_command_line_argument_exceptiont{
+        "the locale must be a language tag, as en-US", "--java-locale"};
+    }
+  }
+
   if(cmdline.isset("include"))
     ansi_c.include_files=cmdline.get_values("include");
 

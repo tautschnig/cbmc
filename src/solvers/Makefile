@@ -169,6 +169,7 @@ SRC = $(BOOLEFORCE_SRC) \
       strings/string_length_ties.cpp \
       strings/string_concatenation_builtin_function.cpp \
       strings/java_floating_decimal.cpp \
+      strings/java_locale.cpp \
       strings/string_float_format.cpp \
       strings/string_format_builtin_function.cpp \
       strings/string_insertion_builtin_function.cpp \

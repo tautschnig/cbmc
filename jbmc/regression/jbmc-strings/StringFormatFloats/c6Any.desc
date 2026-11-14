@@ -1,9 +1,10 @@
 CORE
 Test
---function Test.c6Any --max-nondet-string-length 20  --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+--java-locale en-US --function Test.c6Any --max-nondet-string-length 20  --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
 --
 Without --java-version, a class file of Java 8 may run on any later runtime: String.format("%f", 1e23) gives the string of Java 8 to 20 or that of Java 21 and later.
+(With --java-locale en-US, whose digits and case the expected string has.)

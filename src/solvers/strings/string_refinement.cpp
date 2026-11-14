@@ -358,6 +358,7 @@ static bool is_cprover_string_application(const function_application_exprt &fa)
     ID_cprover_string_empty_string_func,
     ID_cprover_string_endswith_func,
     ID_cprover_string_format_func,
+    ID_cprover_string_format_locale_func,
     ID_cprover_string_index_of_func,
     ID_cprover_string_index_of_set_func,
     ID_cprover_string_insert_func,
@@ -386,6 +387,10 @@ static bool is_cprover_string_application(const function_application_exprt &fa)
     ID_cprover_string_substring_func,
     ID_cprover_string_to_lower_case_func,
     ID_cprover_string_to_upper_case_func,
+    ID_cprover_string_to_lower_case_default_locale_func,
+    ID_cprover_string_to_upper_case_default_locale_func,
+    ID_cprover_string_to_lower_case_any_locale_func,
+    ID_cprover_string_to_upper_case_any_locale_func,
     ID_cprover_string_trim_func,
   };
   // clang-format on

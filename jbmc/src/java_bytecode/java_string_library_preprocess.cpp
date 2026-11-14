@@ -1754,6 +1754,16 @@ void java_string_library_preprocesst::initialize_conversion_table()
   format_signature += ")Ljava/lang/String;";
   cprover_equivalent_to_java_string_returning_function[format_signature] =
     ID_cprover_string_format_func;
+  // with the kind of a locale (see cproverFormatWith of the models)
+  {
+    std::string signature =
+      "java::java.lang.String.cproverFormatWith:(ILjava/lang/String;";
+    for(std::size_t i = 0; i < MAX_FORMAT_ARGS; ++i)
+      signature += "Ljava/lang/String;";
+    signature += ")Ljava/lang/String;";
+    cprover_equivalent_to_java_string_returning_function[signature] =
+      ID_cprover_string_format_locale_func;
+  }
 
   cprover_equivalent_to_java_assign_and_return_function
     ["java::org.cprover.CProverString.insert:(Ljava/lang/StringBuilder;ILjava/"
@@ -1949,9 +1959,11 @@ void java_string_library_preprocesst::initialize_conversion_table()
   cprover_equivalent_to_java_function
     ["java::java.lang.String.startsWith:(Ljava/lang/String;I)Z"]=
       ID_cprover_string_startswith_func;
+  // by the default locale (Character.toLowerCase and equalsIgnoreCase by
+  // Locale.ROOT)
   cprover_equivalent_to_java_string_returning_function
-    ["java::java.lang.String.toLowerCase:()Ljava/lang/String;"]=
-      ID_cprover_string_to_lower_case_func;
+    ["java::java.lang.String.toLowerCase:()Ljava/lang/String;"] =
+      ID_cprover_string_to_lower_case_default_locale_func;
   conversion_table["java::java.lang.String.toString:()Ljava/lang/String;"] =
     std::bind(
       &java_string_library_preprocesst::make_copy_string_code,
@@ -1962,8 +1974,15 @@ void java_string_library_preprocesst::initialize_conversion_table()
       std::placeholders::_4,
       std::placeholders::_5);
   cprover_equivalent_to_java_string_returning_function
-    ["java::java.lang.String.toUpperCase:()Ljava/lang/String;"]=
-      ID_cprover_string_to_upper_case_func;
+    ["java::java.lang.String.toUpperCase:()Ljava/lang/String;"] =
+      ID_cprover_string_to_upper_case_default_locale_func;
+  // by a locale whose language the models do not know
+  cprover_equivalent_to_java_string_returning_function
+    ["java::java.lang.String.cproverToLowerCaseAnyLocale:()Ljava/lang/"
+     "String;"] = ID_cprover_string_to_lower_case_any_locale_func;
+  cprover_equivalent_to_java_string_returning_function
+    ["java::java.lang.String.cproverToUpperCaseAnyLocale:()Ljava/lang/"
+     "String;"] = ID_cprover_string_to_upper_case_any_locale_func;
   cprover_equivalent_to_java_string_returning_function
     ["java::java.lang.String.trim:()Ljava/lang/String;"]=
       ID_cprover_string_trim_func;

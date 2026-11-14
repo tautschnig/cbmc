@@ -50,7 +50,8 @@ Author: Daniel Kroening, kroening@kroening.com
   "(java-no-load-class):" \
   "(static-values):" \
   "(java-lift-clinit-calls)" \
-  "(java-version):"
+  "(java-version):" \
+  "(java-locale):"
 
 #define JAVA_BYTECODE_LANGUAGE_OPTIONS_HELP \
   " {y--disable-uncaught-exception-check} \t " \
@@ -126,6 +127,10 @@ Author: Daniel Kroening, kroening@kroening.com
   "whose libraries behave as in that version, as Double.toString, which " \
   "takes other digits up to Java 18. By default, any version from that of " \
   "the newest class file loaded on, with the behaviours of all of them.\n" \
+  " {y--java-locale} {utag} \t " \
+  "the default locale of the Java runtime throughout the run (as en-US), " \
+  "by which String.format localizes digits and String.toUpperCase() " \
+  "converts the case. By default, any locale.\n" \
 
 #ifdef _WIN32
   #define JAVA_CLASSPATH_SEPARATOR ";"

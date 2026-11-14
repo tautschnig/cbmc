@@ -100,13 +100,11 @@ SCENARIO(
         pointer_type,
         array_pool);
       format_specifiert fs{0, "", 0, 0, false, format_specifiert::STRING_UPPER};
-      const exprt actual =
-        length_for_format_specifier(fs, arg, length_type, array_pool).value();
-      THEN("length constraint represents 3")
+      THEN("there is no length formula (the upper case of ß is SS)")
       {
-        int to_int =
-          *numeric_cast<int>(to_constant_expr(simplify_expr(actual, ns)));
-        REQUIRE(to_int == 3);
+        REQUIRE_FALSE(
+          length_for_format_specifier(fs, arg, length_type, array_pool)
+            .has_value());
       }
     }
   }

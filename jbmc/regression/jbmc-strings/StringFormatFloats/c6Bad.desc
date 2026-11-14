@@ -1,9 +1,10 @@
 CORE
 Test
---function Test.c6Bad --java-version 21 --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+--java-locale en-US --function Test.c6Bad --java-version 21 --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
 ^EXIT=10$
 ^SIGNAL=0$
 ^VERIFICATION FAILED$
 --
 --
 The negation of c6: String.format("%f", 1e23) gives "100000000000000000000000.000000", as in Java 21 and 25 (Java 17 takes the digits of its Double.toString, 99999999999999990000000.000000).
+(With --java-locale en-US, whose digits and case the expected string has.)

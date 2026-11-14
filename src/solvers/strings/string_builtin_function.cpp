@@ -225,16 +225,63 @@ static bool is_utf8(std::size_t width)
   return width <= 8;
 }
 
+/// The case families of a conversion (see java_case_familyt): whether that
+/// of tr and az, or that of lt, is possible, and whether it is the only
+/// one.
+struct case_familiest
+{
+  bool turkic = false;
+  bool lithuanian = false;
+  bool only_turkic = false;
+
+  explicit case_familiest(const std::vector<java_case_familyt> &families)
+  {
+    for(const java_case_familyt f : families)
+    {
+      turkic = turkic || f == java_case_familyt::TURKIC;
+      lithuanian = lithuanian || f == java_case_familyt::LITHUANIAN;
+    }
+    only_turkic = families.size() == 1 && turkic;
+  }
+
+  /// Whether a family other than that of Locale.ROOT is possible.
+  bool other() const
+  {
+    return turkic || lithuanian;
+  }
+};
+
+/// Whether the conversion of \p c differs between the possible families,
+/// or depends on the next characters (lt), so that it is not modelled: for
+/// upper case, i (İ in tr and az); for lower case, I (ı in tr and az, and
+/// I with a dot above before an accent in lt), J, Ì and Í (lt).
+static bool eval_case_depends_on_locale(
+  const mp_integer &c,
+  bool to_upper,
+  const case_familiest &families)
+{
+  if(to_upper)
+    return families.turkic && !families.only_turkic && c == 'i';
+  if(families.turkic && !families.only_turkic && c == 'I')
+    return true;
+  return families.lithuanian &&
+         (c == 'I' || c == 'J' || c == 0xcc || c == 0xcd);
+}
+
 /// Whether the case conversion of character \p c is modelled: for UTF-8
 /// bytes, those of ASCII, as other characters have several bytes; for UTF-16,
 /// those below U+0100 that convert within that range, as the upper case of
 /// µ (U+00B5), ß (U+00DF, "SS") and ÿ (U+00FF) is outside it.
-static bool
-eval_case_is_modelled(const mp_integer &c, std::size_t width, bool to_upper)
+static bool eval_case_is_modelled(
+  const mp_integer &c,
+  std::size_t width,
+  bool to_upper,
+  const case_familiest &families)
 {
   if(is_utf8(width))
     return c < 0x80;
-  return c < 0x100 && !(to_upper && (c == 0xb5 || c == 0xdf || c == 0xff));
+  return c < 0x100 && !(to_upper && (c == 0xb5 || c == 0xdf || c == 0xff)) &&
+         !eval_case_depends_on_locale(c, to_upper, families);
 }
 
 /// Whether \p c is an upper-case letter of ASCII or, for UTF-16, of
@@ -247,9 +294,17 @@ static bool eval_is_upper_case(const mp_integer &c, std::size_t width)
 }
 
 /// The case conversion of a modelled character \p c.
-static mp_integer
-eval_case_convert(const mp_integer &c, std::size_t width, bool to_upper)
+static mp_integer eval_case_convert(
+  const mp_integer &c,
+  std::size_t width,
+  bool to_upper,
+  const case_familiest &families)
 {
+  // the dotted and dotless i of tr and az
+  if(families.only_turkic && to_upper && c == 'i')
+    return 0x130;
+  if(families.only_turkic && !to_upper && c == 'I')
+    return 0x131;
   if(to_upper)
     return eval_is_upper_case(c - 0x20, width) ? c - 0x20 : c;
   return eval_is_upper_case(c, width) ? c + 0x20 : c;
@@ -266,6 +321,7 @@ static std::optional<exprt> eval_case_conversion(
   const array_string_exprt &input,
   const array_string_exprt &result,
   bool to_upper,
+  const case_familiest &families,
   const std::function<exprt(const exprt &)> &get_value)
 {
   auto input_opt = eval_string(input, get_value);
@@ -274,9 +330,9 @@ static std::optional<exprt> eval_case_conversion(
   const std::size_t width = char_width(input);
   for(mp_integer &c : input_opt.value())
   {
-    if(!eval_case_is_modelled(c, width, to_upper))
+    if(!eval_case_is_modelled(c, width, to_upper, families))
       return {};
-    c = eval_case_convert(c, width, to_upper);
+    c = eval_case_convert(c, width, to_upper, families);
   }
   const auto length =
     from_integer(input_opt.value().size(), result.length_type());
@@ -287,13 +343,15 @@ static std::optional<exprt> eval_case_conversion(
 std::optional<exprt> string_to_lower_case_builtin_functiont::eval(
   const std::function<exprt(const exprt &)> &get_value) const
 {
-  return eval_case_conversion(input, result, false, get_value);
+  return eval_case_conversion(
+    input, result, false, case_familiest{families}, get_value);
 }
 
 std::optional<exprt> string_to_upper_case_builtin_functiont::eval(
   const std::function<exprt(const exprt &)> &get_value) const
 {
-  return eval_case_conversion(input, result, true, get_value);
+  return eval_case_conversion(
+    input, result, true, case_familiest{families}, get_value);
 }
 
 static exprt in_range(const exprt &c, unsigned lower, unsigned upper)
@@ -313,43 +371,92 @@ static exprt is_upper_case(const exprt &c, std::size_t width)
 }
 
 /// As eval_case_is_modelled, for a character expression.
-static exprt case_is_modelled(const exprt &c, std::size_t width, bool to_upper)
+static exprt case_is_modelled(
+  const exprt &c,
+  std::size_t width,
+  bool to_upper,
+  const case_familiest &families)
 {
   if(is_utf8(width))
     return binary_relation_exprt{c, ID_lt, from_integer(0x80, c.type())};
   exprt::operandst conjuncts{
     binary_relation_exprt{c, ID_lt, from_integer(0x100, c.type())}};
+  std::vector<unsigned> excluded;
   if(to_upper)
+    excluded = {0xb5, 0xdf, 0xff};
+  for(const unsigned d :
+      {unsigned{'i'}, unsigned{'I'}, unsigned{'J'}, 0xccu, 0xcdu})
   {
-    for(const unsigned special : {0xb5, 0xdf, 0xff})
-      conjuncts.push_back(notequal_exprt{c, from_integer(special, c.type())});
+    if(eval_case_depends_on_locale(d, to_upper, families))
+      excluded.push_back(d);
   }
+  for(const unsigned special : excluded)
+    conjuncts.push_back(notequal_exprt{c, from_integer(special, c.type())});
   return conjunction(conjuncts);
 }
 
 /// As eval_case_convert, for a character expression.
-static exprt case_convert(const exprt &c, std::size_t width, bool to_upper)
+static exprt case_convert(
+  const exprt &c,
+  std::size_t width,
+  bool to_upper,
+  const case_familiest &families)
 {
   const exprt diff = from_integer(0x20, c.type());
+  exprt result;
   if(to_upper)
   {
     // c - 0x20 wraps around for c < 0x20, which is not upper case then.
     const minus_exprt shifted{c, diff};
-    return if_exprt{is_upper_case(shifted, width), shifted, c};
+    result = if_exprt{is_upper_case(shifted, width), shifted, c};
   }
-  return if_exprt{is_upper_case(c, width), plus_exprt{c, diff}, c};
+  else
+    result = if_exprt{is_upper_case(c, width), plus_exprt{c, diff}, c};
+  if(families.only_turkic)
+  {
+    // the dotted and dotless i of tr and az
+    result = if_exprt{
+      equal_exprt{c, from_integer(to_upper ? 'i' : 'I', c.type())},
+      from_integer(to_upper ? 0x130 : 0x131, c.type()),
+      result};
+  }
+  return result;
 }
 
 /// Whether the case conversion of \p c is a single character, so that it
 /// keeps the positions of the other characters: for UTF-8 bytes and for
 /// upper case, exactly where it is modelled; Java's lower case only maps
 /// U+0130 (I with dot above) to two characters.
-static exprt case_keeps_length(const exprt &c, std::size_t width, bool to_upper)
+/// In tr and az, lower case drops a dot above (U+0307) after I; in lt,
+/// upper case drops it after i and j, and lower case adds it after I, J and
+/// Į before an accent, and to Ì, Í and Ĩ (SpecialCasing.txt).
+static exprt case_keeps_length(
+  const exprt &c,
+  std::size_t width,
+  bool to_upper,
+  const case_familiest &families)
 {
   if(is_utf8(width))
-    return case_is_modelled(c, width, to_upper);
+    return case_is_modelled(c, width, to_upper, families);
+  std::vector<unsigned> changes;
   if(!to_upper)
-    return notequal_exprt{c, from_integer(0x130, c.type())};
+  {
+    changes.push_back(0x130);
+    if(families.other())
+      changes.push_back(0x307);
+    if(families.lithuanian)
+    {
+      for(const unsigned l :
+          {unsigned{'I'}, unsigned{'J'}, 0xccu, 0xcdu, 0x128u, 0x12eu})
+        changes.push_back(l);
+    }
+    exprt::operandst conjuncts;
+    for(const unsigned l : changes)
+      conjuncts.push_back(notequal_exprt{c, from_integer(l, c.type())});
+    return conjunction(conjuncts);
+  }
+  if(families.lithuanian)
+    changes.push_back(0x307);
   // The characters of the Basic Multilingual Plane whose upper case has
   // several characters (SpecialCasing.txt of Unicode).
   static const std::vector<std::pair<unsigned, unsigned>> several = {
@@ -363,6 +470,8 @@ static exprt case_keeps_length(const exprt &c, std::size_t width, bool to_upper)
   exprt::operandst conjuncts;
   for(const auto &range : several)
     conjuncts.push_back(not_exprt{in_range(c, range.first, range.second)});
+  for(const unsigned l : changes)
+    conjuncts.push_back(notequal_exprt{c, from_integer(l, c.type())});
   return conjunction(conjuncts);
 }
 
@@ -388,6 +497,7 @@ static string_constraintst case_conversion_constraints(
   const array_string_exprt &result,
   const array_string_exprt &input,
   bool to_upper,
+  const case_familiest &families,
   string_constraint_generatort &generator,
   message_handlert &message_handler)
 {
@@ -415,7 +525,7 @@ static string_constraintst case_conversion_constraints(
       {
         const auto value = numeric_cast<mp_integer>(c);
         return value.has_value() &&
-               eval_case_is_modelled(*value, width, to_upper);
+               eval_case_is_modelled(*value, width, to_upper, families);
       });
   }
   if(!known_modelled)
@@ -432,11 +542,35 @@ static string_constraintst case_conversion_constraints(
   const auto converted = [&](const exprt &i, const exprt &j)
   {
     const exprt c = input[i];
-    return and_exprt{
-      case_keeps_length(c, width, to_upper),
+    exprt::operandst conjuncts{
+      case_keeps_length(c, width, to_upper, families),
       implies_exprt{
-        case_is_modelled(c, width, to_upper),
-        equal_exprt{result[j], case_convert(c, width, to_upper)}}};
+        case_is_modelled(c, width, to_upper, families),
+        equal_exprt{result[j], case_convert(c, width, to_upper, families)}}};
+    // i (upper case I or İ) and I (lower case i or ı, without lt) where the
+    // locale may be that of tr or az, or another
+    if(!is_utf8(width) && families.turkic && !families.only_turkic)
+    {
+      const auto character = [&](unsigned x)
+      { return from_integer(x, c.type()); };
+      if(to_upper)
+      {
+        conjuncts.push_back(implies_exprt{
+          equal_exprt{c, character('i')},
+          or_exprt{
+            equal_exprt{result[j], character('I')},
+            equal_exprt{result[j], character(0x130)}}});
+      }
+      else if(!families.lithuanian)
+      {
+        conjuncts.push_back(implies_exprt{
+          equal_exprt{c, character('I')},
+          or_exprt{
+            equal_exprt{result[j], character('i')},
+            equal_exprt{result[j], character(0x131)}}});
+      }
+    }
+    return conjunction(conjuncts);
   };
 
   if(known_modelled)
@@ -466,20 +600,28 @@ static string_constraintst case_conversion_constraints(
     conjunction(
       {binary_relation_exprt{first, ID_ge, from_integer(0, index_type)},
        binary_relation_exprt{first, ID_lt, input_length},
-       not_exprt{case_keeps_length(input[first], width, to_upper)},
-       binary_relation_exprt{result_length, ID_gt, input_length},
+       not_exprt{case_keeps_length(input[first], width, to_upper, families)},
+       // (shorter or as long where a dot above may be dropped, see
+       // case_keeps_length, which is only dropped after a letter that is
+       // kept: at least half of the characters remain)
+       families.other()
+         ? exprt{binary_relation_exprt{
+             mult_exprt{result_length, from_integer(2, index_type)},
+             ID_ge,
+             input_length}}
+         : exprt{binary_relation_exprt{result_length, ID_gt, input_length}},
        // A character converts to at most three (two for lower case in
-       // Java, and for UTF-8 bytes a byte of a character of up to four
-       // bytes converts to a character of up to four bytes).
+       // Java, three for lt, and for UTF-8 bytes a byte of a character of up
+       // to four bytes converts to a character of up to four bytes).
        binary_relation_exprt{
          result_length,
          ID_le,
          mult_exprt{
            input_length,
            from_integer(
-             is_utf8(width) ? 4
-             : to_upper     ? 3
-                            : 2,
+             is_utf8(width)                    ? 4
+             : to_upper || families.lithuanian ? 3
+                                               : 2,
              index_type)}}})});
 
   // The last character of the input, where its conversion keeps the
@@ -492,11 +634,11 @@ static string_constraintst case_conversion_constraints(
     constraints.existential.push_back(implies_exprt{
       conjunction(
         {not_exprt{keeps},
-         case_keeps_length(c, width, to_upper),
-         case_is_modelled(c, width, to_upper)}),
+         case_keeps_length(c, width, to_upper, families),
+         case_is_modelled(c, width, to_upper, families)}),
       equal_exprt{
         result[minus_exprt{result_length, one}],
-        case_convert(c, width, to_upper)}});
+        case_convert(c, width, to_upper, families)}});
   }
 
   const symbol_exprt prefix_idx = generator.fresh_symbol(
@@ -516,7 +658,13 @@ string_constraintst string_to_lower_case_builtin_functiont::constraints(
   message_handlert &message_handler) const
 {
   return case_conversion_constraints(
-    return_code, result, input, false, generator, message_handler);
+    return_code,
+    result,
+    input,
+    false,
+    case_familiest{families},
+    generator,
+    message_handler);
 }
 
 string_constraintst string_to_upper_case_builtin_functiont::constraints(
@@ -524,7 +672,13 @@ string_constraintst string_to_upper_case_builtin_functiont::constraints(
   message_handlert &message_handler) const
 {
   return case_conversion_constraints(
-    return_code, result, input, true, generator, message_handler);
+    return_code,
+    result,
+    input,
+    true,
+    case_familiest{families},
+    generator,
+    message_handler);
 }
 
 /// Constructor from arguments of a function application.

@@ -423,15 +423,29 @@ bool goto_symext::constant_propagate_assignment_with_side_effects(
       {
         return with_backing(constant_propagate_trim(state, symex_assign, f_l1));
       }
-      else if(func_id == ID_cprover_string_to_lower_case_func)
+      else if(
+        func_id == ID_cprover_string_to_lower_case_func ||
+        func_id == ID_cprover_string_to_lower_case_default_locale_func ||
+        func_id == ID_cprover_string_to_lower_case_any_locale_func)
       {
-        return with_backing(
-          constant_propagate_case_change(state, symex_assign, f_l1, false));
+        return with_backing(constant_propagate_case_change(
+          state,
+          symex_assign,
+          f_l1,
+          false,
+          func_id != ID_cprover_string_to_lower_case_func));
       }
-      else if(func_id == ID_cprover_string_to_upper_case_func)
+      else if(
+        func_id == ID_cprover_string_to_upper_case_func ||
+        func_id == ID_cprover_string_to_upper_case_default_locale_func ||
+        func_id == ID_cprover_string_to_upper_case_any_locale_func)
       {
-        return with_backing(
-          constant_propagate_case_change(state, symex_assign, f_l1, true));
+        return with_backing(constant_propagate_case_change(
+          state,
+          symex_assign,
+          f_l1,
+          true,
+          func_id != ID_cprover_string_to_upper_case_func));
       }
       else if(func_id == ID_cprover_string_replace_func)
       {
@@ -1291,7 +1305,8 @@ bool goto_symext::constant_propagate_case_change(
   statet &state,
   symex_assignt &symex_assign,
   const function_application_exprt &f_l1,
-  bool to_upper)
+  bool to_upper,
+  bool by_locale)
 {
   const auto &f_type = f_l1.function_type();
   const auto &length_type = f_type.domain().at(0);
@@ -1314,6 +1329,14 @@ bool goto_symext::constant_propagate_case_change(
     // Can't guarantee matches against non-ASCII characters.
     if(character >= 128)
       return false;
+    // The locale may convert i (to İ in tr and az), I (to ı, and in lt to
+    // i with a dot above before an accent) and J (lt) otherwise.
+    if(
+      by_locale &&
+      (to_upper ? character == 'i' : (character == 'I' || character == 'J')))
+    {
+      return false;
+    }
 
     if(isalpha(character))
     {

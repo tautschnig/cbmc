@@ -274,6 +274,14 @@ version, as Double.toString, which takes other digits
 up to Java 18. By default, any version from that of the
 newest class file loaded on, with the behaviours of all
 of them.
+.TP
+\fB\-\-java\-locale\fR \fItag\fR
+The default locale of the Java runtime throughout the
+run of the program, as a language tag (as en\-US), by
+which String.format localizes digits and decimal
+separators and String.toUpperCase() and toLowerCase()
+convert the case (differently for tr, az and lt). By
+default, any locale.
 .SS "Platform options:"
 .TP
 \fB\-\-arch\fR \fIarch\fR
