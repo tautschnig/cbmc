@@ -174,7 +174,7 @@ Concurrency pair 3: the TX datapath against a control-path stop.
 
 * run by `run_conc_datapath.sh`: `-DWHEN`, `-DWITH_EARLY_STATE`, `-DWITH_STATE_CHECK`
 
-* vacuity witness: yes, 2
+* vacuity witness: yes, 4
 
 ### `harness_conc_reset.c`
 
@@ -371,6 +371,7 @@ Class E, deadlock and lockup: the admin-lock discipline.
 |---|---|
 | `LKO_NO_RECURSION` | the lock is never taken while already held |
 | `LKO_NO_STRAY_UNLOCK` | the lock is only released by a holder |
+| `LKO_ADMIN_LOCKED` | every admin-queue operation happens with the admin |
 | `LKO_RELEASED` | the entry point returns with the admin lock released |
 
 | configuration | assumes |
@@ -379,7 +380,7 @@ Class E, deadlock and lockup: the admin-lock discipline.
 
 * run by `run_lock_order.sh`: `-DBREAK_RETA_UNLOCK`
 
-* vacuity witness: yes, 3
+* vacuity witness: yes, 4
 
 ### `harness_map_segs.c`
 

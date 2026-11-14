@@ -1662,6 +1662,89 @@ application-contract violation in the same standing as F15, F22 and F24 --
 reasonably assume works. It is compiled out, and it would not work if it were
 not. DPDK-specific.
 
+## F29: admin-queue operations performed without the admin lock (DPDK ENA)
+
+Concurrency pair 4. Found by extending the class E ghost lock counter with one
+further obligation -- *every admin-queue operation happens with
+`adapter->admin_lock` held* -- and running it over every entry point that
+reaches the admin queue.
+
+**Two sites violate it, and each is unambiguous for a different reason.**
+
+### `ena_rss_hash_conf_get`: the same function locks for one call and not the other
+
+`ena_rss.c:549-566`:
+
+```c
+if (rss_conf->rss_key != NULL) {
+        rc = ena_get_rss_hash_key(ena_dev, rss_conf->rss_key);   /* no lock */
+        ...
+}
+
+for (i = 0; i < ENA_ADMIN_RSS_PROTO_NUM; ++i) {
+        proto = (enum ena_admin_flow_hash_proto)i;
+        rte_spinlock_lock(&adapter->admin_lock);
+        rc = ena_com_get_hash_ctrl(ena_dev, proto, &admin_hf);   /* locked */
+        rte_spinlock_unlock(&adapter->admin_lock);
+```
+
+`ena_get_rss_hash_key` reaches `ena_com_get_hash_key` (`ena_rss.c:464`), an
+admin-queue command, with no lock -- in a function that takes the lock
+carefully, per iteration, for its *other* admin call. That is an omission
+rather than a decision.
+
+### `ena_mp_primary_handle`: the IPC thread locks nothing
+
+The handler that services a **secondary** process's requests, running inside
+the primary, performs `ena_com_get_dev_basic_stats`, `ena_com_set_dev_mtu`,
+`ena_com_indirect_table_get/set`, `ena_com_get_customer_metrics` and
+`ena_com_get_ena_srd_info` (`ena_ethdev.c:4150-4200`) and contains **no
+reference to `admin_lock` at all**, while all eight of the primary's own admin
+paths take it. `ENA_PROXY` on the primary side just calls the function
+directly (`:498-499`), leaving the lock to the caller -- and this caller is not
+one of the eight.
+
+So in a multi-process deployment two threads in the primary use the admin
+queue and only one of them locks. The lock protects nothing against the IPC
+thread.
+
+**Evidence.** `proof/harness_lock_order.c` with `proof/run_lock_order.sh`,
+obligation `LKO_ADMIN_LOCKED`:
+
+| entry point | result |
+|---|---|
+| `ena_rss_reta_update` | holds |
+| `ena_rss_reta_query` | holds |
+| `ena_rss_hash_update` | holds |
+| `ena_rss_hash_conf_get` | **FAILURE** |
+| `ena_stats_get` | holds |
+| `ena_mp_primary_handle` | **FAILURE** |
+
+Every run clean -- no other failing property, no reached bodyless callee, no
+UNKNOWN, no failing unwinding assertion. Four of the six are adjudicated
+`CLAIM STANDS` as proofs and the two failures as reproductions.
+
+The contrast inside one harness is what makes this solid: the same obligation,
+the same ghost counter, four entry points satisfying it and two not.
+
+**Why it matters.** This is the mechanism that makes the class R scenario
+reachable without an abort. Two unsynchronised submitters share
+`curr_cmd_id`, the `comp_ctx` table and the completion ring, so command ids
+can be handed out twice and a completion delivered to the wrong requester --
+which is exactly what `harness_admin_reuse.c` shows happens once two commands
+share an id. F29 and the class R findings are the same bug seen from two ends.
+
+**Fix.** Take `admin_lock` around `ena_get_rss_hash_key`'s call, and around
+the switch in `ena_mp_primary_handle` -- or, more robustly, inside
+`ENA_PROXY`'s primary branch so every caller is covered by construction
+rather than by remembering.
+
+**Severity.** The `hash_conf_get` site needs a concurrent admin operation from
+another control-path thread. The IPC site needs a secondary process, which is
+a supported DPDK deployment, and then needs no application error at all: the
+secondary making a routine statistics request races the primary's own control
+path. Unveil class E and the enabler for class R. DPDK-specific.
+
 ## Class S confirmations: the return code and what the device did
 
 Class S is the largest group the Unveil class list had no name for -- an

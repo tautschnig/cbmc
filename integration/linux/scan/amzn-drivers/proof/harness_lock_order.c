@@ -10,6 +10,8 @@
  *                       rte_spinlock_t is not recursive, so this is an
  *                       immediate self-deadlock: the holder spins forever
  *                       waiting for itself.
+ *   LKO_ADMIN_LOCKED    every admin-queue operation happens with the lock
+ *                       held -- the obligation ENTRY=5 is about
  *   LKO_RELEASED        every entry point returns with the lock not held.
  *                       A lock held on return is a lockup of every later
  *                       admin operation, which is the whole control plane.
@@ -30,6 +32,16 @@
  *
  * All five entry points that take the lock are proven, and ENTRY=0 is
  * additionally mutation-validated.
+ *
+ * ENTRY=5 is a different question from the others, and the reason this
+ * harness grew: does every admin-queue operation happen with the lock held?
+ * The primary's own paths all take adapter->admin_lock -- eight sites across
+ * ena_ethdev.c and ena_rss.c -- but ena_mp_primary_handle, the IPC handler
+ * that services a SECONDARY process's requests inside the primary, takes it
+ * nowhere.  ENA_PROXY on the primary side just calls the function directly
+ * (ena_ethdev.c:498-499), leaving the lock to the caller, and this caller is
+ * not one of the eight.  So two threads in the primary use the admin queue
+ * and only one of them locks.
  *
  * -DENTRY=n selects which entry point to exercise.
  * -DBREAK_RETA_UNLOCK removes the error-path unlock in ena_rss_reta_update,
@@ -108,6 +120,7 @@ int rte_log_register_type_and_pick_level(const char *n, uint32_t l)
 int ena_com_indirect_table_fill_entry(
   struct ena_com_dev *d, u16 i, u16 v)
 {
+  admin_op_guard();
   (void)d;
   (void)i;
   (void)v;
@@ -115,6 +128,7 @@ int ena_com_indirect_table_fill_entry(
 }
 int ena_com_indirect_table_set(struct ena_com_dev *d)
 {
+  admin_op_guard();
   (void)d;
   return nd_int();
 }
@@ -136,6 +150,14 @@ enum rte_proc_type_t rte_eal_process_type(void)
  * ena_mp_indirect_table_set cut the path at exactly the point where the
  * normal-path unlock lives, leaving the obligations vacuous.  An arbitrary
  * return keeps both the success and failure branches reachable. */
+int rte_mp_reply(struct rte_mp_msg *msg, const void *peer)
+{
+  (void)msg;
+  (void)peer;
+  return 0;
+}
+int rte_eth_dev_is_valid_port(uint16_t port_id) { return port_id == 0; }
+
 int rte_mp_request_sync(
   struct rte_mp_msg *req, struct rte_mp_reply *reply,
   const struct timespec *ts)
@@ -155,8 +177,22 @@ void rte_pci_register(struct rte_pci_driver *d) { (void)d; }
  * exactly where a missing unlock would live, so a model that always succeeds
  * would hide the bug these obligations exist to find.  Out-parameters are
  * filled with arbitrary values for the same reason. */
+/* Every ena_com admin call below asserts the lock is held.  That is the
+ * ENTRY=5 obligation; for the other entry points it holds trivially because
+ * those paths take the lock themselves. */
+static unsigned g_admin_ops;
+static void admin_op_guard(void)
+{
+  g_admin_ops++;
+  __CPROVER_assert(
+    g_held == 1,
+    "LKO_ADMIN_LOCKED: every admin-queue operation happens with the admin "
+    "lock held");
+}
+
 int ena_com_indirect_table_get(struct ena_com_dev *d, u32 *ind_tbl)
 {
+  admin_op_guard();
   (void)d;
   if(ind_tbl != NULL)
     for(unsigned i = 0; i < ENA_RX_RSS_TABLE_SIZE; i++)
@@ -167,6 +203,7 @@ int ena_com_fill_hash_function(
   struct ena_com_dev *d, enum ena_admin_hash_functions f, const u8 *key,
   u16 key_len, u32 init_val)
 {
+  admin_op_guard();
   (void)d;
   (void)f;
   (void)key;
@@ -177,6 +214,7 @@ int ena_com_fill_hash_function(
 int ena_com_get_hash_function(
   struct ena_com_dev *d, enum ena_admin_hash_functions *f)
 {
+  admin_op_guard();
   (void)d;
   if(f != NULL)
     *f = (enum ena_admin_hash_functions)(nd_u8() & 3);
@@ -184,6 +222,7 @@ int ena_com_get_hash_function(
 }
 int ena_com_get_hash_key(struct ena_com_dev *d, u8 *key)
 {
+  admin_op_guard();
   (void)d;
   if(key != NULL)
     for(unsigned i = 0; i < ENA_HASH_KEY_SIZE; i++)
@@ -193,6 +232,7 @@ int ena_com_get_hash_key(struct ena_com_dev *d, u8 *key)
 int ena_com_fill_hash_ctrl(
   struct ena_com_dev *d, enum ena_admin_flow_hash_proto proto, u16 fields)
 {
+  admin_op_guard();
   (void)d;
   (void)proto;
   (void)fields;
@@ -201,6 +241,7 @@ int ena_com_fill_hash_ctrl(
 int ena_com_get_hash_ctrl(
   struct ena_com_dev *d, enum ena_admin_flow_hash_proto proto, u16 *fields)
 {
+  admin_op_guard();
   (void)d;
   (void)proto;
   if(fields != NULL)
@@ -210,6 +251,7 @@ int ena_com_get_hash_ctrl(
 int ena_com_get_dev_basic_stats(
   struct ena_com_dev *d, struct ena_admin_basic_stats *stats)
 {
+  admin_op_guard();
   (void)d;
   if(stats != NULL)
     __CPROVER_havoc_object(stats);
@@ -261,6 +303,7 @@ int main(void)
   g_held = 0;
   g_locks = 0;
   g_unlocks = 0;
+  g_admin_ops = 0;
 
   uint16_t reta_size = nd_u16();
   __CPROVER_assume(reta_size <= NRETA * RTE_ETH_RETA_GROUP_SIZE);
@@ -288,6 +331,21 @@ int main(void)
   case 2: rc = ena_rss_hash_update(&dev, &rss_conf); break;
   case 3: rc = ena_rss_hash_conf_get(&dev, &rss_conf); break;
   case 4: rc = ena_stats_get(&dev, &stats); break;
+  case 5:
+  {
+    /* The IPC handler that services a secondary process's request, running
+     * inside the primary on the IPC thread.  It performs admin operations and
+     * takes adapter->admin_lock nowhere, so LKO_ADMIN_LOCKED is the question. */
+    static struct rte_mp_msg msg;
+    struct ena_mp_body *body = (struct ena_mp_body *)&msg.param;
+    body->type = ENA_MP_DEV_STATS_GET;
+    body->port_id = 0;
+    /* the handler resolves the port through the ethdev table */
+    rte_eth_devices[0] = dev;
+    rte_eth_devices[0].data = &data;
+    rc = ena_mp_primary_handle(&msg, NULL);
+    break;
+  }
   default: break;
   }
   (void)rc;
@@ -302,7 +360,11 @@ int main(void)
   /* Both must FAIL.  An entry point that never takes the lock satisfies all
    * three obligations trivially, so witness that the lock is really taken
    * and really released on the path explored. */
+  __CPROVER_assert(
+    g_admin_ops == 0, "witness: an admin-queue operation is reached");
+#  if ENTRY != 5
   __CPROVER_assert(g_locks == 0, "witness: the admin lock can be taken");
+#  endif
   __CPROVER_assert(g_unlocks == 0, "witness: the admin lock can be released");
 #endif
   return 0;

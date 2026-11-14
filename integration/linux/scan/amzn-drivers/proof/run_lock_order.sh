@@ -8,6 +8,11 @@
 #   ENTRY 2 ena_rss_hash_update
 #   ENTRY 3 ena_rss_hash_conf_get
 #   ENTRY 4 ena_stats_get
+#   ENTRY 5 ena_mp_primary_handle -- the IPC handler servicing a SECONDARY
+#           process inside the primary.  It performs admin operations and takes
+#           adapter->admin_lock nowhere, so LKO_ADMIN_LOCKED FAILS here while
+#           holding for every entry point above.  Runs --no-pointer-check for
+#           the same union-bearing-struct reason as ENTRY 2.
 #
 # -DBREAK_RETA_UNLOCK is the mutation test: it deletes the error-path unlock
 # so the obligations must catch it.  A proof that cannot fail is not a proof.
@@ -31,7 +36,7 @@ F="--unwind ${UNWIND:-300} $SOLVER --max-field-sensitivity-array-size 256 \
 # the lock are modelled in the harness with arbitrary returns, so both the
 # success and the failure branch stay reachable -- the failure branches are
 # where a missing unlock would live.
-for E in ${ENTRIES:-0 1 2 3 4}; do
+for E in ${ENTRIES:-0 1 2 3 4 5}; do
  for cfg in "ok:" "mutated:-DBREAK_RETA_UNLOCK"; do
   n=${cfg%%:*}; d=${cfg#*:}
   [ "$n" = mutated ] && [ "$E" != 0 ] && continue
@@ -45,9 +50,10 @@ for E in ${ENTRIES:-0 1 2 3 4}; do
     ( ulimit -v 32000000; "$BIN/goto-instrument" $RM "$OUT/e$E$n$V.gb" "$OUT/r$E$n$V.gb" >/dev/null 2>&1 )
   done
   log="$OUT/e$E$n.log"
-  echo "CBMC-CMD: cbmc $OUT/r${E}${n}0.gb --bounds-check $F" > "$log"
+  PC=""; { [ "$E" = 2 ] || [ "$E" = 5 ]; } && PC="--no-pointer-check"
+  echo "CBMC-CMD: cbmc $OUT/r${E}${n}0.gb --bounds-check $PC $F" > "$log"
   ( ulimit -v ${MEM:-48000000}; timeout ${TO:-1800} "$BIN/cbmc" "$OUT/r${E}${n}0.gb" \
-      --bounds-check $F ) >> "$log" 2>&1
+      --bounds-check $PC $F ) >> "$log" 2>&1
   vlog="$OUT/e$E${n}_v.log"
   echo "CBMC-CMD: cbmc $OUT/r${E}${n}1.gb --no-standard-checks $F" > "$vlog"
   ( ulimit -v ${MEM:-48000000}; timeout ${TO:-1800} "$BIN/cbmc" "$OUT/r${E}${n}1.gb" \
