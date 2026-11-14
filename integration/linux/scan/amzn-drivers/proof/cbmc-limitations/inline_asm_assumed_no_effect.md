@@ -140,3 +140,62 @@ what the driver-proof harnesses now do, and it is recorded in
 * `asm_set.c` -- the ten-line reproducer, FreeBSD `atomic_set_long` shape
 * `asm_memclobber.c` -- a `"memory"` clobber invalidates nothing
 * `asm_linuxbitop.c` -- Linux `set_bit` shape, same result
+* `asm_dpdk_atomic.c` -- DPDK's `rte_atomic32_inc` under this build's flags,
+  showing the increment is unobserved (needs the DPDK include path)
+
+## Audit of this proof corpus against the defect (2026-11-13)
+
+Done after the defect was found, because a silently-ignored write can make an
+obligation hold for want of a path. **No existing obligation is invalidated.**
+The reasoning, per mechanism, so it can be re-checked:
+
+**DPDK's atomics are affected too**, not only FreeBSD's. `rte_atomic32_inc`
+under this build's flags is inline assembly (`RTE_FORCE_INTRINSICS` is not
+set), and the ten-line test shows the increment is unobserved:
+
+```
+E: DPDK atomic inc does nothing: SUCCESS
+F: DPDK atomic inc is observed: FAILURE
+```
+
+So `ATOMIC32_*` (which `ena_plat_dpdk.h:270-273` maps to `rte_atomic32_*`) and
+`rte_atomic64_*` are all no-ops to the analysis.
+
+**Where atomic-written state exists in the driver.** Two counters, and nothing
+else:
+
+| state | written by | read by |
+|---|---|---|
+| `admin_queue->outstanding_cmds` | `ATOMIC32_INC/DEC/SET` (`ena_com.c:189, 215, 2098`) | the queue-full guard (`:238`) and the abort wait loop (`:1509`) |
+| `drv_stats->ierrors / oerrors / rx_nombuf` | `rte_atomic64_inc` (`ena_ethdev.c:1796, 2855`) | `ena_stats_get` (`:1255-1257`) |
+
+**Why no obligation is affected.**
+
+1. *No DPDK harness sets a guard through an atomic.* The FreeBSD
+   `stats_sample_interval` harness did, which is how the defect surfaced; it
+   is fixed and no other harness does it. Checked by grep across all 46
+   harnesses: only `harness_reset_flag.c` and `fbsd/harness_fbsd_sysctl.c`
+   mention atomics at all, and `reset_flag` uses plain assignment.
+
+2. *The two guard sites fail safe, not silently.* With `outstanding_cmds`
+   stuck at zero, the queue-full guard at `:238` never refuses, so the
+   harnesses explore **more** submissions than the real driver would accept --
+   which widens the state space for a safety property rather than narrowing
+   it. The abort wait at `:1509` exits immediately, and the harness that
+   reaches it (`harness_leaks.c`) models
+   `ena_com_wait_for_abort_completion` as a no-op anyway, so nothing changes.
+
+3. *No obligation asserts on the counters.* `harness_xstats.c` asserts
+   `XS_COUNT`, the number of statistics reported, not their values.
+
+4. *The witnesses confirm it empirically.* Every admin-path harness still has
+   its witnesses failing -- `conc_admin`'s "the submit can complete" and "the
+   device can complete the new command" both FAILURE in the last sweep -- so
+   the submission and completion states really do arise. That is the check
+   that would have caught a lost path, and it passes.
+
+**The direction to watch.** The dangerous case is an atomic write that a guard
+later tests, because the guard then never fires and a whole branch disappears
+with no diagnostic. That is exactly what happened to the FreeBSD flag. Any new
+harness that sets state the driver branches on must use the non-atomic form,
+and a witness on *both* directions of that branch is the thing that catches it.
