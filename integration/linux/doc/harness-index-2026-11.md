@@ -4,7 +4,7 @@
 
 One row per harness: what it puts under test, the obligations it asserts, whether it carries a vacuity witness, and -- the column this index exists for -- what each configuration macro assumes away. A finding was once reported and retracted because that last column did not exist anywhere.
 
-50 harnesses.
+51 harnesses.
 
 ## Harnesses with no vacuity witness
 
@@ -173,6 +173,7 @@ Concurrency pair 3: the TX datapath against a control-path stop.
 | `-DWITH_STATE_CHECK` | compiles in the adapter-state check that eth_ena_xmit_pkts only has under RTE_ETHDEV_DEBUG_TX |
 
 * run by `run_conc_datapath.sh`: `-DWHEN`, `-DWITH_EARLY_STATE`, `-DWITH_STATE_CHECK`
+* run by `run_fbsd_down.sh`: `-DWHEN`
 
 * vacuity witness: yes, 4
 
@@ -821,6 +822,24 @@ FreeBSD ENA: ena_tx_cleanup, with the free discipline and the DMA-ownership obli
 * run by `run_fbsd_cleanup_perf.sh`: no restricting macros
 
 * vacuity witness: yes, 2
+
+### `fbsd/harness_fbsd_down.c`
+
+FreeBSD's ena_down against its TX datapath -- the counterpart of harness_conc_datapath.c, and the reason F28 is worth reporting rather than shrugging at.
+
+| obligation | asserts |
+|---|---|
+| `FBD_NO_SUBMIT_AFTER_DESTROY` | no transmit is submitted to an io queue |
+| `FBD_FLAG_BEFORE_TEARDOWN` | IFF_DRV_RUNNING is clear by the time the |
+
+| configuration | assumes |
+|---|---|
+| `-DBREAK_ORDER` | gives FreeBSD's ena_down DPDK's ordering -- teardown first, flag cleared after -- so the obligation distinguishes the two designs rather than merely passing |
+| `-DWHEN` | selects where the datapath lands relative to ena_queue_stop's two steps -- 0 before the destroy, 1 in the window, 2 after the release |
+
+* run by `run_fbsd_down.sh`: `-DBREAK_ORDER`, `-DWHEN`
+
+* vacuity witness: yes, 3
 
 ### `fbsd/harness_fbsd_mtu.c`
 

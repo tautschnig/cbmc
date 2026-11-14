@@ -82,3 +82,4 @@ NIDS_BYID: see NIDS -- number of statistics ids the application asks for in the 
 WHEN: selects where the datapath lands relative to ena_queue_stop's two steps -- 0 before the destroy, 1 in the window, 2 after the release
 WITH_STATE_CHECK: compiles in the adapter-state check that eth_ena_xmit_pkts only has under RTE_ETHDEV_DEBUG_TX
 WITH_EARLY_STATE: models the F28 fix, leaving ENA_ADAPTER_STATE_RUNNING before the teardown rather than nineteen lines after it
+BREAK_ORDER: gives FreeBSD's ena_down DPDK's ordering -- teardown first, flag cleared after -- so the obligation distinguishes the two designs rather than merely passing

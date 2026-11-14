@@ -1650,10 +1650,27 @@ wrong, and the gate caught it -- that witness passed, which is the signal for
 an empty proof. The witness is now "the transmit is declined", which fails as
 it should.
 
-**Fix.** Both parts are needed: leave `ENA_ADAPTER_STATE_RUNNING` (or enter a
-`STOPPING` state) *before* tearing the queues down, and make the datapath's
-state check unconditional rather than debug-only. The first without the second
-protects nothing; the second without the first is what the driver has now.
+**Fix, and FreeBSD already implements it.** Both parts are needed: leave
+`ENA_ADAPTER_STATE_RUNNING` (or enter a `STOPPING` state) *before* tearing the
+queues down, and make the datapath's state check unconditional rather than
+debug-only. The first without the second protects nothing; the second without
+the first is what the driver has now.
+
+The sibling driver does both. `ena_mq_start` tests `IFF_DRV_RUNNING`
+unconditionally and returns `ENODEV` when it is clear
+(`ena_datapath.c:149-150`), and `ena_down` clears that flag **before** it
+frees the IRQs and destroys the io queues (`ena.c:2634-2645`).
+`proof/fbsd/harness_fbsd_down.c` proves the pair:
+
+| ordering | `FBD_FLAG_BEFORE_TEARDOWN` | `FBD_NO_SUBMIT_AFTER_DESTROY` |
+|---|---|---|
+| FreeBSD's, clear then tear down | holds at WHEN 0, 1, 2 | holds at WHEN 0, 1, 2 |
+| DPDK's, tear down then clear (`-DBREAK_ORDER`) | **FAILS at all three** | **FAILS in the window** |
+
+All six configurations clean and adjudicated by `check_hygiene.sh`. So the fix
+is not speculative: it is the ordering the same codebase already uses on
+another platform, and giving FreeBSD DPDK's ordering reproduces DPDK's
+failure.
 
 **Severity.** DPDK's threading model makes it the application's job not to
 transmit on a queue it is stopping, so a failure here is an
