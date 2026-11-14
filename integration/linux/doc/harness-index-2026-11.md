@@ -4,7 +4,7 @@
 
 One row per harness: what it puts under test, the obligations it asserts, whether it carries a vacuity witness, and -- the column this index exists for -- what each configuration macro assumes away. A finding was once reported and retracted because that last column did not exist anywhere.
 
-48 harnesses.
+49 harnesses.
 
 ## Harnesses with no vacuity witness
 
@@ -762,6 +762,24 @@ Config/query phase: ena_xstats_get_by_id, where the APPLICATION supplies the ind
 * run by `run_xstats.sh`: `-DNIDS`
 
 * vacuity witness: yes, 2
+
+### `harness_xstats_byid.c`
+
+The remaining eth_dev_ops getters: do the values handed to the application come from where the driver just fetched them, and do the index bounds hold?
+
+| obligation | asserts |
+|---|---|
+| `XB_VALID` | the returned count never exceeds the ids asked for |
+| `XB_SRD_FRESH` | a value returned for an SRD id is the value the device |
+
+| configuration | assumes |
+|---|---|
+| `-DNIDS` | number of xstats ids queried |
+| `-DWITH_SRD_FIX` | models the F27 fix, reading the local the device filled as the full ena_xstats_get does, rather than adapter->srd_stats |
+
+* run by `run_xstats_byid.sh`: `-DWITH_SRD_FIX`
+
+* vacuity witness: yes, 3
 
 ### `fbsd/harness_fbsd_cleanup.c`
 

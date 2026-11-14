@@ -1535,6 +1535,67 @@ consequence. DPDK-specific: `ena_stop` is DPDK's own.
 across a stop/start cycle. F26 is the reset *failing* and nobody being told.
 They are independent: fixing either leaves the other.
 
+## F27: `ena_xstats_get_by_id` returns a different object than the one it just filled (DPDK ENA)
+
+Found by sweeping the `eth_dev_ops` getters -- the entries that had no
+obligation at all.
+
+`ena_xstats_get_by_id` fetches the ENA-SRD statistics into a local and then
+reads somewhere else (`ena_ethdev.c:3650-3665`):
+
+```c
+struct ena_stats_srd srd_info = {0};
+...
+if (!was_srd_info_copied) {
+        was_srd_info_copied = true;
+        ena_copy_ena_srd_info(adapter, &srd_info);   /* fills the LOCAL */
+}
+values[i] = *((uint64_t *)&adapter->srd_stats + id); /* reads the ADAPTER */
+```
+
+`ena_copy_ena_srd_info` writes through the pointer it is given, so the fresh
+values land in `srd_info` -- which is then never read. What reaches the
+application comes from `adapter->srd_stats`.
+
+**That field is written only on the multi-process path**, at `ena_ethdev.c:638`
+and `:4198`. In a primary-only process nothing writes it, so the application
+gets **zeros**, after the driver has paid for an admin round trip and thrown
+the answer away. In a multi-process deployment it gets whatever the last
+secondary-process request happened to leave there.
+
+**What makes it a mistake rather than a design:** the full `ena_xstats_get`
+does the same fetch and reads the local, `stats_begin = &srd_info`
+(`ena_ethdev.c:3574`). Two functions, same data, one correct.
+
+**Evidence.** `proof/harness_xstats_byid.c` with `proof/run_xstats_byid.sh`.
+The modelled device answers with a recognisable marker, so what the
+application receives can be compared with what was fetched:
+
+| configuration | `XB_SRD_FRESH` | `XB_VALID` |
+|---|---|---|
+| as-is | **FAILURE** | SUCCESS |
+| `-DWITH_SRD_FIX` | SUCCESS | SUCCESS |
+
+Clean runs -- no other failing property, no reached bodyless callee, no
+UNKNOWN, no failing unwinding assertion -- all three witnesses failing, both
+configurations adjudicated by `check_hygiene.sh`.
+
+**Fix.** Read the local, as the sibling function does:
+`values[i] = *((uint64_t *)&srd_info + id);`
+
+**Severity.** No memory-safety consequence: both objects are the same type and
+the index is bounded by `ENA_STATS_ARRAY_ENA_SRD`. The consequence is wrong
+data reported as good -- an operator reading ENA-SRD counters through
+`rte_eth_xstats_get_by_id` sees zeros and concludes the feature is idle. It
+also performs an admin command per call for nothing. DPDK-specific.
+
+**A bound that is correct here, and worth recording because F19 lacks it.**
+The metrics branch indexes a local `metrics_stats[ENA_MAX_CUSTOMER_METRICS]`
+by `id < adapter->metrics_num`, and `metrics_num` is clamped to that array's
+size when it is computed (`ena_get_metrics_entries`, `:1849-1852`). That is
+exactly the check `ena_rss_reta_query` is missing in F19. Same driver, same
+shape, one guarded and one not.
+
 ## Class S confirmations: the return code and what the device did
 
 Class S is the largest group the Unveil class list had no name for -- an

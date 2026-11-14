@@ -77,3 +77,5 @@ PROBE: drives eth_ena_dev_init's error ladder with ena_com's five acquire/releas
 WITH_RC_FIX: applies the fix for the FreeBSD SIOCSIFMTU class S defect, propagating ena_change_mtu's result instead of discarding it
 RESET: drives ena_dev_reset with the probe scaffolding and the leak ledger; shows F25's leak recurs through reset, not only probe
 WITH_GENERATION_CHECK: models a per-slot generation check for class R; no protocol field carries a generation, so it is a model of what a fix must achieve rather than a patch
+WITH_SRD_FIX: models the F27 fix, reading the local the device filled as the full ena_xstats_get does, rather than adapter->srd_stats
+NIDS_BYID: see NIDS -- number of statistics ids the application asks for in the by-id harness
