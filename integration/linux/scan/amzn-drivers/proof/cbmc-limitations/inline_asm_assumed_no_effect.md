@@ -140,6 +140,8 @@ what the driver-proof harnesses now do, and it is recorded in
 * `asm_set.c` -- the ten-line reproducer, FreeBSD `atomic_set_long` shape
 * `asm_memclobber.c` -- a `"memory"` clobber invalidates nothing
 * `asm_linuxbitop.c` -- Linux `set_bit` shape, same result
+* `asm_dpdk_atomic.c` -- DPDK's `rte_atomic32_inc` under this build's flags
+  (needs the DPDK include path)
 * `asm_dpdk_atomic.c` -- DPDK's `rte_atomic32_inc` under this build's flags,
   showing the increment is unobserved (needs the DPDK include path)
 
@@ -199,3 +201,40 @@ later tests, because the guard then never fires and a whole branch disappears
 with no diagnostic. That is exactly what happened to the FreeBSD flag. Any new
 harness that sets state the driver branches on must use the non-atomic form,
 and a witness on *both* directions of that branch is the thing that catches it.
+
+## Resolution (follow-up implementation)
+
+Fixed on branch `asm-semantics`. Inline assembly is no longer assumed to do
+nothing. Every statement is now either interpreted exactly or, if some
+instruction in it is not understood, approximated conservatively (its outputs
+and, for a `"memory"` clobber, the reachable memory are havocked) with a
+warning. The silent third outcome -- delete the statement, assume no effect --
+is gone. See `doc/architectural/inline-assembly.md` for the design.
+
+On the three reproducers here, with the fixed build:
+
+* `asm_set.c`: `flags == 4` holds and the old `flags == 0` now **fails**, as it
+  should -- the write is observed.
+* `asm_linuxbitop.c`: `word == 0` after `set_bit(3, &word)` now **fails**.
+* `asm_memclobber.c`: `v == 7` still holds, which is correct -- the barrier
+  `asm volatile("" ::: "memory")` executes no instruction, so it has no effect
+  on the C state (a `"memory"` clobber constrains what the *instructions* may
+  touch; it does not add effects to a statement with none).
+
+x86, AArch64 and AArch32 instruction semantics are implemented, covering the
+data-processing, bit, shift, atomic (`lock`-prefixed, load/store-exclusive,
+LSE), flag and branch instructions used by kernel and driver code; the
+barriers of all architectures are recognised regardless of the configured one.
+The real FreeBSD `machine/atomic.h` atomics (`atomic_set_long`,
+`atomic_clear_long`, `atomic_add_long`, `atomic_fetchadd_int`, ...) and the
+Linux `set_bit` shape verify exactly. The semantics are checked against
+hardware and the Unicorn emulator by `scripts/asm_differential/`, which
+generates the `regression/cbmc/asm_{x86,aarch64,arm}` tests.
+
+The harness workaround described above (use the non-atomic form in setup
+code) is therefore no longer necessary for the supported instructions, though
+it remains harmless.
+
+A contract mechanism for inline assembly -- a way to state the effect of a
+statement CBMC cannot interpret, so a proof can still go through -- is designed
+in `doc/architectural/inline-assembly.md` but not yet implemented.
