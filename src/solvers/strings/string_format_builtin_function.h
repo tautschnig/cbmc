@@ -72,6 +72,11 @@ public:
   /// of the runtime, which Formatter localizes numbers and converts the
   /// case by.
   java_locale_symbolst locale = java_default_locale_symbols();
+  /// The strings of the calls that the models made on the arguments for
+  /// the %s and %h of each slot (see cprover_string_format_calls_func):
+  /// toString, or Integer.toHexString of hashCode, of an argument whose
+  /// string the encoding does not give. None, or ten.
+  std::vector<array_string_exprt> call_texts;
 
   /// Constructor from arguments of a function application.
   /// The arguments in `fun_args` should be in order:
@@ -90,7 +95,9 @@ public:
 
   std::vector<array_string_exprt> string_arguments() const override
   {
-    return inputs;
+    std::vector<array_string_exprt> arguments = inputs;
+    arguments.insert(arguments.end(), call_texts.begin(), call_texts.end());
+    return arguments;
   }
 
   std::optional<exprt>

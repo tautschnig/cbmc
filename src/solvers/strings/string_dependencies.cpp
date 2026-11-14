@@ -57,15 +57,20 @@ static std::unique_ptr<string_builtin_functiont> to_string_builtin_function(
   // String.format with the kind of a locale (0 for the default one, 1 for
   // null, which does not localize numbers and converts the case by the
   // default locale, 2 for another, which the models do not know), the
-  // format string and the ten encoded arguments
+  // format string, the ten encoded arguments and the strings of the ten
+  // calls on them (see cprover_string_format_calls_func)
   if(id == ID_cprover_string_format_locale_func)
   {
     std::vector<exprt> arguments = fun_app.arguments();
-    PRECONDITION(arguments.size() == 2 + 1 + 1 + 10);
+    PRECONDITION(arguments.size() == 2 + 1 + 1 + 10 + 10);
     const auto kind = numeric_cast<mp_integer>(arguments[2]);
+    std::vector<exprt> calls{arguments.end() - 10, arguments.end()};
+    arguments.erase(arguments.end() - 10, arguments.end());
     arguments.erase(arguments.begin() + 2);
     auto f = std::make_unique<string_format_builtin_functiont>(
       return_code, arguments, array_pool);
+    for(const exprt &call : calls)
+      f->call_texts.push_back(get_string_expr(array_pool, call));
     if(kind.has_value() && *kind == 1)
       f->locale.numbers = {{{0x30, 0x2e}}};
     else if(!kind.has_value() || *kind != 0)

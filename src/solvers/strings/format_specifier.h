@@ -199,6 +199,9 @@ struct java_format_specifiert
   bool date_time = false;
   /// The flags, as Formatter's Flags bits.
   int flags = 0;
+  /// The width and the precision, -1 for none.
+  int width = -1;
+  int precision = -1;
   /// Formatter's toString of the specifier (for the exception messages).
   std::string text;
 };

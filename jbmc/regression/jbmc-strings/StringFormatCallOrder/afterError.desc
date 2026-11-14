@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.afterError --max-nondet-string-length 20 --java-locale en-US --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+The toString of a %s after a specifier that throws is not called, as in Java.

@@ -453,6 +453,8 @@ java_format_parse(const std::string &s, java_formatter_versiont version)
     }
     fs.takes_argument = index != -2;
     fs.argument = index;
+    fs.width = width;
+    fs.precision = precision;
     result.specifiers.push_back(fs);
   }
 

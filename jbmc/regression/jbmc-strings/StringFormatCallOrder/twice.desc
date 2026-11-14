@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.twice --max-nondet-string-length 20 --java-locale en-US --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+String.format("%s %s", o, o) calls toString twice, in order, and prints both strings ("a1 a2"), as Java 8 to 25.

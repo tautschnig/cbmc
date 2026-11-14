@@ -339,6 +339,8 @@ public:
   add_axioms_for_format_error(const function_application_exprt &f);
   std::pair<exprt, string_constraintst>
   add_axioms_for_format_uses(const function_application_exprt &f);
+  std::pair<exprt, string_constraintst>
+  add_axioms_for_format_calls(const function_application_exprt &f);
 
   /// Add axioms corresponding the String.offsetByCodePointCount java function
   /// \todo This function is underspecified, it should return the index within

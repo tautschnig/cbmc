@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.length --max-nondet-string-length 20 --java-locale en-US --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+String.format("%s", o) has the length of the toString of o ("a1"), as
+Java 8 to 25; only the length of the result is used.

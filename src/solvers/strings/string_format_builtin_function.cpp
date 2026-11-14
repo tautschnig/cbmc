@@ -205,6 +205,21 @@ static exprt hash_value(const array_string_exprt &arg)
     unsigned_value_type};
 }
 
+/// Whether \p arg is an object whose toString and hashCode the models call
+/// (see call_texts): not null, nor a String, a boxed primitive, or a
+/// Formattable (whose formatTo the models do not call).
+static exprt is_called_object(const array_string_exprt &arg)
+{
+  const typet &char_type = to_type_with_subtype(arg.content().type()).subtype();
+  return and_exprt{
+    kind_is_one_of(arg, object_kinds),
+    equal_exprt{
+      bitand_exprt{
+        arg[from_integer(properties_offset, arg.length_type())],
+        from_integer(formattable_property, char_type)},
+      from_integer(0, char_type)}};
+}
+
 /// Whether the encoding gives the hash code of \p arg.
 static exprt hash_is_known(const array_string_exprt &arg)
 {
@@ -305,6 +320,8 @@ static std::pair<array_string_exprt, string_constraintst> argument_text(
 /// \param message_handler: message handler for warnings
 /// \param cases: the case families that the upper case may follow (see
 ///   java_locale_symbolst)
+/// \param call_text: for a %s or %h, the string of the call that the models
+///   made on an object argument (see is_called_object), if any
 /// \return String expression representing the output of String.format.
 static std::pair<array_string_exprt, string_constraintst>
 add_axioms_for_format_specifier(
@@ -314,7 +331,8 @@ add_axioms_for_format_specifier(
   const typet &index_type,
   const typet &char_type,
   message_handlert &message_handler,
-  const std::vector<java_case_familyt> &cases)
+  const std::vector<java_case_familyt> &cases,
+  const std::optional<array_string_exprt> &call_text)
 {
   string_constraintst constraints;
   array_poolt &array_pool = generator.array_pool;
@@ -426,16 +444,48 @@ add_axioms_for_format_specifier(
       res, format_arg_from_string(string_arg, ID_boolean, array_pool));
     return {res, std::move(return_code.second)};
   case format_specifiert::STRING:
-    return argument_text(generator, string_arg);
+  {
+    // the toString that the models called for an object (see call_texts)
+    auto text = argument_text(generator, string_arg);
+    if(!call_text.has_value())
+      return text;
+    constraints = std::move(text.second);
+    string_equals_if(
+      generator,
+      is_called_object(string_arg),
+      res,
+      *call_text,
+      constraints,
+      message_handler);
+    string_equals_if(
+      generator,
+      not_exprt{is_called_object(string_arg)},
+      res,
+      text.first,
+      constraints,
+      message_handler);
+    return {res, std::move(constraints)};
+  }
   case format_specifiert::HASHCODE:
   {
     // Integer.toHexString of the hash code, or "null" (the hash code of a
-    // String is not modelled)
+    // String is not modelled); for an object, the models called hashCode
+    // (see call_texts)
+    if(call_text.has_value())
+    {
+      string_equals_if(
+        generator,
+        is_called_object(string_arg),
+        res,
+        *call_text,
+        constraints,
+        message_handler);
+    }
     const array_string_exprt digits =
       array_pool.fresh_string(index_type, char_type);
     return_code = generator.add_axioms_for_string_of_int_with_radix(
       digits, hash_value(string_arg), from_integer(16, unsigned_value_type), 0);
-    constraints = std::move(return_code.second);
+    merge(constraints, std::move(return_code.second));
     constraints.existential.push_back(string_is_constant_if(
       is_null(string_arg, array_pool), res, "null", array_pool));
     string_equals_if(
@@ -473,7 +523,8 @@ add_axioms_for_format_specifier(
       index_type,
       char_type,
       message_handler,
-      cases);
+      cases,
+      call_text);
 
     // by the locale (Formatter.toUpperCaseWithLocale)
     const exprt return_code_upper_case =
@@ -672,7 +723,8 @@ public:
 /// signs, zeros, prefixes, precision, case and spaces that
 /// java.util.Formatter adds (see java_format_decorate, whose versions it
 /// follows: where they differ, either), and the upper case of the case
-/// families \p cases.
+/// families \p cases (see add_axioms_for_format_specifier for
+/// \p call_text).
 static std::pair<array_string_exprt, string_constraintst>
 add_axioms_for_decorated_specifier(
   string_constraint_generatort &generator,
@@ -681,7 +733,8 @@ add_axioms_for_decorated_specifier(
   const typet &index_type,
   const typet &char_type,
   message_handlert &message_handler,
-  const std::vector<java_case_familyt> &cases)
+  const std::vector<java_case_familyt> &cases,
+  const std::optional<array_string_exprt> &call_text)
 {
   using namespace java_format_flagst;
   format_piecest p{generator, index_type, char_type, message_handler};
@@ -720,7 +773,14 @@ add_axioms_for_decorated_specifier(
   else
   {
     auto core_result = add_axioms_for_format_specifier(
-      generator, core_fs, arg, index_type, char_type, message_handler, cases);
+      generator,
+      core_fs,
+      arg,
+      index_type,
+      char_type,
+      message_handler,
+      cases,
+      call_text);
     merge(p.constraints, std::move(core_result.second));
     core = core_result.first;
   }
@@ -1022,6 +1082,8 @@ static void localize_numbers(
 /// \param s: a format string
 /// \param args: a vector of arguments
 /// \param locale: the locale of the numbers and the case
+/// \param call_texts: the strings of the calls that the models made for the
+///   %s and %h of each slot (see string_format_builtin_functiont::call_texts)
 /// \param message_handler: message handler for warnings
 /// \return code, 0 on success
 static std::pair<exprt, string_constraintst> add_axioms_for_format(
@@ -1030,6 +1092,7 @@ static std::pair<exprt, string_constraintst> add_axioms_for_format(
   const std::string &s,
   const std::vector<array_string_exprt> &args,
   const java_locale_symbolst &locale,
+  const std::vector<array_string_exprt> &call_texts,
   message_handlert &message_handler)
 {
   string_constraintst constraints;
@@ -1040,6 +1103,8 @@ static std::pair<exprt, string_constraintst> add_axioms_for_format(
   const typet &index_type = res.length_type();
 
   array_string_exprt string_arg;
+  // the slot of the next %s or %h (see is_call_slot)
+  std::size_t slot = 0;
 
   // the zero digit and the decimal separator of the locale, the same for
   // the whole call (one of the pairs of the locale where they are known)
@@ -1074,6 +1139,19 @@ static std::pair<exprt, string_constraintst> add_axioms_for_format(
       }
       if(takes_argument(fs))
         string_arg = args[*position];
+      std::optional<array_string_exprt> call_text;
+      const char lower = static_cast<char>(tolower(fs.conversion));
+      if(!fs.dt && (lower == 's' || lower == 'h'))
+      {
+        if(slot < call_texts.size())
+          call_text = call_texts[slot];
+        else if(!call_texts.empty())
+        {
+          // beyond the slots: the models made no call, which is any string
+          call_text = array_pool.fresh_string(index_type, char_type);
+        }
+        ++slot;
+      }
 
       auto result = fs.has_decoration() ? add_axioms_for_decorated_specifier(
                                             generator,
@@ -1082,7 +1160,8 @@ static std::pair<exprt, string_constraintst> add_axioms_for_format(
                                             index_type,
                                             char_type,
                                             message_handler,
-                                            locale.cases)
+                                            locale.cases,
+                                            call_text)
                                         : add_axioms_for_format_specifier(
                                             generator,
                                             fs,
@@ -1090,7 +1169,8 @@ static std::pair<exprt, string_constraintst> add_axioms_for_format(
                                             index_type,
                                             char_type,
                                             message_handler,
-                                            locale.cases);
+                                            locale.cases,
+                                            call_text);
       merge(constraints, std::move(result.second));
       // the digits and the decimal separator of the locale
       if(localizes_numbers(fs) && !locale.numbers_are_ascii())
@@ -1191,6 +1271,17 @@ static std::vector<mp_integer> deserialize_constant_int_arg(
 static bool eval_is_null(const std::vector<mp_integer> &string)
 {
   return !string.empty() && string[0] == kind_null;
+}
+
+/// Whether the encoded \p arg is an object whose toString and hashCode the
+/// models call (see is_called_object), so that the encoding gives neither
+/// its text nor its hash code.
+static bool eval_is_called_object(const std::vector<mp_integer> &arg)
+{
+  return arg.size() > properties_offset && arg[0] < 0x80 &&
+         object_kinds.find(static_cast<char>(arg[0].to_ulong())) !=
+           std::string::npos &&
+         (arg[properties_offset].to_ulong() & formattable_property) == 0;
 }
 
 /// The characters of \p text, with upper-case ASCII letters in lower case
@@ -1468,6 +1559,14 @@ std::optional<exprt> string_format_builtin_functiont::eval(
         // (a missing argument is "", and Java throws)
         if(!arg_value.has_value() || arg_value->size() < text_offset)
           return {};
+        // (the string of a call that the models made is not evaluated)
+        const char lower = static_cast<char>(tolower(fs.conversion));
+        if(
+          !call_texts.empty() && !fs.dt && (lower == 's' || lower == 'h') &&
+          eval_is_called_object(*arg_value))
+        {
+          return {};
+        }
         auto evaluated = fs.has_decoration()
                            ? eval_decorated_specifier(fs, *arg_value)
                            : eval_format_specifier(fs, *arg_value);
@@ -1545,7 +1644,13 @@ string_constraintst string_format_builtin_functiont::constraints(
   }
 
   auto result_constraint_pair = add_axioms_for_format(
-    generator, result, format_string.value(), inputs, locale, message_handler);
+    generator,
+    result,
+    format_string.value(),
+    inputs,
+    locale,
+    call_texts,
+    message_handler);
   INVARIANT(
     simplify_expr(result_constraint_pair.first, generator.ns) == 0,
     "add_axioms_for_format should return 0, meaning that formatting was"
@@ -1766,6 +1871,11 @@ bool string_format_builtin_functiont::length_is_exact() const
     case format_specifiert::CHARACTER_UPPER:
       // No length formula.
       return false;
+    case format_specifiert::STRING:
+      // (nor for the toString of an object, see call_texts)
+      if(!call_texts.empty())
+        return false;
+      break;
     default:
       break;
     }
@@ -1794,10 +1904,15 @@ exprt string_format_builtin_functiont::length_constraint() const
       if(position.has_value())
         arg = inputs[*position];
       std::optional<exprt> length;
+      // (the text of a %s is not that of the encoding where the models
+      // called toString, see call_texts)
       if(
         fs.is_modelled() && !fs.has_decoration() &&
-        (!takes_argument(fs) || position.has_value()))
+        (!takes_argument(fs) || position.has_value()) &&
+        (call_texts.empty() || fs.conversion != format_specifiert::STRING))
+      {
         length = length_for_format_specifier(fs, arg, index_type, array_pool);
+      }
       if(!length.has_value())
       {
         // Leave the length of the result to the content axioms.
@@ -2119,6 +2234,116 @@ string_constraint_generatort::add_axioms_for_format_error(
     }
     constraints.existential.push_back(
       implies_exprt{and_exprt{this_version, not_exprt{earlier}}, res_is({})});
+  }
+  return {return_code, constraints};
+}
+
+/// The specifiers of String.format that may call methods of their argument
+/// (%s and %h, whose slots these are, see format_call_slot_count), at most
+/// this many, as the encoded arguments.
+static const std::size_t format_call_slot_count = 10;
+
+/// Whether \p fs is the specifier of a call slot: %s (toString or formatTo)
+/// or %h (hashCode).
+static bool is_call_slot(const java_format_specifiert &fs)
+{
+  return fs.takes_argument && !fs.date_time &&
+         (fs.conversion == 's' || fs.conversion == 'h');
+}
+
+/// The calls that String.format makes on its arguments, in their order, up
+/// to the first error (see add_axioms_for_format_error, whose errors stop
+/// Formatter before the specifier prints): a character for each slot (see
+/// is_call_slot) that prints, of the first format_call_slot_count, which is
+/// the argument (from 1) times 4, plus 1 for %h, plus 2 for a %s with a
+/// width, a precision or upper case, for which Formatter throws a
+/// NullPointerException where toString gives null. The models make the
+/// calls and give their strings to the format function.
+/// \param f: function application with the result (its length and
+///   content), the format string, the number of arguments and the first ten
+///   arguments, encoded (see kind_null)
+/// \return a return code
+std::pair<exprt, string_constraintst>
+string_constraint_generatort::add_axioms_for_format_calls(
+  const function_application_exprt &f)
+{
+  PRECONDITION(f.arguments().size() == 14);
+  string_constraintst constraints;
+  const array_string_exprt res =
+    array_pool.find(f.arguments()[1], f.arguments()[0]);
+  const array_string_exprt str = get_string_expr(array_pool, f.arguments()[2]);
+  const exprt &n = f.arguments()[3];
+  std::vector<array_string_exprt> args;
+  for(std::size_t i = 4; i < f.arguments().size(); ++i)
+    args.push_back(get_string_expr(array_pool, f.arguments()[i]));
+  const exprt return_code = from_integer(0, f.type());
+  const exprt length = array_pool.get_or_create_length(str);
+  if(!length.is_constant() || str.content().id() != ID_array)
+  {
+    // any calls, in any order
+    approximation_warning(
+      "String.format",
+      "only calls toString in order for a constant format "
+      "string");
+    return {return_code, constraints};
+  }
+  const auto size = numeric_cast_v<std::size_t>(to_constant_expr(length));
+  const std::string format =
+    utf16_constant_array_to_java(to_array_expr(str.content()), size);
+  const typet &index_type = res.length_type();
+  const typet &char_type = to_type_with_subtype(res.content().type()).subtype();
+  const exprt res_length = array_pool.get_or_create_length(res);
+
+  const std::vector<java_formatter_versiont> versions =
+    java_formatter_versions();
+  const symbol_exprt chosen =
+    fresh_symbol("format_calls_version", unsignedbv_typet{8});
+  constraints.existential.push_back(binary_relation_exprt{
+    chosen, ID_lt, from_integer(versions.size(), chosen.type())});
+  for(std::size_t v = 0; v < versions.size(); ++v)
+  {
+    const exprt this_version =
+      versions.size() == 1
+        ? exprt{true_exprt{}}
+        : exprt{equal_exprt{chosen, from_integer(v, chosen.type())}};
+    const java_format_parset parsed = java_format_parse(format, versions[v]);
+    if(parsed.error.has_value())
+    {
+      constraints.existential.push_back(implies_exprt{
+        this_version, equal_exprt{res_length, from_integer(0, index_type)}});
+      continue;
+    }
+    // The slots in order, and whether each prints: no error in its
+    // specifier or an earlier one.
+    exprt earlier = false_exprt{};
+    exprt count = from_integer(0, index_type);
+    std::size_t slot = 0;
+    for(const java_format_specifiert &fs : parsed.specifiers)
+    {
+      if(!fs.takes_argument)
+        continue;
+      for(const auto &error : print_errors(*this, fs, n, args, versions[v]))
+        earlier = or_exprt{earlier, error.first};
+      if(!is_call_slot(fs) || slot >= format_call_slot_count)
+      {
+        slot += is_call_slot(fs) ? 1 : 0;
+        continue;
+      }
+      using namespace java_format_flagst;
+      const bool strict =
+        fs.width != -1 || fs.precision != -1 || (fs.flags & uppercase) != 0;
+      const unsigned code = static_cast<unsigned>(fs.argument) * 4 +
+                            (fs.conversion == 'h' ? 1 : 0) + (strict ? 2 : 0);
+      constraints.existential.push_back(implies_exprt{
+        and_exprt{this_version, not_exprt{earlier}},
+        equal_exprt{
+          res[from_integer(slot, index_type)], from_integer(code, char_type)}});
+      count = if_exprt{
+        earlier, count, plus_exprt{count, from_integer(1, index_type)}};
+      ++slot;
+    }
+    constraints.existential.push_back(
+      implies_exprt{this_version, equal_exprt{res_length, count}});
   }
   return {return_code, constraints};
 }

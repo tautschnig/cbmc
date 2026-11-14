@@ -359,6 +359,7 @@ static bool is_cprover_string_application(const function_application_exprt &fa)
     ID_cprover_string_endswith_func,
     ID_cprover_string_format_func,
     ID_cprover_string_format_locale_func,
+    ID_cprover_string_format_calls_func,
     ID_cprover_string_index_of_func,
     ID_cprover_string_index_of_set_func,
     ID_cprover_string_insert_func,

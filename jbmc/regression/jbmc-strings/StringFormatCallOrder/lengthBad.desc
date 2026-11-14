@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.lengthBad --max-nondet-string-length 20 --java-locale en-US --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+As length: the length is that of the toString of o, not that of the
+encoding of o for the solver (which gives no text for an object).
