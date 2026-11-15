@@ -352,6 +352,49 @@ void python_convertert::process_imported_module(
 
   std::string prefix = module_name + "::";
 
+  // PLR 5.3: importing a module executes its body. For USER modules
+  // (not CBMC's model library) record the module so that its
+  // non-definition top-level statements run before the importer's
+  // body (convert()), and record its assigned names / definitions so
+  // function bodies that read its globals take part in the post-pass-2
+  // re-conversion (function_global_reads). The literal-global
+  // registration below stays as the placeholder the bodies first see.
+  const bool user_module = is_user_module && is_user_module(module_name);
+  if(user_module)
+  {
+    std::function<void(const jsont &)> add_target = [&](const jsont &t)
+    {
+      if(is_node_type(t, "Name"))
+        module_assigned_names.insert(json_string(json_member(t, "id")));
+      else if(is_node_type(t, "Tuple") || is_node_type(t, "List"))
+      {
+        const jsont &elts = json_member(t, "elts");
+        if(elts.is_array())
+          for(const auto &e : as_array(elts))
+            add_target(e);
+      }
+    };
+    for(const auto &stmt : as_array(body))
+    {
+      if(is_node_type(stmt, "Assign"))
+      {
+        const jsont &targets = json_member(stmt, "targets");
+        if(targets.is_array())
+          for(const auto &t : as_array(targets))
+            add_target(t);
+      }
+      else if(
+        is_node_type(stmt, "AnnAssign") || is_node_type(stmt, "AugAssign"))
+        add_target(json_member(stmt, "target"));
+      else if(
+        is_node_type(stmt, "FunctionDef") ||
+        is_node_type(stmt, "AsyncFunctionDef") ||
+        is_node_type(stmt, "ClassDef"))
+        imported_user_defs[json_string(json_member(stmt, "name"))] = {
+          &stmt, filename};
+    }
+  }
+
   for(const auto &stmt : as_array(body))
   {
     // Register top-level 'import MODULE' names so that downstream
@@ -1098,8 +1141,37 @@ void python_convertert::process_imported_module(
       }
     }
   }
+  // After this module's own imports were processed (recursively, in
+  // the loop above), so dependencies initialise first.
+  if(user_module)
+    user_module_inits.emplace_back(module_name, &body);
   processing_import = saved_processing;
   filename = saved_filename;
+}
+
+void python_convertert::reconvert_imported_function_body(const jsont &stmt)
+{
+  const std::string fname = json_string(json_member(stmt, "name"));
+  const irep_idt sym_id{"python::" + fname};
+  const symbolt *fs = symbol_table.lookup(sym_id);
+  if(fs == nullptr || fs->type.id() != ID_code || python_lazy_stubs)
+    return;
+  const typet ret_type = to_code_type(fs->type).return_type();
+  const std::string saved_func = current_function;
+  if(!current_function.empty())
+    enclosing_functions.push_back(current_function);
+  current_function = fname;
+  code_blockt body_block;
+  const jsont &func_body = json_member(stmt, "body");
+  if(func_body.is_array())
+    for(const auto &s : as_array(func_body))
+      body_block.add(convert_statement(s));
+  if(ret_type.id() != ID_empty)
+    body_block.add(code_frontend_returnt{safe_zero(ret_type)});
+  current_function = saved_func;
+  if(!enclosing_functions.empty() && enclosing_functions.back() == saved_func)
+    enclosing_functions.pop_back();
+  symbol_table.get_writeable_ref(sym_id).value = body_block;
 }
 
 bool python_convertert::convert()
@@ -3568,7 +3640,45 @@ bool python_convertert::convert()
   // re-conversion after pass 2 (below).
   const tracking_snapshott pre_module_tracking = snapshot_tracking();
   const auto pre_module_versions = variable_versions;
+  // PLR 5.3: run the top-level statements of imported USER modules
+  // (dependencies first) before the main module's body, with
+  // `__name__` bound to the module name and locations in its file.
+  code_blockt import_inits;
+  for(const auto &[mod_name, mod_body] : user_module_inits)
+  {
+    json_arrayt stmts;
+    for(const auto &st : as_array(*mod_body))
+    {
+      if(
+        is_node_type(st, "FunctionDef") ||
+        is_node_type(st, "AsyncFunctionDef") || is_node_type(st, "ClassDef") ||
+        is_node_type(st, "Import") || is_node_type(st, "ImportFrom"))
+        continue;
+      stmts.push_back(st);
+    }
+    if(stmts.empty())
+      continue;
+    const std::string saved_filename = filename;
+    if(module_path_resolver)
+    {
+      const std::string mp = module_path_resolver(mod_name);
+      if(!mp.empty())
+        filename = mp;
+    }
+    import_init_module_name = mod_name;
+    code_blockt init = convert_module_body(stmts);
+    import_init_module_name.clear();
+    filename = saved_filename;
+    for(auto &c : init.statements())
+      import_inits.add(std::move(c));
+  }
   code_blockt module_body = convert_module_body(body);
+  if(!import_inits.statements().empty())
+  {
+    for(auto &c : module_body.statements())
+      import_inits.add(std::move(c));
+    module_body = std::move(import_inits);
+  }
 
   // Re-convert function bodies that read a module global which was
   // unresolved during sub-pass 1c, or whose final type (after pass 2
@@ -3619,6 +3729,26 @@ bool python_convertert::convert()
           convert_function_def(stmt);
         else
           convert_class_def(stmt);
+      }
+      // Remaining roots: definitions of imported user modules.
+      for(const auto &nm : stale_roots)
+      {
+        auto it = imported_user_defs.find(nm);
+        if(it == imported_user_defs.end())
+          continue;
+        const jsont &stmt = *it->second.first;
+        const std::string saved_filename = filename;
+        filename = it->second.second;
+        const bool saved_processing = processing_import;
+        processing_import = true;
+        if(
+          is_node_type(stmt, "FunctionDef") ||
+          is_node_type(stmt, "AsyncFunctionDef"))
+          reconvert_imported_function_body(stmt);
+        else
+          convert_class_def(stmt);
+        processing_import = saved_processing;
+        filename = saved_filename;
       }
       restore_tracking(post_module_tracking);
       variable_versions = post_module_versions;

@@ -433,6 +433,24 @@ bool python_languaget::typecheck(
       auto it = parsed_module_paths.find(name);
       return it != parsed_module_paths.end() ? it->second : std::string{};
     });
+  converter.set_user_module_predicate(
+    [this](const std::string &name) -> bool
+    {
+      auto it = parsed_module_paths.find(name);
+      if(it == parsed_module_paths.end())
+        return false;
+      // A module found under CBMC's model library is a stub, never user
+      // code (even with --python-use-stdlib-source the system stdlib is
+      // not treated as user code: its top level is not executed).
+      init_library_paths_if_needed();
+      for(const auto &lib : library_paths)
+        if(it->second.compare(0, lib.size() + 1, lib + "/") == 0)
+          return false;
+      for(const auto &dir : python_paths)
+        if(it->second.compare(0, dir.size() + 1, dir + "/") == 0)
+          return true;
+      return false;
+    });
   return converter.convert();
 }
 

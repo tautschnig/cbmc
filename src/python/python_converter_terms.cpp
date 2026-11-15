@@ -255,7 +255,9 @@ exprt python_convertert::convert_name(const jsont &expr)
   else if(id == "__debug__")
     return true_exprt{};
   else if(id == "__name__")
-    return python_string_literal("__main__");
+    return python_string_literal(
+      import_init_module_name.empty() ? std::string{"__main__"}
+                                      : import_init_module_name);
   // PLR: __file__ is the module's path -- a str, NEVER None. The exact
   // path is environment-dependent, so model it as a fixed non-empty
   // string constant (its VALUE is rarely asserted; what matters is that

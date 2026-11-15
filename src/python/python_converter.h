@@ -69,6 +69,15 @@ public:
   {
     module_path_resolver = std::move(resolver);
   }
+  /// Tells whether an imported module is USER code (found on the
+  /// source/PYTHONPATH search path) rather than CBMC's model library.
+  /// The top-level statements of a user module run at import time
+  /// (PLR 5.3); see process_imported_module.
+  using user_module_predicate_t = std::function<bool(const std::string &)>;
+  void set_user_module_predicate(user_module_predicate_t p)
+  {
+    is_user_module = std::move(p);
+  }
 
 private:
   symbol_table_baset &symbol_table;
@@ -445,6 +454,22 @@ private:
     deferred_method_bodies; // true when inside process_imported_module
   module_resolver_t module_resolver;
   module_path_resolver_t module_path_resolver;
+  user_module_predicate_t is_user_module;
+  /// Name of the imported user module whose top-level statements are
+  /// being converted (empty otherwise): `__name__` evaluates to it.
+  std::string import_init_module_name;
+  /// Imported USER modules in import order: the module's top-level
+  /// statements that are not definitions run (PLR 5.3: executing the
+  /// module body at import) before the importing module's own body.
+  std::vector<std::pair<std::string, const jsont *>> user_module_inits;
+  /// Function/class definitions of imported USER modules (name ->
+  /// AST, and the module's source path for locations), so the
+  /// post-pass-2 global re-conversion can re-convert their bodies.
+  std::map<std::string, std::pair<const jsont *, std::string>>
+    imported_user_defs;
+  /// Re-convert the body of an imported user-module function (the
+  /// signature registered by process_imported_module is kept).
+  void reconvert_imported_function_body(const jsont &stmt);
 
   /// Process an imported module's AST to register its definitions
   void process_imported_module(

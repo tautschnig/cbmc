@@ -1,0 +1,13 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+PLR 5.3: importing a user module executes its body. The imported module's
+non-literal globals (a comprehension, an arithmetic constant, a list built
+by append) were never initialised, and its function bodies could not resolve
+them. Its top level now runs before the importer's body, with __name__ bound
+to the module name (so its __main__ guard does not fire).
