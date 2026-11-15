@@ -10,15 +10,19 @@
 # Both are marked EXPECTED-FAIL below.  Every other runner must be
 # SUCCESSFUL, with nobody=0, unknown=0 and its witnesses failing.
 #
-# EACH must be generous: several runners do a main and a vacuity
-# verification, each of which can take ~20 minutes, and a tight timeout cuts
-# the script off before it prints the witnesses.
+# EACH must be generous, and 5400 was not enough.  Several runners now sweep
+# five or six configurations, each with a main and a vacuity verification, so
+# the old 90-minute cap truncated them part way: prepare_tx completed 2 of its
+# 6 configurations and the adjudicator correctly refused the partial run for
+# having no witness in the captured output.  Run standalone with no cap, all
+# six pass with every witness failing.  The default is now 4 hours; a runner
+# that needs more should be run on its own.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 LOG=${LOG:-/tmp/ena-proof/all}; mkdir -p "$LOG"
 one() {
   local name=$1 script=$2; shift 2
-  OUT="$LOG/$name" W="$LOG/$name" timeout "${EACH:-5400}" "$HERE/$script" "$@" \
+  OUT="$LOG/$name" W="$LOG/$name" timeout "${EACH:-14400}" "$HERE/$script" "$@" \
     > "$LOG/$name.txt" 2>&1
   local v other nobody unk
   v=$(grep -oE 'VERIFICATION [A-Z]+' "$LOG/$name.txt" | head -1)
