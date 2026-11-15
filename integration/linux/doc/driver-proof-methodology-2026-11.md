@@ -414,3 +414,27 @@ device-running path is reachable" the assertion has to be `assert(!ISSET)`.
 Witnessing one direction when the other is meant leaves exactly the gap the
 witness was for, so witness both directions when the state is a boolean the
 proof depends on.
+
+## Running and stopping long jobs: `proof/bg.sh`
+
+Never stop a run with `pkill -f` or `pgrep -f ... | xargs kill`. The pattern
+is on the controlling shell's own command line, so it matches that shell too;
+it killed the controlling shell twice in one session. Use
+`proof/bg.sh start NAME CMD...`, `bg.sh status`, `bg.sh stop NAME`, which
+record the run's session at launch and stop exactly that session.
+
+It stops by **session**, not process group, for a reason its own test found:
+GNU `timeout` puts itself in a new process group, so a group kill reached the
+runner's shell but missed `timeout` and the cbmc under it -- and every runner
+wraps cbmc in `timeout`. Those were left running as orphans. `timeout` does
+not start a new session, so `pkill -s SID` reaches everything.
+
+The same trap appears in checks, not only in kills: a `pgrep -f` used to
+confirm "no stray processes" counted the checking shell itself. Check by
+process name (`ps -C cbmc`) or by session instead.
+
+## Mechanism and absence claims: `proof/claims-overturned.md`
+
+The ledger of claims later shown wrong, with the two questions to ask before
+writing a mechanism or an absence. Five of its first nine entries were caught
+only after commit.
