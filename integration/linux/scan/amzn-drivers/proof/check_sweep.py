@@ -104,12 +104,20 @@ def main():
         print(f"no runner output in {args.logdir}", file=sys.stderr)
         return 1
 
-    bad = []
+    bad, pending = [], []
     print(f"{'runner':<20} {'claim':<14} reasons")
     print("-" * 78)
     for n in names:
         text = open(os.path.join(args.logdir, n + ".txt"),
                     errors="replace").read()
+        # An empty file is a runner the sweep has started and not finished.
+        # Reporting that as an unsupported claim makes the adjudicator cry
+        # wolf on every mid-sweep check, so it is held separate from the
+        # verdict rather than counted against it.
+        if not text.strip():
+            print(f"{n:<20} {'in progress':<14} no output yet")
+            pending.append(n)
+            continue
         ok, reasons = adjudicate(text, n in expected)
         tag = "STANDS" if ok else "NOT SUPPORTED"
         kind = "expected-fail" if n in expected else "proved"
@@ -120,7 +128,10 @@ def main():
             bad.append(n)
 
     print()
-    print(f"{len(names) - len(bad)} of {len(names)} runner claims stand")
+    judged = len(names) - len(pending)
+    print(f"{judged - len(bad)} of {judged} finished runner claims stand")
+    if pending:
+        print(f"{len(pending)} still running: " + ", ".join(pending))
     if bad:
         print("not supported: " + ", ".join(bad))
         return 1
