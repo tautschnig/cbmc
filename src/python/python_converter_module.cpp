@@ -2798,6 +2798,44 @@ bool python_convertert::convert()
     }
   }
 
+  if(body.is_array())
+  {
+    // Module-level assigned names and their pass-0 placeholder types:
+    // the bodies below are converted before pass 2 runs these
+    // assignments (see function_global_reads).
+    std::function<void(const jsont &)> add_target = [&](const jsont &t)
+    {
+      if(is_node_type(t, "Name"))
+        module_assigned_names.insert(json_string(json_member(t, "id")));
+      else if(is_node_type(t, "Tuple") || is_node_type(t, "List"))
+      {
+        const jsont &elts = json_member(t, "elts");
+        if(elts.is_array())
+          for(const auto &e : as_array(elts))
+            add_target(e);
+      }
+    };
+    for(const auto &stmt : as_array(body))
+    {
+      if(is_node_type(stmt, "Assign"))
+      {
+        const jsont &targets = json_member(stmt, "targets");
+        if(targets.is_array())
+          for(const auto &t : as_array(targets))
+            add_target(t);
+      }
+      else if(
+        is_node_type(stmt, "AnnAssign") || is_node_type(stmt, "AugAssign"))
+        add_target(json_member(stmt, "target"));
+    }
+    for(const auto &nm : module_assigned_names)
+    {
+      const symbolt *gs = symbol_table.lookup(irep_idt{"python::" + nm});
+      if(gs != nullptr)
+        pass0_global_types[gs->name] = gs->type;
+    }
+  }
+
   // First pass: register all function and class definitions
   // Sub-pass 1a: register class definitions first (needed for type annotations)
   if(body.is_array())
@@ -3526,7 +3564,66 @@ bool python_convertert::convert()
   // qualified as `python::<name>`.
   collect_escaped_mutables(body);
   collect_empty_list_inferred_types(body);
+  // State the function bodies were converted in (sub-pass 1c), for
+  // re-conversion after pass 2 (below).
+  const tracking_snapshott pre_module_tracking = snapshot_tracking();
+  const auto pre_module_versions = variable_versions;
   code_blockt module_body = convert_module_body(body);
+
+  // Re-convert function bodies that read a module global which was
+  // unresolved during sub-pass 1c, or whose final type (after pass 2
+  // ran the module-level assignments) differs from the pass-0
+  // placeholder the body was converted against. PLR 4.2.2: a function
+  // body reads the global binding at call time, so its type is the
+  // module's, not the placeholder's. Without this, an unregistered
+  // global (built by a comprehension or an arithmetic expression)
+  // dropped whole statements, and a mis-guessed one (a literal list of
+  // empty lists guessed as list[int]) punned the reads. The
+  // re-conversion runs in the tracking state of sub-pass 1c so the
+  // body cannot fold reads to end-of-module values.
+  if(body.is_array() && !function_global_reads.empty())
+  {
+    std::set<std::string> stale_roots;
+    for(const auto &[root, names] : function_global_reads)
+      for(const auto &nm : names)
+      {
+        const irep_idt gid{"python::" + nm};
+        const symbolt *gs = symbol_table.lookup(gid);
+        if(gs == nullptr)
+          continue;
+        auto p0 = pass0_global_types.find(gid);
+        if(
+          globals_unresolved_in_functions.count(nm) > 0 ||
+          p0 == pass0_global_types.end() || p0->second != gs->type)
+        {
+          stale_roots.insert(root);
+          break;
+        }
+      }
+    if(!stale_roots.empty())
+    {
+      const tracking_snapshott post_module_tracking = snapshot_tracking();
+      const auto post_module_versions = variable_versions;
+      restore_tracking(pre_module_tracking);
+      variable_versions = pre_module_versions;
+      for(const auto &stmt : as_array(body))
+      {
+        const bool is_fn = is_node_type(stmt, "FunctionDef") ||
+                           is_node_type(stmt, "AsyncFunctionDef");
+        if(!is_fn && !is_node_type(stmt, "ClassDef"))
+          continue;
+        const std::string nm = json_string(json_member(stmt, "name"));
+        if(stale_roots.erase(nm) == 0)
+          continue;
+        if(is_fn)
+          convert_function_def(stmt);
+        else
+          convert_class_def(stmt);
+      }
+      restore_tracking(post_module_tracking);
+      variable_versions = post_module_versions;
+    }
+  }
 
   // Store the module body as a function symbol for later use by
   // generate_support_functions (which creates __CPROVER__start).

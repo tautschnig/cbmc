@@ -1,0 +1,13 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+A module constant computed from other module constants (a BinOp RHS that pass 0
+cannot pre-register) must resolve inside a function: bodies are converted
+before the module-level assignments, and are now re-converted against the
+global's final type. Previously the name was unknown and the enclosing
+statement dropped (a spurious failure here, and silent loss elsewhere).

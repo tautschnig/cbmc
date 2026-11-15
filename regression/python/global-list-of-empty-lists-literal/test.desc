@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+A literal module global of empty lists was pre-registered as list[int], so an
+append to an inner list inside a function was punned into a spurious
+AttributeError. The body is now re-converted against the final type.

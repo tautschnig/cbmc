@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+A module global built by a list comprehension, appended to and drained inside
+functions. The global was unknown inside function bodies, so the append and
+the drain loop were dropped.

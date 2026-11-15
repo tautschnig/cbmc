@@ -2561,6 +2561,22 @@ private:
   /// convert_statement emits a fail-closed python-not-encoded
   /// property for it instead of dropping it silently.
   std::size_t unknown_variable_events = 0;
+  /// Function bodies are converted (sub-pass 1c) BEFORE the module-level
+  /// assignments (pass 2), so an unannotated global is only a pass-0
+  /// placeholder there (or not registered at all). Each function body's
+  /// reads of such globals are recorded here (root function or class
+  /// name -> global names), and after pass 2 any body that read a
+  /// global that was unresolved or whose final type differs from its
+  /// placeholder is converted again against the final symbol.
+  std::map<std::string, std::set<std::string>> function_global_reads;
+  /// Module-level names whose resolution failed inside a function
+  /// body during sub-pass 1c (candidates for re-conversion).
+  std::set<std::string> globals_unresolved_in_functions;
+  /// Names bound by top-level Assign/AnnAssign/AugAssign statements of
+  /// the main module (filled before sub-pass 1c).
+  std::set<std::string> module_assigned_names;
+  /// Placeholder types of unannotated globals at the end of pass 0.
+  std::map<irep_idt, typet> pass0_global_types;
   /// Witness pattern (index / min / max): fresh nondet-initialized
   /// symbol; the caller assumes its defining constraints guarded by
   /// the feasibility condition (PLR raise-instead-of-value cases keep

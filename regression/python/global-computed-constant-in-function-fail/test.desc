@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 6
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+Refutation twin of global-computed-constant-in-function: the upper bound is
+inclusive, so 0x220 lies outside.

@@ -414,6 +414,24 @@ exprt python_convertert::convert_name(const jsont &expr)
       }
     }
   }
+  // Record a function body's read of a module-level assigned name
+  // (resolved or not): sub-pass 1c converts bodies before pass 2 runs
+  // the module-level assignments, so such a read may have seen only a
+  // placeholder; the module driver re-converts the body after pass 2
+  // when the global's final type differs or it was unresolved.
+  if(!current_function.empty() && module_assigned_names.count(id) > 0)
+  {
+    const bool via_module_scope =
+      sym == nullptr || sym->name == irep_idt{"python::" + id};
+    if(via_module_scope)
+    {
+      const std::string root =
+        current_function.substr(0, current_function.find("::"));
+      function_global_reads[root].insert(id);
+      if(sym == nullptr)
+        globals_unresolved_in_functions.insert(id);
+    }
+  }
   if(sym == nullptr)
   {
     // Built-in type names used as values (e.g., type(x) == int)
