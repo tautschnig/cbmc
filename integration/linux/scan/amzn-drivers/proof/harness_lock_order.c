@@ -365,7 +365,12 @@ int main(void)
 #  if ENTRY != 5
   __CPROVER_assert(g_locks == 0, "witness: the admin lock can be taken");
 #  endif
+#  if ENTRY != 5
+  /* ENTRY 5 never takes the lock -- that is F29 -- so a release cannot be
+   * witnessed there.  An earlier edit meant to add this guard did not match
+   * the single-line form of the assertion and silently did nothing. */
   __CPROVER_assert(g_unlocks == 0, "witness: the admin lock can be released");
+#  endif
 #endif
   return 0;
 }

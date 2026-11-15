@@ -38,13 +38,16 @@ one() {
 }
 # reset_flag, rss_reta and conc_admin also fail by design: each reproduces a
 # finding (F21, F19) or an observation in its first configuration.
+# llq_path's default xmit mode runs without ASSUME_NO_F14, so PREPARE_OK fails:
+# that is F14.  rx_errorpath reproduces F10 (released) and F17 (intr).
 # conc_reset belongs here too: under STORE_ORDER=1 -- the reordering the
 # driver's missing barrier permits -- CC_REASON_SOUND fails, and that failure
 # IS the unsynchronised-RMW observation the harness was written to make.  It
 # was omitted, so the sweep adjudicator reported it as an unsupported claim.
 EXPECT_FAIL="prepare_tx doorbell reset_flag rss_reta conc_admin conc_reset \
 class_s xstats_byid conc_datapath admin_reuse probe lock_order \
-cleanup_fastfree xmit_offloads setup_rx_intr fbsd_mtu fbsd_sysctl fbsd_down"
+cleanup_fastfree xmit_offloads setup_rx_intr fbsd_mtu fbsd_sysctl fbsd_down \
+llq_path rx_errorpath"
 one stop          run_stop.sh
 # MC=2 so the multi-descriptor chain path is covered: at the default MC=1
 # it cannot arise, and the witness for it passed, which the sweep

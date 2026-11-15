@@ -7,10 +7,14 @@ DPDK=${DPDK:-/tmp/dpdk}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ena-proof}
+# flags.txt is written once by run.sh into /tmp/ena-proof; it is NOT per-run
+# output, so it must not follow $OUT.  Tying it to $OUT made this runner fail
+# instantly under run_all.sh, which gives every runner a fresh OUT.
+FLAGS_FILE=${FLAGS_FILE:-/tmp/ena-proof/flags.txt}
 RING=${RING:-8}
 POOL=${POOL:-$RING}   # one distinct mbuf per slot: pool must match the ring
 mkdir -p "$OUT"
-[ -f "$OUT/flags.txt" ] || { echo "run run.sh first (it writes flags.txt)"; exit 1; }
+[ -f "$FLAGS_FILE" ] || { echo "run run.sh first (it writes flags.txt)"; exit 1; }
 
 cd "$DPDK/build-ql"
 
@@ -27,7 +31,7 @@ done
 for V in 0 1; do
   [ "$V" = 0 ] && TAG="" || TAG="_vac"
   ( ulimit -v 32000000
-    "$BIN/goto-cc" $(cat "$OUT/flags.txt") -DPEDANTIC \
+    "$BIN/goto-cc" $(cat "$FLAGS_FILE") -DPEDANTIC \
       -DRING_SIZE=$RING -DMBUF_POOL=$POOL -DVACUITY_CHECK=$V \
       "$HERE/harness_cleanup.c" "$HERE/rdtsc_stub.c" -o "$OUT/cl$TAG.gb" )
     [ -f "$OUT/cl$TAG.gb" ] || { echo "BUILD FAILED, refusing to run stale binaries"; exit 1; }

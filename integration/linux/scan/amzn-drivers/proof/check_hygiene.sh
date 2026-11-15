@@ -58,7 +58,10 @@ fi
 
 # 2. UNKNOWN
 n=$(grep -cE ': UNKNOWN$' "$main" || true)
-[ "$n" -eq 0 ] && say ok "no UNKNOWN property" || bad "$n UNKNOWN property/properties: an undecided property is not a proven one"
+if [ "$n" -eq 0 ]; then say ok "no UNKNOWN property"
+elif [ "$mode" = refuted ]; then
+  say note "$n UNKNOWN property/properties -- tolerated for --refuted: an undecided property cannot make a found counterexample unsound"
+else bad "$n UNKNOWN property/properties: an undecided property is not a proven one"; fi
 
 # 3. bodyless callee actually reached
 n=$(grep -cE 'no body for callee.*FAILURE' "$main" || true)

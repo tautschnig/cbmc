@@ -26,12 +26,15 @@ run() {
       2>&1 | grep -i error | head ) || return 1
   ( ulimit -v 32000000; "$BIN/goto-instrument" $RM "$OUT/$tag.gb" "$OUT/${tag}_rm.gb" >/dev/null 2>&1 )
   ( ulimit -v 60000000; timeout 1200 "$BIN/cbmc" "$OUT/${tag}_rm.gb" --bounds-check \
-    --pointer-check --unwind $((RING + 3)) $SOLVER \
+    --pointer-check --unwinding-assertions --unwind $((RING + 3)) $SOLVER \
     --max-field-sensitivity-array-size 256 --slice-formula ) > "$OUT/$tag.log" 2>&1
   echo "== $tag: $(grep -E '^VERIFICATION' "$OUT/$tag.log")"
   sed -E 's/\] line [0-9]+ /] /; s/^/    /' "$OUT/$tag.log" |
-    grep -E 'RX_RELEASE_NONNULL|INTR_ON_UNSTARTED|dereference failure.*(ring|rxq)->.*FAILURE' | sort -u | head -5
+    grep -E 'RX_RELEASE_NONNULL|INTR_ON_UNSTARTED|witness|dereference failure.*(ring|rxq)->.*FAILURE' | sort -u | head -6
 }
 run frame      -DINTR_ON_UNSTARTED=0 -DRELEASE_AFTER_FAILURE=0
 run released   -DINTR_ON_UNSTARTED=0 -DRELEASE_AFTER_FAILURE=1
 run intr       -DINTR_ON_UNSTARTED=1
+# the witness that a failing ena_rx_queue_setup is reachable at all; added when
+# the sweep adjudicator flagged this runner for carrying none
+run vacuity    -DINTR_ON_UNSTARTED=0 -DRELEASE_AFTER_FAILURE=0 -DVACUITY_CHECK

@@ -46,4 +46,5 @@ for cfg in "noffl:" "offl:-DWITH_OFFLOADS" \
   printf '   UNKNOWN: %s   no-body: %s\n' \
     "$(grep -cE ': UNKNOWN$' "$OUT/$n.log")" \
     "$(grep -cE 'no body for callee.*FAILURE' "$OUT/$n.log")"
+  sed -E 's/\] line [0-9]+ /] /; s/^/   /' "$OUT/${n}_v.log" | grep -E '\bwitness\b' | sort -u
 done

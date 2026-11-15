@@ -8,9 +8,13 @@ DPDK=${DPDK:-/tmp/dpdk}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ena-proof}
+# flags.txt is written once by run.sh into /tmp/ena-proof; it is NOT per-run
+# output, so it must not follow $OUT.  Tying it to $OUT made this runner fail
+# instantly under run_all.sh, which gives every runner a fresh OUT.
+FLAGS_FILE=${FLAGS_FILE:-/tmp/ena-proof/flags.txt}
 RING=${RING:-8}
 mkdir -p "$OUT"
-[ -f "$OUT/flags.txt" ] || { echo "run run.sh first (it writes flags.txt)"; exit 1; }
+[ -f "$FLAGS_FILE" ] || { echo "run run.sh first (it writes flags.txt)"; exit 1; }
 cd "$DPDK/build-ql"
 
 RM=""
@@ -22,7 +26,7 @@ done
 
 for R in 0 1; do
   ( ulimit -v 32000000
-    "$BIN/goto-cc" $(cat "$OUT/flags.txt") -DPEDANTIC -DCONCRETE_RING=$RING \
+    "$BIN/goto-cc" $(cat "$FLAGS_FILE") -DPEDANTIC -DCONCRETE_RING=$RING \
       -DRELEASE_AFTER_FAILURE=$R \
       "$HERE/harness_setup_errorpath.c" "$HERE/rdtsc_stub.c" -o "$OUT/ep$R.gb" )
     [ -f "$OUT/ep$R.gb" ] || { echo "BUILD FAILED, refusing to run stale binaries"; exit 1; }

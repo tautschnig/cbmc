@@ -14,16 +14,20 @@ DPDK=${DPDK:-/tmp/dpdk}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ena-proof}
+# flags.txt is written once by run.sh into /tmp/ena-proof; it is NOT per-run
+# output, so it must not follow $OUT.  Tying it to $OUT made this runner fail
+# instantly under run_all.sh, which gives every runner a fresh OUT.
+FLAGS_FILE=${FLAGS_FILE:-/tmp/ena-proof/flags.txt}
 SEGS=${SEGS:-20}
 mkdir -p "$OUT"
-[ -f "$OUT/flags.txt" ] || { echo "run run.sh first (it writes flags.txt)"; exit 1; }
+[ -f "$FLAGS_FILE" ] || { echo "run run.sh first (it writes flags.txt)"; exit 1; }
 
 for L in 1 0; do
  for V in 0 1; do
   vd=""; [ $V = 1 ] && vd=-DVACUITY_CHECK
   cd "$DPDK/build-ql"
   ( ulimit -v 32000000
-    "$BIN/goto-cc" $(cat "$OUT/flags.txt") -DPEDANTIC \
+    "$BIN/goto-cc" $(cat "$FLAGS_FILE") -DPEDANTIC \
       -DMAX_SEGS=$SEGS -DSEGS_LEGAL=$L $vd \
       "$HERE/harness_map_segs.c" -o "$OUT/ms$L.gb" )
   cd "$OUT"

@@ -28,6 +28,7 @@ import sys
 def adjudicate(text, expect_fail):
     """-> (ok, [reasons]) for one runner's captured output."""
     reasons = []
+    notes = []
 
     # The verdict is not reliably at line start: runners indent their captured
     # output, and some prefix it ("part 2  VERIFICATION SUCCESSFUL").
@@ -49,7 +50,14 @@ def adjudicate(text, expect_fail):
                         r"unwind FAIL:\s*([0-9]+)")):
         vals = [int(v) for v in re.findall(pat, text)]
         if vals and max(vals) > 0:
-            reasons.append(f"{max(vals)} {label}")
+            # An undecided property cannot make a FOUND counterexample unsound,
+            # so for a runner whose claim is "reproduces finding X" UNKNOWN is
+            # reported but does not reject the claim.  For a proof it does.
+            if label == "UNKNOWN" and expect_fail:
+                notes.append(f"{max(vals)} UNKNOWN (tolerated: the claim is a "
+                             f"counterexample, which they cannot undermine)")
+            else:
+                reasons.append(f"{max(vals)} {label}")
 
     other = [int(v) for v in re.findall(r"other FAILURE:\s*([0-9]+)", text)]
     if other and max(other) > 0 and not expect_fail:
@@ -84,7 +92,7 @@ def adjudicate(text, expect_fail):
                 f"verdict FAILED with {len(unexplained)} non-witness "
                 f"failure(s) and not marked EXPECTED-FAIL")
 
-    return (not reasons), reasons
+    return (not reasons), reasons + [f"note: {n}" for n in notes]
 
 
 def main():
