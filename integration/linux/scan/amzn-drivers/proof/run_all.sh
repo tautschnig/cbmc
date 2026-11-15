@@ -85,7 +85,11 @@ one cleanup_step  run_cleanup_step.sh
 # Those omitted are staged or experimental (run_stage*, run_item1*,
 # run_cleanup_lc, run_xmit_variant, run_fbsd_cleanup_perf) and have no
 # obligation of their own.
-one cleanup       run_cleanup.sh
+# Unwound at RING=4 (about a minute).  At its default ring 8 it has never
+# produced a verdict (both builds still in the SAT solver after 35 minutes);
+# the ring 8/16/32 result is carried by cleanup_step's hand-written invariant.
+# This run is the independent whole-call cross-check at a ring it can reach.
+RING=4 one cleanup run_cleanup.sh
 one cleanup_fastfree run_cleanup_fastfree.sh
 one xmit_step     run_xmit_step.sh
 one xmit_offloads run_xmit_step_offloads.sh
