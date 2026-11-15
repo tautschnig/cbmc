@@ -492,6 +492,7 @@ exprt python_convertert::convert_name(const jsont &expr)
     }
 
     log.error() << "Unknown variable: " << id << messaget::eom;
+    ++unknown_variable_events;
     return nil_exprt{};
   }
 

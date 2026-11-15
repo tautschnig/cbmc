@@ -1,0 +1,13 @@
+CORE
+main.py
+--unwind 6
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+^\[python-not-encoded\.1\] .* line 8 statement could not be encoded \(unresolved name\).*: FAILURE$
+--
+--
+A statement whose conversion hits an unresolved name ("Unknown variable") was
+dropped without any property: here the whole loop, and the failing assertion
+inside it, vanished and the result was VERIFICATION SUCCESSFUL. Every such
+statement now carries a definite-failure python-not-encoded property.

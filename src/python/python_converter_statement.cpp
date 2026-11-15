@@ -26,6 +26,37 @@
 
 codet python_convertert::convert_statement(const jsont &stmt)
 {
+  // Fail closed on unresolved names. When a name cannot be resolved
+  // (logged as "Unknown variable"), the expression that read it
+  // becomes nil, and the statement holding it is dropped or
+  // mis-translated without any property -- whole loops and the
+  // assertions inside them vanished from real code, so VERIFICATION
+  // SUCCESSFUL could mean "not encoded". Count the events per
+  // statement (nested statements count their own: save/restore) and
+  // emit a definite-failure python-not-encoded property ahead of any
+  // statement that had one.
+  const std::size_t saved_events = unknown_variable_events;
+  unknown_variable_events = 0;
+  codet result = convert_statement_inner(stmt);
+  const std::size_t own_events = unknown_variable_events;
+  unknown_variable_events = saved_events;
+  if(own_events == 0)
+    return result;
+  source_locationt loc = get_location(stmt);
+  loc.set_property_class("python-not-encoded");
+  loc.set_comment(
+    "statement could not be encoded (unresolved name); its effects "
+    "are not modelled");
+  code_assertt not_encoded{false_exprt{}};
+  not_encoded.add_source_location() = loc;
+  code_blockt block;
+  block.add(std::move(not_encoded));
+  block.add(std::move(result));
+  return std::move(block);
+}
+
+codet python_convertert::convert_statement_inner(const jsont &stmt)
+{
   std::string node_type = json_string(json_member(stmt, "_type"));
 
   // Clear pending checks before converting this statement

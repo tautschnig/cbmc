@@ -1782,6 +1782,9 @@ private:
 
   /// Convert a single statement node.
   codet convert_statement(const jsont &stmt);
+  /// The statement conversion proper; convert_statement wraps it with
+  /// the unresolved-name fail-closed check.
+  codet convert_statement_inner(const jsont &stmt);
 
   /// Convert an expression node to an exprt.
   exprt convert_expression(const jsont &expr);
@@ -2550,6 +2553,14 @@ private:
   /// When true (comprehension key/value/filter conversion),
   /// convert_user_call attempts pure_expr_inline first.
   bool pure_inline_context = false;
+  /// Number of unresolved-name events ("Unknown variable") seen
+  /// while converting the CURRENT statement (convert_statement saves
+  /// and restores it around nested statements, so each statement
+  /// counts only its own). A statement with a non-zero count was
+  /// mis-translated (its expression became nil and was dropped), so
+  /// convert_statement emits a fail-closed python-not-encoded
+  /// property for it instead of dropping it silently.
+  std::size_t unknown_variable_events = 0;
   /// Witness pattern (index / min / max): fresh nondet-initialized
   /// symbol; the caller assumes its defining constraints guarded by
   /// the feasibility condition (PLR raise-instead-of-value cases keep
