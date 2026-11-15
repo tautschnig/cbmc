@@ -6,6 +6,12 @@
 set -eu
 DPDK=${DPDK:-/tmp/dpdk}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
+# Cap the two spin loops of DPDK's x86 rte_spinlock_lock asm.  Under the
+# asm-semantics build symex cannot decide them and unwinds both to --unwind
+# (cbmc-limitations/asm_spinlock_unwinds.md).  Sound with unwinding
+# assertions on (the CBMC 6 default): a lock that could spin fails one.
+# SPIN_CAP= disables it.
+SPIN_CAP=${SPIN_CAP-"--unwindset rte_spinlock_lock.0:2,rte_spinlock_lock.1:2"}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ena-proof}
 # flags.txt is written once by run.sh into /tmp/ena-proof; it is NOT per-run
@@ -40,7 +46,7 @@ run_ep() { # R V tag
   [ -f "$OUT/ep$T.gb" ] || { echo "BUILD FAILED, refusing to run stale binaries"; exit 1; }
   ( ulimit -v 32000000; "$BIN/goto-instrument" $RM "$OUT/ep$T.gb" "$OUT/ep${T}_rm.gb" >/dev/null 2>&1 )
   ( ulimit -v 60000000
-    timeout 2400 "$BIN/cbmc" "$OUT/ep${T}_rm.gb" --bounds-check --pointer-check \
+    timeout 2400 "$BIN/cbmc" $SPIN_CAP "$OUT/ep${T}_rm.gb" --bounds-check --pointer-check \
       --unwind $((RING + 4)) --unwinding-assertions > "$OUT/ep$T.log" 2>&1 ) || true
   grep -qE '^VERIFICATION' "$OUT/ep$T.log" ||
     { echo "  NO VERDICT: cbmc did not finish"; tail -3 "$OUT/ep$T.log" | sed 's/^/    /'; }

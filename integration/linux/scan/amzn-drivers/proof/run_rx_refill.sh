@@ -9,6 +9,12 @@ set -u
 SOLVER=${SOLVER:---sat-solver minisat2}
 RING=${RING:-4}
 B=${B:-/home/ubuntu/cbmc-github.git/build/bin}
+# Cap the two spin loops of DPDK's x86 rte_spinlock_lock asm.  Under the
+# asm-semantics build symex cannot decide them and unwinds both to --unwind
+# (cbmc-limitations/asm_spinlock_unwinds.md).  Sound with unwinding
+# assertions on (the CBMC 6 default): a lock that could spin fails one.
+# SPIN_CAP= disables it.
+SPIN_CAP=${SPIN_CAP-"--unwindset rte_spinlock_lock.0:2,rte_spinlock_lock.1:2"}
 P=$(cd "$(dirname "$0")" && pwd)
 W=${W:-/tmp/ena-proof/rx-refill}; mkdir -p "$W"
 RM=""
@@ -29,11 +35,11 @@ for V in 0 1; do
     [ -f "$W/f$V.gb" ] || { echo "BUILD FAILED, refusing to run stale binaries"; exit 1; }
   ( ulimit -v 32000000; "$B/goto-instrument" $RM "$W/f$V.gb" "$W/f${V}r.gb" >/dev/null 2>&1 )
 done
-( ulimit -v 150000000; timeout 3000 "$B/cbmc" "$W/f0r.gb" --bounds-check \
+( ulimit -v 150000000; timeout 3000 "$B/cbmc" $SPIN_CAP "$W/f0r.gb" --bounds-check \
   --unwinding-assertions $FLAGS ) > "$W/rf.log" 2>&1
 sed -E 's/\] line [0-9]+ /] /' "$W/rf.log" | grep -E 'RF_|^VERIFICATION'
 echo "other FAILURE: $(grep -E ': FAILURE$' "$W/rf.log" | grep -vcE 'RF_|rte_log_register|rte_pci_register')"
 echo "no-body reached: $(grep -E 'no body for callee.*FAILURE' "$W/rf.log" | grep -vcE 'rte_log_register|rte_pci_register')"
 echo "unwinding FAILURE: $(grep -cE 'unwind.*: FAILURE$' "$W/rf.log")   UNKNOWN: $(grep -c ': UNKNOWN$' "$W/rf.log")"
-( ulimit -v 150000000; timeout 3000 "$B/cbmc" "$W/f1r.gb" $FLAGS ) > "$W/rf_vac.log" 2>&1
+( ulimit -v 150000000; timeout 3000 "$B/cbmc" $SPIN_CAP "$W/f1r.gb" $FLAGS ) > "$W/rf_vac.log" 2>&1
 sed -E 's/\] line [0-9]+ /] /' "$W/rf_vac.log" | grep 'vacuity witness'

@@ -23,6 +23,12 @@
 set -u
 SOLVER=${SOLVER:---sat-solver minisat2}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
+# Cap the two spin loops of DPDK's x86 rte_spinlock_lock asm.  Under the
+# asm-semantics build symex cannot decide them and unwinds both to --unwind
+# (cbmc-limitations/asm_spinlock_unwinds.md).  Sound with unwinding
+# assertions on (the CBMC 6 default): a lock that could spin fails one.
+# SPIN_CAP= disables it.
+SPIN_CAP=${SPIN_CAP-"--unwindset rte_spinlock_lock.0:2,rte_spinlock_lock.1:2"}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ena-proof/cls}; mkdir -p "$OUT"
 RM=""
@@ -46,10 +52,10 @@ for E in ${ENTRIES:-0 1 2 3 4}; do
     ( ulimit -v 32000000; "$BIN/goto-instrument" $RM "$OUT/e$E$V.gb" "$OUT/r$E$V.gb" >/dev/null 2>&1 )
   done
   echo "CBMC-CMD: cbmc $OUT/r${E}0.gb --bounds-check $PC $F" > "$OUT/x$E.log"
-  ( ulimit -v ${MEM:-60000000}; timeout ${TO:-2400} "$BIN/cbmc" "$OUT/r${E}0.gb" \
+  ( ulimit -v ${MEM:-60000000}; timeout ${TO:-2400} "$BIN/cbmc" $SPIN_CAP "$OUT/r${E}0.gb" \
       --bounds-check $PC $F ) >> "$OUT/x$E.log" 2>&1
   echo "CBMC-CMD: cbmc $OUT/r${E}1.gb --no-standard-checks $F" > "$OUT/v$E.log"
-  ( ulimit -v ${MEM:-60000000}; timeout ${TO:-2400} "$BIN/cbmc" "$OUT/r${E}1.gb" \
+  ( ulimit -v ${MEM:-60000000}; timeout ${TO:-2400} "$BIN/cbmc" $SPIN_CAP "$OUT/r${E}1.gb" \
       --no-standard-checks $F ) >> "$OUT/v$E.log" 2>&1
   echo "== ENTRY=$E"
   sed -E 's/\] line [0-9]+ /] /; s/^/   /' "$OUT/x$E.log" | grep -E 'SM_|^   VERIFICATION' | sort -u

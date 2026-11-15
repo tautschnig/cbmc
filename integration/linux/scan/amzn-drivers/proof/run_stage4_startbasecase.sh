@@ -7,6 +7,12 @@
 set -eu
 DPDK=${DPDK:-/tmp/dpdk}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
+# Cap the two spin loops of DPDK's x86 rte_spinlock_lock asm.  Under the
+# asm-semantics build symex cannot decide them and unwinds both to --unwind
+# (cbmc-limitations/asm_spinlock_unwinds.md).  Sound with unwinding
+# assertions on (the CBMC 6 default): a lock that could spin fails one.
+# SPIN_CAP= disables it.
+SPIN_CAP=${SPIN_CAP-"--unwindset rte_spinlock_lock.0:2,rte_spinlock_lock.1:2"}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ena-proof}
 RING=${RING:-8}
@@ -50,7 +56,7 @@ done
 
 rm -f "$OUT/stage4.log" "$OUT/stage4_vac.log"
 ( ulimit -v 150000000
-  timeout 1800 "$BIN/cbmc" "$OUT/s4_0_rm.gb" --bounds-check --pointer-check \
+  timeout 1800 "$BIN/cbmc" $SPIN_CAP "$OUT/s4_0_rm.gb" --bounds-check --pointer-check \
     $CHECKS --unwinding-assertions > "$OUT/stage4.log" 2>&1 ) || true
 if ! grep -qE '^VERIFICATION' "$OUT/stage4.log"; then
   echo "NO VERDICT: cbmc did not finish"; tail -3 "$OUT/stage4.log"; exit 1
@@ -61,6 +67,6 @@ echo "unmodelled callees actually reached:"
 grep -E 'no body for callee.*FAILURE|undefined function.*FAILURE' "$OUT/stage4.log" | sed 's/^/  /' || echo "  none"
 
 ( ulimit -v 150000000
-  timeout 1800 "$BIN/cbmc" "$OUT/s4_1_rm.gb" $CHECKS > "$OUT/stage4_vac.log" 2>&1 ) || true
+  timeout 1800 "$BIN/cbmc" $SPIN_CAP "$OUT/s4_1_rm.gb" $CHECKS > "$OUT/stage4_vac.log" 2>&1 ) || true
 echo "vacuity witnesses (both must be FAILURE):"
 grep -E 'vacuity witness' "$OUT/stage4_vac.log" | sed 's/^/  /'

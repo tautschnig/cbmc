@@ -11,6 +11,12 @@
 set -eu
 DPDK=${DPDK:-/tmp/dpdk}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
+# Cap the two spin loops of DPDK's x86 rte_spinlock_lock asm.  Under the
+# asm-semantics build symex cannot decide them and unwinds both to --unwind
+# (cbmc-limitations/asm_spinlock_unwinds.md).  Sound with unwinding
+# assertions on (the CBMC 6 default): a lock that could spin fails one.
+# SPIN_CAP= disables it.
+SPIN_CAP=${SPIN_CAP-"--unwindset rte_spinlock_lock.0:2,rte_spinlock_lock.1:2"}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ena-proof}
 RING=${RING:-8}
@@ -23,7 +29,7 @@ cd "$DPDK/build-ql"
     "$HERE/harness_setup_basecase.c" -o "$OUT/s3.gb" )
 
 ( ulimit -v 60000000
-  timeout 1800 "$BIN/cbmc" "$OUT/s3.gb" --bounds-check --pointer-check \
+  timeout 1800 "$BIN/cbmc" $SPIN_CAP "$OUT/s3.gb" --bounds-check --pointer-check \
     --unwind $((RING + 4)) --unwinding-assertions > "$OUT/stage3.log" 2>&1 ) || true
 
 grep -E '^VERIFICATION|^\*\* ' "$OUT/stage3.log"

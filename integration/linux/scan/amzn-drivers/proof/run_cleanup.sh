@@ -5,6 +5,12 @@
 set -eu
 DPDK=${DPDK:-/tmp/dpdk}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
+# Cap the two spin loops of DPDK's x86 rte_spinlock_lock asm.  Under the
+# asm-semantics build symex cannot decide them and unwinds both to --unwind
+# (cbmc-limitations/asm_spinlock_unwinds.md).  Sound with unwinding
+# assertions on (the CBMC 6 default): a lock that could spin fails one.
+# SPIN_CAP= disables it.
+SPIN_CAP=${SPIN_CAP-"--unwindset rte_spinlock_lock.0:2,rte_spinlock_lock.1:2"}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ena-proof}
 # flags.txt is written once by run.sh into /tmp/ena-proof; it is NOT per-run
@@ -41,7 +47,7 @@ for V in 0 1; do
 done
 
 ( ulimit -v 60000000
-  timeout 2400 "$BIN/cbmc" "$OUT/cl_rm.gb" --bounds-check --pointer-check \
+  timeout 2400 "$BIN/cbmc" $SPIN_CAP "$OUT/cl_rm.gb" --bounds-check --pointer-check \
     --unwind $((RING + 4)) --unwinding-assertions $SOLVER --max-field-sensitivity-array-size 256 --slice-formula > "$OUT/cleanup.log" 2>&1 ) || true
 
 if ! grep -qE '^VERIFICATION' "$OUT/cleanup.log"; then
@@ -53,7 +59,7 @@ grep -E '^VERIFICATION|^\*\* ' "$OUT/cleanup.log"
 echo "obligations:"; grep -E 'main\.assertion|FREE_ONCE' "$OUT/cleanup.log" | sed 's/^/  /'
 echo "vacuity witness (must be FAILURE):"
 ( ulimit -v 60000000
-  timeout 2400 "$BIN/cbmc" "$OUT/cl_vac_rm.gb" --bounds-check --pointer-check \
+  timeout 2400 "$BIN/cbmc" $SPIN_CAP "$OUT/cl_vac_rm.gb" --bounds-check --pointer-check \
     --unwind $((RING + 4)) $SOLVER --max-field-sensitivity-array-size 256 --slice-formula > "$OUT/cleanup_vac.log" 2>&1 ) || true
 grep -E 'vacuity witness' "$OUT/cleanup_vac.log" | sed 's/^/  /' || echo "  (not run)"
 echo "unmodelled callees actually reached:"

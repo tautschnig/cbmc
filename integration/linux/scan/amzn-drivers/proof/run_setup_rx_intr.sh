@@ -7,6 +7,12 @@ set -u
 #   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
 SOLVER=${SOLVER:---sat-solver minisat2}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
+# Cap the two spin loops of DPDK's x86 rte_spinlock_lock asm.  Under the
+# asm-semantics build symex cannot decide them and unwinds both to --unwind
+# (cbmc-limitations/asm_spinlock_unwinds.md).  Sound with unwinding
+# assertions on (the CBMC 6 default): a lock that could spin fails one.
+# SPIN_CAP= disables it.
+SPIN_CAP=${SPIN_CAP-"--unwindset rte_spinlock_lock.0:2,rte_spinlock_lock.1:2"}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ena-proof/rxintr}; mkdir -p "$OUT"
 RM=""
@@ -24,12 +30,12 @@ for V in 0 1; do
       2>&1 | grep -i error | head ) || exit 1
   ( ulimit -v 32000000; "$BIN/goto-instrument" $RM "$OUT/i$V.gb" "$OUT/r$V.gb" >/dev/null 2>&1 )
 done
-( ulimit -v 60000000; timeout 1200 "$BIN/cbmc" "$OUT/r0.gb" --bounds-check \
+( ulimit -v 60000000; timeout 1200 "$BIN/cbmc" $SPIN_CAP "$OUT/r0.gb" --bounds-check \
   --pointer-check --unwind 8 --unwinding-assertions $SOLVER \
   --max-field-sensitivity-array-size 256 --slice-formula --trace ) > "$OUT/x.log" 2>&1
 sed -E 's/\] line [0-9]+ /] /' "$OUT/x.log" | grep -E 'F18_SETUP_RC|^VERIFICATION'
 echo "other FAILURE: $(grep -E ': FAILURE$' "$OUT/x.log" | grep -vcE 'F18_')"
 echo "no-body reached: $(grep -cE 'no body for callee.*FAILURE' "$OUT/x.log")   unwind FAIL: $(grep -cE 'unwind.*: FAILURE$' "$OUT/x.log")"
-( ulimit -v 60000000; timeout 1200 "$BIN/cbmc" "$OUT/r1.gb" --unwind 8 \
+( ulimit -v 60000000; timeout 1200 "$BIN/cbmc" $SPIN_CAP "$OUT/r1.gb" --unwind 8 \
   $SOLVER --max-field-sensitivity-array-size 256 --slice-formula ) > "$OUT/v.log" 2>&1
 sed -E 's/\] line [0-9]+ /] /' "$OUT/v.log" | grep 'vacuity witness'

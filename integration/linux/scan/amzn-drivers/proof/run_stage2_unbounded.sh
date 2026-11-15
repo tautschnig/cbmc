@@ -9,6 +9,12 @@
 set -eu
 DPDK=${DPDK:-/tmp/dpdk}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
+# Cap the two spin loops of DPDK's x86 rte_spinlock_lock asm.  Under the
+# asm-semantics build symex cannot decide them and unwinds both to --unwind
+# (cbmc-limitations/asm_spinlock_unwinds.md).  Sound with unwinding
+# assertions on (the CBMC 6 default): a lock that could spin fails one.
+# SPIN_CAP= disables it.
+SPIN_CAP=${SPIN_CAP-"--unwindset rte_spinlock_lock.0:2,rte_spinlock_lock.1:2"}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ena-proof}
 mkdir -p "$OUT"
@@ -35,7 +41,7 @@ done
     --dfcc main --apply-loop-contracts "$OUT/s2_lib.gb" "$OUT/s2_lc.gb" >/dev/null 2>&1 )
 
 ( ulimit -v 60000000
-  timeout 2400 "$BIN/cbmc" "$OUT/s2_lc.gb" --bounds-check --pointer-check \
+  timeout 2400 "$BIN/cbmc" $SPIN_CAP "$OUT/s2_lc.gb" --bounds-check --pointer-check \
     --no-standard-checks > "$OUT/stage2.log" 2>&1 ) || true
 
 echo "loop-contract obligations:"
@@ -45,6 +51,6 @@ echo "failures:"; grep ': FAILURE' "$OUT/stage2.log" | sed 's/^/  /' || echo "  
 echo
 echo "control -- same program without the loop contract, unwind 4:"
 ( ulimit -v 48000000
-  timeout 900 "$BIN/cbmc" "$OUT/s2_lib.gb" --bounds-check --pointer-check \
+  timeout 900 "$BIN/cbmc" $SPIN_CAP "$OUT/s2_lib.gb" --bounds-check --pointer-check \
     --unwind 4 --unwinding-assertions > "$OUT/control.log" 2>&1 ) || true
 grep -E 'unwinding assertion' "$OUT/control.log" | sed 's/^/  /' | head -2

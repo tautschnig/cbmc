@@ -9,6 +9,12 @@ set -u
 SOLVER=${SOLVER:---sat-solver minisat2}
 RING=${RING:-8}
 B=${B:-/home/ubuntu/cbmc-github.git/build/bin}
+# Cap the two spin loops of DPDK's x86 rte_spinlock_lock asm.  Under the
+# asm-semantics build symex cannot decide them and unwinds both to --unwind
+# (cbmc-limitations/asm_spinlock_unwinds.md).  Sound with unwinding
+# assertions on (the CBMC 6 default): a lock that could spin fails one.
+# SPIN_CAP= disables it.
+SPIN_CAP=${SPIN_CAP-"--unwindset rte_spinlock_lock.0:2,rte_spinlock_lock.1:2"}
 P=$(cd "$(dirname "$0")" && pwd)
 W=${W:-/tmp/ena-proof/stop}
 mkdir -p "$W"
@@ -30,15 +36,15 @@ for V in 0 1; do
     [ -f "$W/s$V.gb" ] || { echo "BUILD FAILED, refusing to run stale binaries"; exit 1; }
   ( ulimit -v 32000000; "$B/goto-instrument" $RM "$W/s$V.gb" "$W/s${V}r.gb" >/dev/null ) || exit 1
 done
-( ulimit -v 120000000; timeout 2400 "$B/cbmc" "$W/s0r.gb" --bounds-check \
+( ulimit -v 120000000; timeout 2400 "$B/cbmc" $SPIN_CAP "$W/s0r.gb" --bounds-check \
   --pointer-check --unwinding-assertions $FLAGS ) > "$W/stop.log" 2>&1
-( ulimit -v 120000000; timeout 2400 "$B/cbmc" "$W/s1r.gb" $FLAGS ) > "$W/stop_vac.log" 2>&1
+( ulimit -v 120000000; timeout 2400 "$B/cbmc" $SPIN_CAP "$W/s1r.gb" $FLAGS ) > "$W/stop_vac.log" 2>&1
 sed -E 's/\] line [0-9]+ /] /' "$W/stop.log" | grep -E "STOP_|FREE_ONCE|^VERIFICATION"
 echo "other FAILURE: $(grep -E ': FAILURE$' "$W/stop.log" | grep -vc STOP_)"
 # Every loop here has a constant bound (RING), so symex leaves them before the
 # unwind limit and generates no unwinding assertion.  Show the bound is real:
 # one unwinding short must produce a FAILING unwinding assertion.
-( ulimit -v 32000000; timeout 900 "$B/cbmc" "$W/s0r.gb" --unwinding-assertions \
+( ulimit -v 32000000; timeout 900 "$B/cbmc" $SPIN_CAP "$W/s0r.gb" --unwinding-assertions \
   --unwind "$RING" $SOLVER --max-field-sensitivity-array-size 256 \
   --slice-formula ) 2>&1 | grep -qE "unwinding assertion.*FAILURE" &&
   echo "unwind check: --unwind $RING fails an unwinding assertion, --unwind $((RING + 2)) generates none (complete)"

@@ -9,6 +9,12 @@ set -u
 SOLVER=${SOLVER:---sat-solver minisat2}
 RING=${RING:-4}; NB=${NB:-1}; MC=${MC:-1}
 B=${B:-/home/ubuntu/cbmc-github.git/build/bin}
+# Cap the two spin loops of DPDK's x86 rte_spinlock_lock asm.  Under the
+# asm-semantics build symex cannot decide them and unwinds both to --unwind
+# (cbmc-limitations/asm_spinlock_unwinds.md).  Sound with unwinding
+# assertions on (the CBMC 6 default): a lock that could spin fails one.
+# SPIN_CAP= disables it.
+SPIN_CAP=${SPIN_CAP-"--unwindset rte_spinlock_lock.0:2,rte_spinlock_lock.1:2"}
 P=$(cd "$(dirname "$0")" && pwd)
 W=${W:-/tmp/ena-proof/rx}; mkdir -p "$W"
 RM=""
@@ -30,17 +36,17 @@ for V in 0 1; do
     [ -f "$W/r$V.gb" ] || { echo "BUILD FAILED, refusing to run stale binaries"; exit 1; }
   ( ulimit -v 32000000; "$B/goto-instrument" $RM "$W/r$V.gb" "$W/r${V}r.gb" >/dev/null 2>&1 )
 done
-( ulimit -v 150000000; timeout 3600 "$B/cbmc" "$W/r0r.gb" --bounds-check \
+( ulimit -v 150000000; timeout 3600 "$B/cbmc" $SPIN_CAP "$W/r0r.gb" --bounds-check \
   --pointer-check --unwinding-assertions $FLAGS ) > "$W/rx.log" 2>&1
 sed -E 's/\] line [0-9]+ /] /' "$W/rx.log" | grep -E 'RX_|^VERIFICATION'
 echo "other FAILURE: $(grep -E ': FAILURE$' "$W/rx.log" | grep -vcE 'RX_|rte_log_register|rte_pci_register')"
 echo "no-body reached: $(grep -E 'no body for callee.*FAILURE' "$W/rx.log" | grep -vcE 'rte_log_register|rte_pci_register')"
 echo "unwinding FAILURE: $(grep -cE 'unwind.*: FAILURE$' "$W/rx.log")   UNKNOWN: $(grep -c ': UNKNOWN$' "$W/rx.log")"
-( ulimit -v 150000000; timeout 3600 "$B/cbmc" "$W/r1r.gb" $FLAGS ) > "$W/rx_vac.log" 2>&1
+( ulimit -v 150000000; timeout 3600 "$B/cbmc" $SPIN_CAP "$W/r1r.gb" $FLAGS ) > "$W/rx_vac.log" 2>&1
 sed -E 's/\] line [0-9]+ /] /' "$W/rx_vac.log" | grep 'vacuity witness'
 # recv's loops are bounded by the device completion count; one unwinding short
 # must fail an unwinding assertion, so the bound above is complete
-( ulimit -v 90000000; timeout 900 "$B/cbmc" "$W/r0r.gb" --unwinding-assertions \
+( ulimit -v 90000000; timeout 900 "$B/cbmc" $SPIN_CAP "$W/r0r.gb" --unwinding-assertions \
   --unwind 3 --unwindset eth_ena_recv_pkts.0:1,ena_rx_mbuf.0:2,ena_com_cdesc_rx_pkt_get.0:3 \
   $SOLVER --max-field-sensitivity-array-size 256 --slice-formula ) 2>&1 |
   grep -qE 'unwinding assertion.*FAILURE' &&

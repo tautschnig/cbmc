@@ -30,6 +30,12 @@ set -u
 SOLVER=${SOLVER:---sat-solver minisat2}
 DPDK=${DPDK:-/tmp/dpdk}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
+# Cap the two spin loops of DPDK's x86 rte_spinlock_lock asm.  Under the
+# asm-semantics build symex cannot decide them and unwinds both to --unwind
+# (cbmc-limitations/asm_spinlock_unwinds.md).  Sound with unwinding
+# assertions on (the CBMC 6 default): a lock that could spin fails one.
+# SPIN_CAP= disables it.
+SPIN_CAP=${SPIN_CAP-"--unwindset rte_spinlock_lock.0:2,rte_spinlock_lock.1:2"}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ena-induction}
 RING=${RING:-4}
@@ -47,7 +53,7 @@ cc()   { ( ulimit -v 32000000; "$BIN/goto-cc" $(cat "$FLAGS") -DPEDANTIC "$@" );
 inst() { ( ulimit -v 32000000; "$BIN/goto-instrument" "$@" >/dev/null 2>&1 ); }
 run()  { local log=$1; shift
          rm -f "$log"
-         ( ulimit -v 150000000; timeout "$TO" "$BIN/cbmc" "$@" $COMMON > "$log" 2>&1 )
+         ( ulimit -v 150000000; timeout "$TO" "$BIN/cbmc" $SPIN_CAP "$@" $COMMON > "$log" 2>&1 )
          grep -qE '^VERIFICATION' "$log" || echo "NO VERDICT" >> "$log"; }
 
 # Removed bodies, by harness.  Anything removed that is actually reached is
@@ -67,7 +73,7 @@ RM_MBUF=""; for f in rte_pktmbuf_free rte_pktmbuf_free_seg rte_pktmbuf_prefree_s
   rte_mbuf_raw_free; do RM_MBUF="$RM_MBUF --remove-function-body $f"; done
 
 echo "ENA TX induction: ring $RING, burst <= $BURST, segments <= $SEGS"
-echo "cbmc: $("$BIN/cbmc" --version)   flags: $COMMON"
+echo "cbmc: $("$BIN/cbmc" $SPIN_CAP --version)   flags: $COMMON"
 
 # ---- d: device init (the LLQ geometry and sgl_size facts INV_DEV_LLQ uses) --
 RM_LLQ=$(cat "$HERE/llq_path_rm.txt")

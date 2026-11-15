@@ -10,6 +10,12 @@ set -u
 SOLVER=${SOLVER:---sat-solver minisat2}
 RING=${RING:-4}; BURST=${BURST:-1}
 B=/home/ubuntu/cbmc-github.git/build/bin; P=/home/ubuntu/cbmc-github.git/integration/linux/scan/amzn-drivers/proof
+# Cap the two spin loops of DPDK's x86 rte_spinlock_lock asm.  Under the
+# asm-semantics build symex cannot decide them and unwinds both to --unwind
+# (cbmc-limitations/asm_spinlock_unwinds.md).  Sound with unwinding
+# assertions on (the CBMC 6 default): a lock that could spin fails one.
+# SPIN_CAP= disables it.
+SPIN_CAP=${SPIN_CAP-"--unwindset rte_spinlock_lock.0:2,rte_spinlock_lock.1:2"}
 W=${W:-/tmp/ena-proof/s1var}; mkdir -p $W
 RM=""; for f in rte_pktmbuf_free rte_pktmbuf_free_seg rte_pktmbuf_prefree_seg rte_pktmbuf_alloc_bulk rte_pktmbuf_detach rte_mempool_put rte_mempool_put_bulk rte_mempool_get_bulk rte_mempool_generic_put rte_mempool_generic_get rte_mempool_do_generic_put rte_mempool_do_generic_get rte_mempool_cache_flush rte_mbuf_raw_free; do RM="$RM --remove-function-body $f"; done
 name=$1; shift
@@ -17,6 +23,6 @@ name=$1; shift
 ( ulimit -v 32000000; $B/goto-instrument $RM $W/$name.gb $W/${name}_rm.gb >/dev/null 2>&1 )
 U="--unwind $((RING + 6)) --unwindset eth_ena_xmit_pkts.0:$((BURST+2)),ena_tx_map_mbuf.0:3,memcmp.0:9"
 case "$*" in *VACUITY_CHECK=1*) CH="--no-standard-checks";; *) CH="--bounds-check --pointer-check --unwinding-assertions";; esac
-( ulimit -v 150000000; timeout 3600 $B/cbmc $W/${name}_rm.gb $CH $U $SOLVER --max-field-sensitivity-array-size 256 --slice-formula --trace ) > $W/$name.log 2>&1
+( ulimit -v 150000000; timeout 3600 $B/cbmc $SPIN_CAP $W/${name}_rm.gb $CH $U $SOLVER --max-field-sensitivity-array-size 256 --slice-formula --trace ) > $W/$name.log 2>&1
 echo "== $name: $(grep -E '^VERIFICATION' $W/$name.log)"
 sed -E 's/\] line [0-9]+ /] /' $W/$name.log | grep -E ': (SUCCESS|FAILURE)$' | grep -E 'main\.|FREE_ONCE|RELEASE|witness|unwind.*FAIL|no body.*FAIL' | sort -u

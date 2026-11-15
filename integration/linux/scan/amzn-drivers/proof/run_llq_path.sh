@@ -12,6 +12,12 @@ SOLVER=${SOLVER:---sat-solver minisat2}
 MODE=${1:-xmit}; shift || true
 RING=${RING:-8}
 B=${B:-/home/ubuntu/cbmc-github.git/build/bin}
+# Cap the two spin loops of DPDK's x86 rte_spinlock_lock asm.  Under the
+# asm-semantics build symex cannot decide them and unwinds both to --unwind
+# (cbmc-limitations/asm_spinlock_unwinds.md).  Sound with unwinding
+# assertions on (the CBMC 6 default): a lock that could spin fails one.
+# SPIN_CAP= disables it.
+SPIN_CAP=${SPIN_CAP-"--unwindset rte_spinlock_lock.0:2,rte_spinlock_lock.1:2"}
 P=$(cd "$(dirname "$0")" && pwd)
 W=${W:-/tmp/ena-proof/llq-$MODE}
 mkdir -p "$W"
@@ -30,7 +36,7 @@ build() {
       "$W/raw.gb" "$W/$1.gb" >/dev/null 2>&1 ) || exit 1
 }
 build main
-( ulimit -v 150000000; timeout 3600 "$B/cbmc" "$W/main.gb" --bounds-check \
+( ulimit -v 150000000; timeout 3600 "$B/cbmc" $SPIN_CAP "$W/main.gb" --bounds-check \
   --pointer-check --unwinding-assertions $FLAGS ) > "$W/main.log" 2>&1
 # in devinit mode everything after device init is unreachable, so only the
 # DEVINIT obligations and the init witness mean anything
@@ -41,5 +47,5 @@ echo "other FAILURE: $(grep -E ': FAILURE$' "$W/main.log" | grep -vc 'main\.asse
 echo "unwinding: $(grep -cE 'unwind.*: SUCCESS$' "$W/main.log") SUCCESS, $(grep -cE 'unwind.*: FAILURE$' "$W/main.log") FAILURE"
 echo "no-body FAILURE: $(grep -cE 'no body for callee.*FAILURE' "$W/main.log")"
 DEFS="${DEFS/-DVACUITY_CHECK=0/-DVACUITY_CHECK=1}"; build vac
-( ulimit -v 150000000; timeout 3600 "$B/cbmc" "$W/vac.gb" $FLAGS ) > "$W/vac.log" 2>&1
+( ulimit -v 150000000; timeout 3600 "$B/cbmc" $SPIN_CAP "$W/vac.gb" $FLAGS ) > "$W/vac.log" 2>&1
 sed -E 's/\] line [0-9]+ /] /' "$W/vac.log" | grep -E "$VSEL"

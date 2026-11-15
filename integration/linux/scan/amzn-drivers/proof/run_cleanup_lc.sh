@@ -10,6 +10,12 @@ set -u
 SOLVER=${SOLVER:---sat-solver minisat2}
 RING=${RING:-8}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
+# Cap the two spin loops of DPDK's x86 rte_spinlock_lock asm.  Under the
+# asm-semantics build symex cannot decide them and unwinds both to --unwind
+# (cbmc-limitations/asm_spinlock_unwinds.md).  Sound with unwinding
+# assertions on (the CBMC 6 default): a lock that could spin fails one.
+# SPIN_CAP= disables it.
+SPIN_CAP=${SPIN_CAP-"--unwindset rte_spinlock_lock.0:2,rte_spinlock_lock.1:2"}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ena-proof/cleanup-lc}; mkdir -p "$OUT"
 sed "s/RING_SIZE_INV/$RING/g" "$HERE/cleanup_loop_contract.json.in" \
@@ -35,7 +41,7 @@ for V in 0 1; do
       --dfcc main --apply-loop-contracts "$OUT/c${V}_lib.gb" "$OUT/c${V}_lc.gb" ) \
       > "$OUT/inst$V.log" 2>&1 || { echo "instrumentation failed:"; tail -5 "$OUT/inst$V.log"; exit 1; }
 done
-( ulimit -v 150000000; timeout ${TO:-3000} "$BIN/cbmc" "$OUT/c0_lc.gb" \
+( ulimit -v 150000000; timeout ${TO:-3000} "$BIN/cbmc" $SPIN_CAP "$OUT/c0_lc.gb" \
   --bounds-check --pointer-check --unwinding-assertions $SOLVER \
   --max-field-sensitivity-array-size 256 --slice-formula ) > "$OUT/cl.log" 2>&1
 grep -qE '^VERIFICATION' "$OUT/cl.log" || { echo "NO VERDICT"; tail -3 "$OUT/cl.log"; }
@@ -43,6 +49,6 @@ sed -E 's/\] line [0-9]+ /] /' "$OUT/cl.log" |
   grep -E 'main\.assertion|FREE_ONCE|^VERIFICATION|loop_(invariant|assigns|decreases)|Check (invariant|decreases|assigns)' | sort -u
 echo "other FAILURE: $(grep -E ': FAILURE$' "$OUT/cl.log" | grep -vcE 'main\.assertion|FREE_ONCE')"
 echo "UNKNOWN: $(grep -c ': UNKNOWN$' "$OUT/cl.log")   ERROR: $(grep -c ': ERROR$' "$OUT/cl.log")"
-( ulimit -v 150000000; timeout ${TO:-3000} "$BIN/cbmc" "$OUT/c1_lc.gb" \
+( ulimit -v 150000000; timeout ${TO:-3000} "$BIN/cbmc" $SPIN_CAP "$OUT/c1_lc.gb" \
   $SOLVER --max-field-sensitivity-array-size 256 --slice-formula ) > "$OUT/cl_vac.log" 2>&1
 sed -E 's/\] line [0-9]+ /] /' "$OUT/cl_vac.log" | grep 'vacuity witness'

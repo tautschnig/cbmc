@@ -8,6 +8,12 @@ set -u
 #   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
 SOLVER=${SOLVER:---sat-solver minisat2}
 B=${B:-/home/ubuntu/cbmc-github.git/build/bin}
+# Cap the two spin loops of DPDK's x86 rte_spinlock_lock asm.  Under the
+# asm-semantics build symex cannot decide them and unwinds both to --unwind
+# (cbmc-limitations/asm_spinlock_unwinds.md).  Sound with unwinding
+# assertions on (the CBMC 6 default): a lock that could spin fails one.
+# SPIN_CAP= disables it.
+SPIN_CAP=${SPIN_CAP-"--unwindset rte_spinlock_lock.0:2,rte_spinlock_lock.1:2"}
 P=$(cd "$(dirname "$0")" && pwd)
 W=${W:-/tmp/ena-proof/doorbell}
 mkdir -p "$W"
@@ -19,7 +25,7 @@ run() {
   ( cd /tmp/dpdk/build-ql && ulimit -v 16000000 &&
     "$B/goto-cc" $(cat /tmp/ena-proof/flags.txt) -DPEDANTIC "$@" \
       "$P/harness_doorbell_budget.c" -o "$W/$name.gb" ) || return 1
-  ( ulimit -v 60000000; timeout 1800 "$B/cbmc" "$W/$name.gb" $FLAGS --trace ) \
+  ( ulimit -v 60000000; timeout 1800 "$B/cbmc" $SPIN_CAP "$W/$name.gb" $FLAGS --trace ) \
     > "$W/$name.log" 2>&1
   printf '%-34s %s   other failures: %s\n' "$name" \
     "$(grep -E '^VERIFICATION' "$W/$name.log")" \

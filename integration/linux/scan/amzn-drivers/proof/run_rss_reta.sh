@@ -8,6 +8,12 @@ set -u
 #   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
 SOLVER=${SOLVER:---sat-solver minisat2}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
+# Cap the two spin loops of DPDK's x86 rte_spinlock_lock asm.  Under the
+# asm-semantics build symex cannot decide them and unwinds both to --unwind
+# (cbmc-limitations/asm_spinlock_unwinds.md).  Sound with unwinding
+# assertions on (the CBMC 6 default): a lock that could spin fails one.
+# SPIN_CAP= disables it.
+SPIN_CAP=${SPIN_CAP-"--unwindset rte_spinlock_lock.0:2,rte_spinlock_lock.1:2"}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ena-proof/rss}; mkdir -p "$OUT"
 rm -f "$OUT"/g0.gb "$OUT"/g1.gb
@@ -29,7 +35,7 @@ for V in 0 1; do
   [ -f "$OUT/g$V.gb" ] || { echo "BUILD FAILED, refusing to run stale binaries"; exit 1; }
   ( ulimit -v 32000000; "$BIN/goto-instrument" $RM --replace-calls ena_mp_indirect_table_get:model_indirect_table_get "$OUT/g$V.gb" "$OUT/r$V.gb" >/dev/null 2>&1 )
 done
-( ulimit -v 150000000; timeout ${TO:-2400} "$BIN/cbmc" "$OUT/r0.gb" --bounds-check \
+( ulimit -v 150000000; timeout ${TO:-2400} "$BIN/cbmc" $SPIN_CAP "$OUT/r0.gb" --bounds-check \
   --pointer-check $FLAGS ) > "$OUT/x.log" 2>&1
 grep -qE '^VERIFICATION' "$OUT/x.log" || { echo "NO VERDICT"; tail -3 "$OUT/x.log"; }
 grep -E '^VERIFICATION' "$OUT/x.log"
@@ -37,5 +43,5 @@ echo "out-of-bounds reads of indirect_table:"
 sed -E 's/\] line [0-9]+ /] /' "$OUT/x.log" | grep -E "indirect_table.*: (FAILURE|SUCCESS)" | sort -u
 echo "all failing properties:"
 sed -E 's/\] line [0-9]+ /] /' "$OUT/x.log" | grep -E ': FAILURE$' | sort -u | head -6
-( ulimit -v 150000000; timeout ${TO:-2400} "$BIN/cbmc" "$OUT/r1.gb" --no-standard-checks $FLAGS ) > "$OUT/v.log" 2>&1
+( ulimit -v 150000000; timeout ${TO:-2400} "$BIN/cbmc" $SPIN_CAP "$OUT/r1.gb" --no-standard-checks $FLAGS ) > "$OUT/v.log" 2>&1
 sed -E 's/\] line [0-9]+ /] /' "$OUT/v.log" | grep 'vacuity witness'

@@ -13,6 +13,12 @@
 set -eu
 DPDK=${DPDK:-/tmp/dpdk}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
+# Cap the two spin loops of DPDK's x86 rte_spinlock_lock asm.  Under the
+# asm-semantics build symex cannot decide them and unwinds both to --unwind
+# (cbmc-limitations/asm_spinlock_unwinds.md).  Sound with unwinding
+# assertions on (the CBMC 6 default): a lock that could spin fails one.
+# SPIN_CAP= disables it.
+SPIN_CAP=${SPIN_CAP-"--unwindset rte_spinlock_lock.0:2,rte_spinlock_lock.1:2"}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ena-proof}
 EXTRA_CBMC=${EXTRA_CBMC:-}
@@ -62,7 +68,7 @@ done
 
 rm -f "$OUT/item1.log" "$OUT/item1_vac.log"
 ( ulimit -v 60000000
-  timeout 2400 "$BIN/cbmc" "$OUT/i1_lc.gb" --bounds-check --pointer-check \
+  timeout 2400 "$BIN/cbmc" $SPIN_CAP "$OUT/i1_lc.gb" --bounds-check --pointer-check \
     --no-standard-checks \
     --unwindset ena_tx_map_mbuf.0:$SEGBOUND --unwinding-assertions $SOLVER --max-field-sensitivity-array-size 256 --slice-formula $EXTRA_CBMC \
     > "$OUT/item1.log" 2>&1 ) || true
@@ -76,7 +82,7 @@ grep -E '^VERIFICATION|^\*\* ' "$OUT/item1.log"
 echo "obligations:"; grep -E 'main\.assertion' "$OUT/item1.log" | sed 's/^/  /'
 echo "vacuity witness (must be FAILURE, else the accept path is unreachable):"
 ( ulimit -v 60000000
-  timeout 900 "$BIN/cbmc" "$OUT/i1_vac_lc.gb" --bounds-check --pointer-check \
+  timeout 900 "$BIN/cbmc" $SPIN_CAP "$OUT/i1_vac_lc.gb" --bounds-check --pointer-check \
     --no-standard-checks --unwindset ena_tx_map_mbuf.0:$SEGBOUND $SOLVER --max-field-sensitivity-array-size 256 --slice-formula \
     > "$OUT/item1_vac.log" 2>&1 ) || true
 grep -E 'vacuity witness' "$OUT/item1_vac.log" | sed 's/^/  /' || echo "  (not run)"

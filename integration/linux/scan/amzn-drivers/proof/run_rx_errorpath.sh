@@ -8,6 +8,12 @@ set -u
 #   SOLVER='$SOLVER'   or   SOLVER=--bitwuzla
 SOLVER=${SOLVER:---sat-solver minisat2}
 BIN=${BIN:-/home/ubuntu/cbmc-github.git/build/bin}
+# Cap the two spin loops of DPDK's x86 rte_spinlock_lock asm.  Under the
+# asm-semantics build symex cannot decide them and unwinds both to --unwind
+# (cbmc-limitations/asm_spinlock_unwinds.md).  Sound with unwinding
+# assertions on (the CBMC 6 default): a lock that could spin fails one.
+# SPIN_CAP= disables it.
+SPIN_CAP=${SPIN_CAP-"--unwindset rte_spinlock_lock.0:2,rte_spinlock_lock.1:2"}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-/tmp/ena-proof/rx-err}; mkdir -p "$OUT"
 RING=${RING:-4}
@@ -25,7 +31,7 @@ run() {
       "$HERE/harness_rx_errorpath.c" "$HERE/rdtsc_stub.c" -o "$OUT/$tag.gb" \
       2>&1 | grep -i error | head ) || return 1
   ( ulimit -v 32000000; "$BIN/goto-instrument" $RM "$OUT/$tag.gb" "$OUT/${tag}_rm.gb" >/dev/null 2>&1 )
-  ( ulimit -v 60000000; timeout 1200 "$BIN/cbmc" "$OUT/${tag}_rm.gb" --bounds-check \
+  ( ulimit -v 60000000; timeout 1200 "$BIN/cbmc" $SPIN_CAP "$OUT/${tag}_rm.gb" --bounds-check \
     --pointer-check --unwinding-assertions --unwind $((RING + 3)) $SOLVER \
     --max-field-sensitivity-array-size 256 --slice-formula ) > "$OUT/$tag.log" 2>&1
   echo "== $tag: $(grep -E '^VERIFICATION' "$OUT/$tag.log")"
