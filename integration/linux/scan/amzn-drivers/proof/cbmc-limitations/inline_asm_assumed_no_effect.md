@@ -235,6 +235,28 @@ The harness workaround described above (use the non-atomic form in setup
 code) is therefore no longer necessary for the supported instructions, though
 it remains harmless.
 
+### Re-verification of this corpus under the fixed semantics (2026-11-15)
+
+The audit above concluded that no obligation was invalidated, partly because
+the two guards that read atomic state "fail safe": with `outstanding_cmds`
+stuck at zero the queue-full guard never refused, which *widened* the
+explored space. Under the fix those guards are live, which **narrows** it --
+the direction that can hide a path -- so the affected harnesses were re-run
+with the fixed build rather than assumed still sound:
+
+* `asm_dpdk_atomic.c` now reports "does nothing" FAILURE and "is observed"
+  SUCCESS, confirming `rte_atomic32_inc` is modelled;
+* `harness_admin_cq.c`: `AC_HEAD`, `AC_PHASE`, `AC_HEADS_AGREE` and
+  `AC_UNOCCUPIED` all still SUCCESS, three witnesses still FAILING, no other
+  failing property -- unchanged;
+* `harness_conc_admin.c`: `CC2_NO_STALE_CQE` still fails in the configuration
+  that reproduces the finding and holds in the other, witnesses still
+  FAILING -- unchanged.
+
+So the conclusion stands, now for a better reason: it holds with the atomics
+modelled rather than because they were invisible. The whole corpus is being
+re-swept under the fixed build.
+
 A contract mechanism for inline assembly -- a way to state the effect of a
 statement CBMC cannot interpret, so a proof can still go through -- is designed
 in `doc/architectural/inline-assembly.md` but not yet implemented.
