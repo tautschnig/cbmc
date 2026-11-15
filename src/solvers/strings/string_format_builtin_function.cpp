@@ -11,7 +11,9 @@ Author: Romain Brenguier, Joel Allred
 
 #include "string_format_builtin_function.h"
 
+#include <util/arith_tools.h>
 #include <util/bitvector_expr.h>
+#include <util/config.h>
 #include <util/floatbv_expr.h>
 #include <util/ieee_float.h>
 #include <util/message.h>
@@ -744,6 +746,98 @@ static exprt hex_float_padding(
   return plus_exprt{padding, p.index(static_cast<int>(digits - significant))};
 }
 
+/// The grouping of the `,` flag in a call of String.format: whether the
+/// locale is known (see java_locale_symbolst::numbers), and then the
+/// possible group sizes and the one of the call.
+struct format_groupingt
+{
+  bool known = false;
+  std::vector<unsigned> sizes;
+  exprt size;
+};
+
+/// The integer part of \p magnitude (the digits at its start) with the
+/// separators of \p grouping, as Formatter.localizedMagnitude inserts them
+/// (none for a group size of 0 or 1), the separators as ',' (which
+/// localize_numbers replaces by the separator of the locale). An integer
+/// part of more than 19 digits (only that of a large %f or %g) gives any
+/// string.
+static array_string_exprt group_digits(
+  format_piecest &p,
+  const array_string_exprt &magnitude,
+  const format_groupingt &grouping)
+{
+  const std::size_t max_digits = 19;
+  const exprt length = p.length(magnitude);
+  const auto is_digit = [&](std::size_t i)
+  {
+    const exprt c = magnitude[p.index(static_cast<long>(i))];
+    return and_exprt{
+      binary_relation_exprt{c, ID_ge, p.character('0')},
+      binary_relation_exprt{c, ID_le, p.character('9')}};
+  };
+  // whether the integer part has n digits, for each n
+  std::vector<exprt> digits_are;
+  exprt digits_before = true_exprt{};
+  for(std::size_t n = 0; n <= max_digits; ++n)
+  {
+    const exprt at_n = p.index(static_cast<long>(n));
+    digits_are.push_back(and_exprt{
+      digits_before,
+      or_exprt{
+        equal_exprt{length, at_n},
+        and_exprt{
+          binary_relation_exprt{length, ID_gt, at_n},
+          not_exprt{is_digit(n)}}}});
+    digits_before = and_exprt{
+      digits_before, binary_relation_exprt{length, ID_gt, at_n}, is_digit(n)};
+  }
+  const exprt beyond = digits_before;
+
+  // the grouped integer part (its characters for each group size and
+  // number of digits), then the rest of the magnitude
+  const array_string_exprt grouped = p.fresh();
+  exprt grouped_length = p.index(0);
+  exprt rest_start = p.index(0);
+  for(const unsigned size : grouping.sizes)
+  {
+    if(size < 2)
+      continue;
+    for(std::size_t n = size + 1; n <= max_digits; ++n)
+    {
+      const std::size_t count = (n - 1) / size;
+      const exprt holds = and_exprt{
+        equal_exprt{grouping.size, from_integer(size, grouping.size.type())},
+        digits_are[n]};
+      grouped_length =
+        if_exprt{holds, p.index(static_cast<long>(n + count)), grouped_length};
+      rest_start = if_exprt{holds, p.index(static_cast<long>(n)), rest_start};
+      exprt::operandst characters;
+      std::size_t k = 0;
+      for(std::size_t j = 0; j < n; ++j)
+      {
+        characters.push_back(equal_exprt{
+          grouped[p.index(static_cast<long>(k++))],
+          magnitude[p.index(static_cast<long>(j))]});
+        // (Formatter's condition, with the point at n)
+        if(j != n - 1 && (n - j) % size == 1)
+        {
+          characters.push_back(equal_exprt{
+            grouped[p.index(static_cast<long>(k++))], p.character(',')});
+        }
+      }
+      p.constraints.existential.push_back(
+        implies_exprt{holds, conjunction(characters)});
+    }
+  }
+  // beyond the digits modelled, any string
+  p.constraints.existential.push_back(implies_exprt{
+    not_exprt{beyond}, equal_exprt{p.length(grouped), grouped_length}});
+  const array_string_exprt rest =
+    p.substring(magnitude, if_exprt{beyond, length, rest_start}, length);
+  return p.concat({grouped, rest});
+}
+
 /// The string of a specifier with flags, a width or a precision (see
 /// format_specifiert::has_decoration): its core, the string of the
 /// conversion without them (see add_axioms_for_format_specifier), with the
@@ -751,7 +845,7 @@ static exprt hex_float_padding(
 /// java.util.Formatter adds (see java_format_decorate, whose versions it
 /// follows: where they differ, either), and the upper case of the case
 /// families \p cases (see add_axioms_for_format_specifier for
-/// \p call_text).
+/// \p call_text), with the separators of \p grouping for `,`.
 static std::pair<array_string_exprt, string_constraintst>
 add_axioms_for_decorated_specifier(
   string_constraint_generatort &generator,
@@ -761,7 +855,8 @@ add_axioms_for_decorated_specifier(
   const typet &char_type,
   message_handlert &message_handler,
   const std::vector<java_case_familyt> &cases,
-  const std::optional<array_string_exprt> &call_text)
+  const std::optional<array_string_exprt> &call_text,
+  const format_groupingt &grouping)
 {
   using namespace java_format_flagst;
   format_piecest p{generator, index_type, char_type, message_handler};
@@ -824,8 +919,8 @@ add_axioms_for_decorated_specifier(
   bool number_body_known = true;
   if(c == 'd' || is_float)
   {
-    if(has(group))
-      number_body_known = false; // the grouping depends on the locale
+    if(has(group) && !grouping.known)
+      number_body_known = false; // the grouping of any locale
     else
     {
       const exprt negative = equal_exprt{core[p.index(0)], p.character('-')};
@@ -857,6 +952,10 @@ add_axioms_for_decorated_specifier(
         magnitude = p.choice(
           {{or_exprt{nan, infinite}, magnitude_plain}, {true_exprt{}, dotted}});
       }
+      // the separators of `,` in the integer part (before the zeros, which
+      // Formatter inserts after them)
+      if(has(group))
+        magnitude = group_digits(p, magnitude, grouping);
       // the sign
       std::vector<std::pair<exprt, array_string_exprt>> leads;
       leads.emplace_back(negative, p.constant(has(parentheses) ? "(" : "-"));
@@ -1070,7 +1169,8 @@ static bool localizes_numbers(const format_specifiert &fs)
 
 /// Axioms that \p res is \p body with the digits and the decimal separator
 /// of a locale, as Formatter.localizedMagnitude gives them: an ASCII digit
-/// d becomes \p zero + d, and '.' becomes \p separator. Where
+/// d becomes \p zero + d, '.' becomes \p separator, and ',' (of `,`, see
+/// group_digits) becomes \p grouping. Where
 /// \p all_characters holds (the Long of a %tQ or %ts), every character c
 /// becomes \p zero + (c - '0'), as for the '-' of a negative %tQ. (The
 /// strings of null, NaN and Infinity, and the signs and spaces, have no
@@ -1082,6 +1182,7 @@ static void localize_numbers(
   const exprt &all_characters,
   const exprt &zero,
   const exprt &separator,
+  const exprt &grouping,
   string_constraintst &constraints,
   message_handlert &message_handler)
 {
@@ -1102,7 +1203,10 @@ static void localize_numbers(
         binary_relation_exprt{c, ID_ge, from_integer('0', char_type)},
         binary_relation_exprt{c, ID_le, from_integer('9', char_type)}}},
     shifted,
-    if_exprt{equal_exprt{c, from_integer('.', char_type)}, separator, c}};
+    if_exprt{
+      equal_exprt{c, from_integer('.', char_type)},
+      separator,
+      if_exprt{equal_exprt{c, from_integer(',', char_type)}, grouping, c}}};
   constraints.universal.emplace_back(
     qvar,
     zero_if_negative(length),
@@ -1142,21 +1246,42 @@ static std::pair<exprt, string_constraintst> add_axioms_for_format(
   // the slot of the next %s or %h (see is_call_slot)
   std::size_t slot = 0;
 
-  // the zero digit and the decimal separator of the locale, the same for
-  // the whole call (one of the pairs of the locale where they are known)
+  // the zero digit, the decimal separator and the grouping of the locale,
+  // the same for the whole call (one of the entries of the locale where
+  // they are known)
   const symbol_exprt zero = generator.fresh_symbol("format_zero", char_type);
   const symbol_exprt separator =
     generator.fresh_symbol("format_decimal_separator", char_type);
-  if(locale.numbers.has_value() && !locale.numbers_are_ascii())
+  const symbol_exprt grouping_separator =
+    generator.fresh_symbol("format_grouping_separator", char_type);
+  format_groupingt grouping;
+  grouping.size = generator.fresh_symbol("format_group_size", char_type);
+  // whether the separators of `,` are other than ','
+  bool groups_by_other = !locale.numbers.has_value();
+  if(locale.numbers.has_value())
   {
-    exprt::operandst pairs;
+    grouping.known = true;
+    exprt::operandst entries;
     for(const java_number_symbolst &numbers : *locale.numbers)
     {
-      pairs.push_back(and_exprt{
-        equal_exprt{zero, from_integer(numbers.zero, char_type)},
-        equal_exprt{separator, from_integer(numbers.decimal, char_type)}});
+      entries.push_back(conjunction(
+        {equal_exprt{zero, from_integer(numbers.zero, char_type)},
+         equal_exprt{separator, from_integer(numbers.decimal, char_type)},
+         equal_exprt{
+           grouping_separator, from_integer(numbers.grouping, char_type)},
+         equal_exprt{
+           grouping.size, from_integer(numbers.group_size, char_type)}}));
+      if(
+        std::find(
+          grouping.sizes.begin(), grouping.sizes.end(), numbers.group_size) ==
+        grouping.sizes.end())
+      {
+        grouping.sizes.push_back(numbers.group_size);
+      }
+      if(numbers.group_size >= 2 && numbers.grouping != ',')
+        groups_by_other = true;
     }
-    constraints.existential.push_back(disjunction(pairs));
+    constraints.existential.push_back(disjunction(entries));
   }
 
   for(const format_elementt &fe : format_strings)
@@ -1197,7 +1322,8 @@ static std::pair<exprt, string_constraintst> add_axioms_for_format(
                                             char_type,
                                             message_handler,
                                             locale.cases,
-                                            call_text)
+                                            call_text,
+                                            grouping)
                                         : add_axioms_for_format_specifier(
                                             generator,
                                             fs,
@@ -1208,8 +1334,12 @@ static std::pair<exprt, string_constraintst> add_axioms_for_format(
                                             locale.cases,
                                             call_text);
       merge(constraints, std::move(result.second));
-      // the digits and the decimal separator of the locale
-      if(localizes_numbers(fs) && !locale.numbers_are_ascii())
+      // the digits, the decimal separator and the grouping separator of
+      // the locale
+      const bool groups = fs.flag.find(',') != std::string::npos;
+      if(
+        localizes_numbers(fs) &&
+        (!locale.numbers_are_ascii() || (groups && groups_by_other)))
       {
         const array_string_exprt localized =
           array_pool.fresh_string(index_type, char_type);
@@ -1220,6 +1350,7 @@ static std::pair<exprt, string_constraintst> add_axioms_for_format(
           fs.dt ? kind_is(string_arg, kind_long) : exprt{false_exprt{}},
           zero,
           separator,
+          grouping_separator,
           constraints,
           message_handler);
         result.first = localized;
@@ -2034,17 +2165,75 @@ parse_error_text(const std::pair<char, std::string> &error)
   return text;
 }
 
+/// Whether the integer part of what \p fs prints for \p arg (a %d, %f or %g
+/// of a number) may have two digits or more, which Formatter divides by
+/// the grouping size of the `,` flag: certainly for a %d of a Byte, Short,
+/// Integer or Long from 10 or to -10, and a %f of a finite Float or Double
+/// from 10 or to -10; maybe (where its rounding is not modelled here) for
+/// those from 9.5 or to -9.5, a %g of one, and a BigInteger or BigDecimal.
+static exprt integer_part_is_long(
+  string_constraint_generatort &generator,
+  const java_format_specifiert &fs,
+  const array_string_exprt &arg)
+{
+  const auto maybe = [&]()
+  { return generator.fresh_symbol("format_integer_part", bool_typet{}); };
+  if(fs.conversion == 'd')
+  {
+    const exprt value =
+      format_arg_from_string(arg, ID_int, generator.array_pool);
+    return or_exprt{
+      and_exprt{
+        kind_is_one_of(arg, integral_kinds),
+        or_exprt{
+          binary_relation_exprt{value, ID_ge, from_integer(10, value.type())},
+          binary_relation_exprt{
+            value, ID_le, from_integer(-10, value.type())}}},
+      and_exprt{kind_is(arg, kind_big_integer), maybe()}};
+  }
+  const floatbv_typet double_type =
+    ieee_float_spect::double_precision().to_type();
+  const exprt value = typecast_exprt{
+    typecast_exprt{
+      format_arg_from_string(arg, ID_int, generator.array_pool), bv_typet{64}},
+    double_type};
+  const auto magnitude_from = [&](double bound)
+  {
+    ieee_floatt low{
+      ieee_float_spect::double_precision(), ieee_floatt::ROUND_TO_EVEN};
+    low.from_double(-bound);
+    ieee_floatt high{
+      ieee_float_spect::double_precision(), ieee_floatt::ROUND_TO_EVEN};
+    high.from_double(bound);
+    return or_exprt{
+      binary_relation_exprt{value, ID_ge, high.to_expr()},
+      binary_relation_exprt{value, ID_le, low.to_expr()}};
+  };
+  const exprt float_kind =
+    kind_is_one_of(arg, std::string{kind_float, kind_double});
+  const exprt long_float =
+    fs.conversion == 'f'
+      ? exprt{or_exprt{
+          magnitude_from(10), and_exprt{magnitude_from(9.5), maybe()}}}
+      : exprt{and_exprt{magnitude_from(9.5), maybe()}};
+  return or_exprt{
+    and_exprt{float_kind, long_float},
+    and_exprt{kind_is(arg, kind_big_decimal), maybe()}};
+}
+
 /// The errors that the print step of java.util.Formatter may raise for the
 /// specifier \p fs, as pairs of a condition and the text of the error (see
 /// add_axioms_for_format_error), in the order of Formatter. \p n is the
-/// number of arguments and \p args the encoded ones (see kind_null).
+/// number of arguments and \p args the encoded ones (see kind_null), and
+/// \p locale the locale of the call.
 /// \param generator: constraint generator, for fresh symbols
 static std::vector<std::pair<exprt, format_error_textt>> print_errors(
   string_constraint_generatort &generator,
   const java_format_specifiert &fs,
   const exprt &n,
   const std::vector<array_string_exprt> &args,
-  java_formatter_versiont version)
+  java_formatter_versiont version,
+  const java_locale_symbolst &locale)
 {
   namespace error = java_format_errort;
   using namespace java_format_flagst;
@@ -2174,7 +2363,50 @@ static std::vector<std::pair<exprt, format_error_textt>> print_errors(
     append_string(text, to_string(alternate_string ? alternate : bad_flags));
     errors.emplace_back(mismatch, text);
   }
+  // The `,` of a locale without grouping (grouping size 0) divides by zero
+  // in Java 8 (with CLDR), 9 and 10, for an integer part of two digits or
+  // more (Formatter.localizedMagnitude), as for hy and en-US-POSIX. Java 11
+  // and later print no separators.
+  bool may_lack_grouping = !locale.numbers.has_value();
+  bool lacks_grouping = false;
+  if(locale.numbers.has_value())
+  {
+    lacks_grouping = !locale.numbers->empty();
+    for(const java_number_symbolst &numbers : *locale.numbers)
+    {
+      if(numbers.group_size == 0)
+        may_lack_grouping = true;
+      else
+        lacks_grouping = false;
+    }
+  }
+  if(
+    (fs.flags & group) != 0 && (c == 'd' || c == 'f' || c == 'g') &&
+    version == java_formatter_versiont::JAVA_8 &&
+    config.java.may_run_on(8, 10) && may_lack_grouping)
+  {
+    const exprt no_grouping =
+      lacks_grouping
+        ? exprt{true_exprt{}}
+        : exprt{generator.fresh_symbol("format_no_grouping", bool_typet{})};
+    errors.emplace_back(
+      and_exprt{
+        no_grouping,
+        arg.has_value() ? integer_part_is_long(generator, fs, *arg) : beyond()},
+      with_argument(error::division_by_zero, ""));
+  }
   return errors;
+}
+
+java_locale_symbolst java_format_locale(const exprt &kind)
+{
+  const auto value = numeric_cast<mp_integer>(kind);
+  java_locale_symbolst locale = java_default_locale_symbols();
+  if(value.has_value() && *value == 1)
+    locale.numbers = {{{0x30, 0x2e, 0x2c, 3}}};
+  else if(!value.has_value() || *value != 0)
+    locale = java_any_locale_symbols();
+  return locale;
 }
 
 /// The first error of Java's String.format with a format string and its
@@ -2192,25 +2424,29 @@ static std::vector<std::pair<exprt, format_error_textt>> print_errors(
 /// - for an invalid code point, the argument;
 /// - for flags that do not fit the conversion, the conversion, the argument
 ///   (0 for an error of the parse) and the flags.
+/// - for a division by zero (the `,` of a locale without grouping, see
+///   print_errors), the argument.
 /// For a format string that is not constant, the result is unknown, and so
 /// it is for the errors of the arguments beyond those passed; the model
 /// checks such an error with the argument itself.
 /// \param f: function application with the result (its length and
-///   content), the format string, the number of arguments and the first ten
-///   arguments, encoded (see kind_null)
+///   content), the kind of the locale (see java_format_locale), the format
+///   string, the number of arguments and the first ten arguments, encoded
+///   (see kind_null)
 /// \return a return code
 std::pair<exprt, string_constraintst>
 string_constraint_generatort::add_axioms_for_format_error(
   const function_application_exprt &f)
 {
-  PRECONDITION(f.arguments().size() == 14);
+  PRECONDITION(f.arguments().size() == 15);
   string_constraintst constraints;
   const array_string_exprt res =
     array_pool.find(f.arguments()[1], f.arguments()[0]);
-  const array_string_exprt str = get_string_expr(array_pool, f.arguments()[2]);
-  const exprt &n = f.arguments()[3];
+  const java_locale_symbolst locale = java_format_locale(f.arguments()[2]);
+  const array_string_exprt str = get_string_expr(array_pool, f.arguments()[3]);
+  const exprt &n = f.arguments()[4];
   std::vector<array_string_exprt> args;
-  for(std::size_t i = 4; i < f.arguments().size(); ++i)
+  for(std::size_t i = 5; i < f.arguments().size(); ++i)
     args.push_back(get_string_expr(array_pool, f.arguments()[i]));
   const exprt return_code = from_integer(0, f.type());
   const exprt length = array_pool.get_or_create_length(str);
@@ -2265,7 +2501,7 @@ string_constraint_generatort::add_axioms_for_format_error(
     {
       if(!fs.takes_argument)
         continue;
-      for(auto &error : print_errors(*this, fs, n, args, versions[v]))
+      for(auto &error : print_errors(*this, fs, n, args, versions[v], locale))
       {
         constraints.existential.push_back(implies_exprt{
           and_exprt{this_version, not_exprt{earlier}, error.first},
@@ -2301,21 +2537,23 @@ static bool is_call_slot(const java_format_specifiert &fs)
 /// NullPointerException where toString gives null. The models make the
 /// calls and give their strings to the format function.
 /// \param f: function application with the result (its length and
-///   content), the format string, the number of arguments and the first ten
-///   arguments, encoded (see kind_null)
+///   content), the kind of the locale (see java_format_locale), the format
+///   string, the number of arguments and the first ten arguments, encoded
+///   (see kind_null)
 /// \return a return code
 std::pair<exprt, string_constraintst>
 string_constraint_generatort::add_axioms_for_format_calls(
   const function_application_exprt &f)
 {
-  PRECONDITION(f.arguments().size() == 14);
+  PRECONDITION(f.arguments().size() == 15);
   string_constraintst constraints;
   const array_string_exprt res =
     array_pool.find(f.arguments()[1], f.arguments()[0]);
-  const array_string_exprt str = get_string_expr(array_pool, f.arguments()[2]);
-  const exprt &n = f.arguments()[3];
+  const java_locale_symbolst locale = java_format_locale(f.arguments()[2]);
+  const array_string_exprt str = get_string_expr(array_pool, f.arguments()[3]);
+  const exprt &n = f.arguments()[4];
   std::vector<array_string_exprt> args;
-  for(std::size_t i = 4; i < f.arguments().size(); ++i)
+  for(std::size_t i = 5; i < f.arguments().size(); ++i)
     args.push_back(get_string_expr(array_pool, f.arguments()[i]));
   const exprt return_code = from_integer(0, f.type());
   const exprt length = array_pool.get_or_create_length(str);
@@ -2363,7 +2601,8 @@ string_constraint_generatort::add_axioms_for_format_calls(
     {
       if(!fs.takes_argument)
         continue;
-      for(const auto &error : print_errors(*this, fs, n, args, versions[v]))
+      for(const auto &error :
+          print_errors(*this, fs, n, args, versions[v], locale))
         earlier = or_exprt{earlier, error.first};
       if(!is_call_slot(fs) || slot >= format_call_slot_count)
       {

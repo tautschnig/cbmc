@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.general --java-locale en-US --max-nondet-string-length 40 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+%,g of 12345.678 is "12,345.7".

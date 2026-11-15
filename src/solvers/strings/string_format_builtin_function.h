@@ -146,4 +146,10 @@ std::optional<exprt> length_for_format_specifier(
   const typet &index_type,
   array_poolt &array_pool);
 
+/// The locale of a String.format of the models from its kind \p kind: 0
+/// for the default locale, 1 for null (ASCII numbers, grouped by ',' in
+/// threes, and the case conversion of the default locale), 2 for another
+/// (which the models do not know, so any).
+java_locale_symbolst java_format_locale(const exprt &kind);
+
 #endif // CPROVER_SOLVERS_STRINGS_STRING_FORMAT_BUILTIN_FUNCTION_H

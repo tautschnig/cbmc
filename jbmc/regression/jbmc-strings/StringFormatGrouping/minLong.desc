@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.minLong --java-locale en-US --max-nondet-string-length 40 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+%,d of Long.MIN_VALUE is "-9,223,372,036,854,775,808" (19 digits).

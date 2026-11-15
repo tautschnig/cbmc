@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.fixed --java-locale en-US --max-nondet-string-length 40 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+%,.2f of 1234567.891 is "1,234,567.89".

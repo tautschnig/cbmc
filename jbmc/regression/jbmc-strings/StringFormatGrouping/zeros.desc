@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.zeros --java-locale en-US --max-nondet-string-length 40 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+%,010d of 1234 is "000001,234": Formatter inserts the zeros after the
+separators, without grouping them.

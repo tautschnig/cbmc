@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.armenian9One --java-locale hy --java-version 9 --max-nondet-string-length 40 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+In hy, Java 9 prints %,d of 5 as "5": one digit is not divided.

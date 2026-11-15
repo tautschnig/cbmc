@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.german --java-locale de-DE --max-nondet-string-length 40 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+In de-DE, %,.2f of 1234567.891 is "1.234.567,89": the separators are
+points and the decimal separator a comma.

@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.french --java-locale fr-FR --max-nondet-string-length 40 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+In fr-FR, %,d of 1234 is "1 234" with U+00A0 (Java 8 to 12 and COMPAT)
+or U+202F (from Java 13).

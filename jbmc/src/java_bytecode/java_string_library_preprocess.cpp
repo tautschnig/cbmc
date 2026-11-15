@@ -1765,7 +1765,7 @@ void java_string_library_preprocesst::initialize_conversion_table()
     cprover_equivalent_to_java_string_returning_function[signature] =
       ID_cprover_string_format_locale_func;
     std::string calls =
-      "java::java.lang.String.cproverFormatCalls:(Ljava/lang/String;I";
+      "java::java.lang.String.cproverFormatCalls:(ILjava/lang/String;I";
     for(std::size_t i = 0; i < MAX_FORMAT_ARGS; ++i)
       calls += "Ljava/lang/String;";
     calls += ")Ljava/lang/String;";
@@ -1866,11 +1866,11 @@ void java_string_library_preprocesst::initialize_conversion_table()
   cprover_equivalent_to_java_function
     ["java::org.cprover.CProverString.isValidLong:(Ljava/lang/String;I)Z"] =
       ID_cprover_string_is_valid_long_func;
-  // The first error of a call of String.format, and the calls of toString
-  // and hashCode that it makes (helpers of the String.format model).
+  // The first error of a call of String.format by a kind of locale (see
+  // cproverFormatWith of the models).
   {
     std::string signature =
-      "java::java.lang.String.cproverFormatError:(Ljava/lang/String;I";
+      "java::java.lang.String.cproverFormatError:(ILjava/lang/String;I";
     for(std::size_t i = 0; i < MAX_FORMAT_ARGS; ++i)
       signature += "Ljava/lang/String;";
     signature += ")Ljava/lang/String;";

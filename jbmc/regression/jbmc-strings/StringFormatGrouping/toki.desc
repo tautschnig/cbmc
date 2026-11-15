@@ -1,0 +1,11 @@
+CORE
+Test
+--function Test.toki --java-locale tok --java-version 22 --max-nondet-string-length 40 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+In tok, Java 22 and later group by two with U+00A0 ("1 23 45"), and
+earlier versions by three with ',' (the locale data merge the versions,
+so either for any version).

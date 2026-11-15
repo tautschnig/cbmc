@@ -63,7 +63,7 @@ static std::unique_ptr<string_builtin_functiont> to_string_builtin_function(
   {
     std::vector<exprt> arguments = fun_app.arguments();
     PRECONDITION(arguments.size() == 2 + 1 + 1 + 10 + 10);
-    const auto kind = numeric_cast<mp_integer>(arguments[2]);
+    const exprt kind = arguments[2];
     std::vector<exprt> calls{arguments.end() - 10, arguments.end()};
     arguments.erase(arguments.end() - 10, arguments.end());
     arguments.erase(arguments.begin() + 2);
@@ -71,10 +71,7 @@ static std::unique_ptr<string_builtin_functiont> to_string_builtin_function(
       return_code, arguments, array_pool);
     for(const exprt &call : calls)
       f->call_texts.push_back(get_string_expr(array_pool, call));
-    if(kind.has_value() && *kind == 1)
-      f->locale.numbers = {{{0x30, 0x2e, 0x2c, 3}}};
-    else if(!kind.has_value() || *kind != 0)
-      f->locale = java_any_locale_symbols();
+    f->locale = java_format_locale(kind);
     return f;
   }
 

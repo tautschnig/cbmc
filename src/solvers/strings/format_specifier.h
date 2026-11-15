@@ -231,6 +231,7 @@ const char missing_argument = 'A';    // the specifier
 const char conversion_mismatch = 'C'; // the conversion, then the argument
 const char date_time_mismatch = 'T';  // the field, then the argument
 const char code_point = 'K';          // the argument
+const char division_by_zero = 'Z';    // the argument (grouping size 0)
 } // namespace java_format_errort
 
 /// Formatter's Flags bits.

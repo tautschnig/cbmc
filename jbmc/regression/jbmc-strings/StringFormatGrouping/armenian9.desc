@@ -1,0 +1,12 @@
+CORE
+Test
+--function Test.armenian9 --java-locale hy --java-version 9 --max-nondet-string-length 40 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+In hy, Java 9 has no grouping size and %,d of 12 throws an
+ArithmeticException (a division by zero); the test asserts that it
+throws, so it fails where it does not: the locale data of hy also have
+sizes of 3 (other providers), where it does not throw.
