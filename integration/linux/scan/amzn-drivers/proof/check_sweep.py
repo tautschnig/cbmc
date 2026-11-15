@@ -39,6 +39,13 @@ def adjudicate(text, expect_fail):
     if not verdicts:
         reasons.append("no verdict at all (timeout, build failure, or a "
                        "solver binary that could not be executed)")
+    # Runners that carry a demonstration alongside a proof check the
+    # demonstration's outcome themselves and print UNEXPECTED when it stops
+    # reproducing; their failure lines are tagged [demonstration] and so do
+    # not end in ": FAILURE".
+    for ln in text.splitlines():
+        if "UNEXPECTED" in ln:
+            reasons.append(ln.strip())
     if "BUILD FAILED" in text:
         reasons.append("a build failed, so some result came from no binary")
 

@@ -11,7 +11,7 @@ the `w < register_width` branch). Not a soundness problem.
 | build | result | time | RSS |
 |---|---|---|---|
 | old (asm = no-op) | 1 of 7578 failed (F27) | 147 s | 4.56 GB |
-| asm-semantics | no verdict after 30+ min, still in symex | – | – |
+| asm-semantics | 1 of 7604 failed (F27) | 3893 s | 5.12 GB |
 | asm-semantics + `--unwindset rte_spinlock_lock.0:2,rte_spinlock_lock.1:2` | 1 of 7604 failed (F27), both spin-loop unwinding assertions SUCCESS | 155 s | 4.57 GB |
 
 The 26 extra properties in the last row are the dereference checks the

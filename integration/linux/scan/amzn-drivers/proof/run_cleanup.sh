@@ -11,6 +11,8 @@ OUT=${OUT:-/tmp/ena-proof}
 # output, so it must not follow $OUT.  Tying it to $OUT made this runner fail
 # instantly under run_all.sh, which gives every runner a fresh OUT.
 FLAGS_FILE=${FLAGS_FILE:-/tmp/ena-proof/flags.txt}
+# Backend default as in the other runners (minisat2 measured fastest here).
+SOLVER=${SOLVER:---sat-solver minisat2}
 RING=${RING:-8}
 POOL=${POOL:-$RING}   # one distinct mbuf per slot: pool must match the ring
 mkdir -p "$OUT"

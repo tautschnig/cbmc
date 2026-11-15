@@ -20,7 +20,12 @@
 #ifndef SEGS_LEGAL
 #  define SEGS_LEGAL 0
 #endif
-#define SEG_BUF_LEN 64
+/* Must exceed tx_max_header_size (96 below).  At 64 every first segment was
+ * swallowed whole by the LLQ push header, so the branch of ena_tx_map_mbuf
+ * that gives the first segment its own descriptor was never exercised and a
+ * legal chain could fill at most sgl_size - 2 descriptors.  The witness
+ * "the longest legal chain fills sgl_size - 1 descriptors" exposed it. */
+#define SEG_BUF_LEN 128
 
 static struct rte_mbuf segs[MAX_SEGS];
 static uint8_t seg_bufs[MAX_SEGS][SEG_BUF_LEN];
@@ -84,7 +89,14 @@ int main(void)
   __CPROVER_assert(
     tx_info.num_of_bufs == 0,
     "witness: the mapping can fill at least one descriptor");
-#  if !SEGS_LEGAL
+#  if SEGS_LEGAL
+  /* The legal chain is at most sgl_size - 1 segments (the assumption above).
+   * Witness that the longest legal chain is mapped, so the proof covers the
+   * edge of the precondition and not only short chains. */
+  __CPROVER_assert(
+    tx_info.num_of_bufs < ring.sgl_size - 1,
+    "witness: the longest legal chain fills sgl_size - 1 descriptors");
+#  else
   /* Only for an over-long chain, and only once MAX_SEGS >= 18.  With a legal
    * chain (SEGS_LEGAL=1) num_of_bufs is bounded by sgl_size, which is below
    * ENA_PKT_MAX_BUFS, so it CANNOT reach the bound and this witness would

@@ -15,10 +15,14 @@ before it would have been.
 | 7 | FreeBSD `ena_rx_mbuf` indexes `rx_buffer_info` with an unvalidated device `req_id` | `ena_com_rx_pkt` rejects `req_id >= q_depth` one layer down | before writing |
 | 8 | a datapath call racing `ena_stop` divides by zero and underflows | the harness's teardown model zeroed `q_depth`; the real `ena_com_io_queue_free` does not | before writing |
 | 9 | nothing in the corpus asserts a class S property | `F18_SETUP_RC` and `CFG_AENQ_FAIL` already do | before writing |
+| 10 | `check_hygiene.sh`: a reached bodyless callee "cuts the path" | a three-line program: plain CBMC reports `no body for callee` and the next `assert(0)` still FAILS; only DFCC cuts (already recorded in `cbmc-limitations/dfcc_bodyless_callee_cuts_path.sh`) | after commit |
+| 11 | `harness_map_segs.c` proves the descriptor bound for every legal chain | a new witness "the longest legal chain fills sgl_size - 1 descriptors" PASSED: with 64-byte segments and a 96-byte LLQ push header the first segment never got its own descriptor, so that branch was never exercised | after commit |
+| 12 | the asm-semantics slowdown is an expression-simplifier gap | the test program behind it was wrong: symex does not substitute non-constant values, so the simplifier never saw the composed term. The `-DWIDE` control in `asm_spinlock_unwinds.c` isolates the sub-register merge in the asm lowering | before writing |
 
-**Five of nine were caught only after they were committed, and three of those
-five by someone else.** The four caught in time were all caught by the same
-two moves.
+**Seven of twelve were caught only after they were committed, and three of
+those seven by someone else.** The five caught in time were all caught by the
+same two moves. Claims 10 and 11 were caught by running the gate and adding a
+witness, not by reading.
 
 ## The two questions, before writing a mechanism or an absence
 

@@ -15,8 +15,11 @@
 # Checks, in the order they most often catch something:
 #   1. a verdict is present at all (not a timeout or a crash)
 #   2. no UNKNOWN property
-#   3. no reached bodyless callee, which cuts the path and makes later
-#      assertions vacuous
+#   3. no reached bodyless callee other than --allow'ed ones.  Plain CBMC
+#      continues past such a call with a nondeterministic return value but
+#      models none of the callee's side effects; under DFCC the path is cut
+#      (cbmc-limitations/dfcc_bodyless_callee_cuts_path.sh).  Either way a
+#      reached one must be justified, which is what --allow records.
 #   4. unwinding assertions present and none failing
 #   5. no unexpected failing property
 #   6. if a vacuity log is given, it must contain witnesses and every witness
@@ -64,8 +67,12 @@ elif [ "$mode" = refuted ]; then
 else bad "$n UNKNOWN property/properties: an undecided property is not a proven one"; fi
 
 # 3. bodyless callee actually reached
-n=$(grep -cE 'no body for callee.*FAILURE' "$main" || true)
-[ "$n" -eq 0 ] && say ok "no reached bodyless callee" || bad "$n reached bodyless callee(s): the path is cut, so later assertions may hold vacuously"
+apat='^$'
+for a in ${allow+"${allow[@]}"}; do apat="$apat|$a"; done
+n=$(grep -E 'no body for callee.*FAILURE' "$main" | grep -vcE "$apat" || true)
+na=$(grep -E 'no body for callee.*FAILURE' "$main" | grep -cE "$apat" || true)
+[ "$na" -gt 0 ] && say note "$na reached bodyless callee(s) allowed by --allow"
+[ "$n" -eq 0 ] && say ok "no unjustified reached bodyless callee" || bad "$n reached bodyless callee(s) not covered by --allow: their side effects are not modelled (and under DFCC the path is cut)"
 
 # 4. unwinding assertions.
 # --slice-formula discards unwinding assertions that are trivially true, so
@@ -106,7 +113,15 @@ if [ "$mode" = refuted ]; then
     bad "'$expect' does not fail: the run no longer reproduces the finding it claims to"
   fi
 elif [ -n "$verdict" ] && [ "$verdict" != "VERIFICATION SUCCESSFUL" ]; then
-  bad "claimed proved, but the verdict is $verdict"
+  # Every failing property is accounted for by check 5 (witness or --allow);
+  # a FAILED verdict made only of those does not undermine the proof, but an
+  # unaccounted one already failed check 5.
+  if [ "$(grep -E ': FAILURE$' "$main" | grep -vcE "$pat" || true)" -eq 0 ] &&
+     [ "${#allow[@]}" -gt 0 ]; then
+    say note "verdict is $verdict, but every failing property is --allow'ed"
+  else
+    bad "claimed proved, but the verdict is $verdict"
+  fi
 fi
 
 # 6. vacuity witnesses
