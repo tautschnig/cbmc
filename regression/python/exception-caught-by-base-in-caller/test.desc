@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+An IndexError raised in a callee stays catchable when a caller's handler
+names a base class (LookupError): the call graph analysis maps handlers to
+the functions they may protect.

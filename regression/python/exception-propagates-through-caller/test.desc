@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 5
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+PLR 8.4: an exception raised in a callee also leaves the caller; the
+caller's next statement does not run. It did, so this false assertion was
+proved.

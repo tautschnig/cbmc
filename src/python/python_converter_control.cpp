@@ -176,21 +176,30 @@ void python_convertert::collect_assert_raise_functions(
   const std::vector<const jsont *> &bodies)
 {
   // Call graph over module-level functions and methods (by base name;
-  // over-approximate: any call `f(...)` or `x.f(...)` is an edge to
-  // every definition named f). Seeds are the callees of code whose
-  // AssertionError can be caught.
+  // over-approximate: any call `f(...)` or `x.f(...)` is an edge to every
+  // definition named f). Each call inside a protected region (a try body,
+  // whose handlers catch the named types; a try with a finally clause or a
+  // with body, either of which may end or replace the exception: "*")
+  // gives the callee those types; callees inherit their callers' types.
   std::map<std::string, std::set<std::string>> calls;
-  std::set<std::string> seeds;
-  auto catches_assertion = [this](const jsont &tr) -> bool
+  std::map<std::string, std::set<std::string>> seeds;
+  auto handler_types = [this](const jsont &tr) -> std::set<std::string>
   {
+    std::set<std::string> types;
+    const jsont &fin = json_member(tr, "finalbody");
+    if(fin.is_array() && !as_array(fin).empty())
+      types.insert("*");
     const jsont &hs = json_member(tr, "handlers");
     if(!hs.is_array())
-      return false;
+      return types;
     for(const auto &h : as_array(hs))
     {
       const jsont &ht = json_member(h, "type");
       if(ht.is_null())
-        return true;
+      {
+        types.insert("*");
+        continue;
+      }
       std::vector<const jsont *> names;
       if(is_node_type(ht, "Tuple"))
       {
@@ -203,26 +212,27 @@ void python_convertert::collect_assert_raise_functions(
         names.push_back(&ht);
       for(const jsont *n : names)
       {
-        std::string id;
         if(is_node_type(*n, "Name"))
-          id = json_string(json_member(*n, "id"));
+          types.insert(json_string(json_member(*n, "id")));
         else if(is_node_type(*n, "Attribute"))
-          id = json_string(json_member(*n, "attr"));
+          types.insert(json_string(json_member(*n, "attr")));
         else
-          return true; // unknown handler type: assume it may catch
-        if(id == "AssertionError" || id == "Exception" || id == "BaseException")
-          return true;
+          types.insert("*"); // unknown handler expression
       }
     }
-    return false;
+    return types;
   };
-  std::function<void(const jsont &, const std::string &, bool)> walk =
-    [&](const jsont &n, const std::string &fn, bool protected_region)
+  std::function<void(
+    const jsont &, const std::string &, const std::set<std::string> &)>
+    walk = [&](
+             const jsont &n,
+             const std::string &fn,
+             const std::set<std::string> &prot)
   {
     if(n.is_array())
     {
       for(const auto &c : as_array(n))
-        walk(c, fn, protected_region);
+        walk(c, fn, prot);
       return;
     }
     if(!n.is_object())
@@ -230,7 +240,7 @@ void python_convertert::collect_assert_raise_functions(
     if(is_node_type(n, "FunctionDef") || is_node_type(n, "AsyncFunctionDef"))
     {
       const std::string name = json_string(json_member(n, "name"));
-      walk(json_member(n, "body"), name, false);
+      walk(json_member(n, "body"), name, {});
       return;
     }
     if(is_node_type(n, "Call"))
@@ -244,42 +254,101 @@ void python_convertert::collect_assert_raise_functions(
       if(!callee.empty())
       {
         calls[fn].insert(callee);
-        if(protected_region)
-          seeds.insert(callee);
+        // A class name called is its constructor.
+        calls[fn].insert("__init__");
+        if(!prot.empty())
+          seeds[callee].insert(prot.begin(), prot.end());
+        if(!prot.empty())
+          seeds["__init__"].insert(prot.begin(), prot.end());
       }
     }
     if(is_node_type(n, "Try") || is_node_type(n, "TryStar"))
     {
-      const bool p = protected_region || catches_assertion(n);
+      std::set<std::string> p = prot;
+      const auto ht = handler_types(n);
+      p.insert(ht.begin(), ht.end());
       walk(json_member(n, "body"), fn, p);
-      for(const char *k : {"handlers", "orelse", "finalbody"})
-        walk(json_member(n, k), fn, protected_region);
+      for(const char *k : {"handlers", "orelse"})
+        walk(json_member(n, k), fn, prot);
+      walk(json_member(n, "finalbody"), fn, prot);
       return;
     }
     if(is_node_type(n, "With") || is_node_type(n, "AsyncWith"))
     {
-      walk(json_member(n, "items"), fn, protected_region);
-      walk(json_member(n, "body"), fn, true);
+      walk(json_member(n, "items"), fn, prot);
+      std::set<std::string> p = prot;
+      p.insert("*");
+      walk(json_member(n, "body"), fn, p);
       return;
     }
     for(const auto &kv : to_json_object(n))
       if(kv.first != "_type")
-        walk(kv.second, fn, protected_region);
+        walk(kv.second, fn, prot);
   };
   for(const jsont *b : bodies)
-    walk(*b, "", false);
-  std::vector<std::string> work(seeds.begin(), seeds.end());
-  while(!work.empty())
+    walk(*b, "", {});
+  // Propagate along call edges to a fixpoint.
+  function_protected_exceptions = seeds;
+  bool changed = true;
+  while(changed)
   {
-    const std::string f = work.back();
-    work.pop_back();
-    if(!assert_raise_functions.insert(f).second)
-      continue;
-    auto it = calls.find(f);
-    if(it != calls.end())
-      for(const auto &g : it->second)
-        work.push_back(g);
+    changed = false;
+    for(const auto &[caller, cs] : calls)
+    {
+      auto pit = function_protected_exceptions.find(caller);
+      if(pit == function_protected_exceptions.end())
+        continue;
+      const std::set<std::string> prot = pit->second;
+      for(const auto &c : cs)
+      {
+        auto &dst = function_protected_exceptions[c];
+        const std::size_t before = dst.size();
+        dst.insert(prot.begin(), prot.end());
+        changed = changed || dst.size() != before;
+      }
+    }
   }
+  for(const auto &[f, types] : function_protected_exceptions)
+    for(const auto &t : types)
+      if(handler_catches_exception(t, "AssertionError"))
+        assert_raise_functions.insert(f);
+}
+
+bool python_convertert::handler_catches_exception(
+  const std::string &handler,
+  const std::string &exc) const
+{
+  if(
+    handler == "*" || handler.empty() || handler == "BaseException" ||
+    handler == exc)
+    return true;
+  // Exception catches everything except the BaseException-only exits.
+  if(handler == "Exception")
+    return exc != "SystemExit" && exc != "KeyboardInterrupt" &&
+           exc != "GeneratorExit";
+  static const std::map<std::string, std::set<std::string>> builtin_parents = {
+    {"KeyError", {"LookupError"}},
+    {"IndexError", {"LookupError"}},
+    {"ZeroDivisionError", {"ArithmeticError"}},
+    {"OverflowError", {"ArithmeticError"}},
+    {"FloatingPointError", {"ArithmeticError"}},
+    {"FileNotFoundError", {"OSError", "IOError"}},
+    {"EOFError", {"OSError", "IOError"}},
+    {"IOError", {"OSError"}},
+    {"UnicodeError", {"ValueError"}},
+    {"NotImplementedError", {"RuntimeError"}},
+    {"RecursionError", {"RuntimeError"}},
+    {"UnboundLocalError", {"NameError"}},
+    {"ModuleNotFoundError", {"ImportError"}}};
+  auto bit = builtin_parents.find(exc);
+  if(bit != builtin_parents.end() && bit->second.count(handler) > 0)
+    return true;
+  auto mit = class_mro.find(exc);
+  if(mit != class_mro.end())
+    for(const auto &c : mit->second)
+      if(c == handler)
+        return true;
+  return false;
 }
 
 // PLR §8.1: The if statement

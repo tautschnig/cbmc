@@ -3937,6 +3937,31 @@ bool python_convertert::convert()
 
   finalise_slot_types();
 
+  // PLR 8.4: exception sequencing over every converted body, once it is
+  // known which functions can raise at all (a call of one that cannot
+  // leaves the exception flag unchanged and needs no guard after it).
+  {
+    std::vector<irep_idt> bodies;
+    for(const auto &sp : symbol_table.symbols)
+      if(
+        sp.second.mode == "python" && sp.second.type.id() == ID_code &&
+        sp.second.value.id() == ID_code &&
+        id2string(sp.first).rfind("python::", 0) == 0)
+        bodies.push_back(sp.first);
+    compute_raising_functions(bodies);
+    for(const auto &id : bodies)
+    {
+      const std::string n = id2string(id).substr(8); // drop "python::"
+      exc_seq_function = n == "__module_body" ? std::string{} : n;
+      // Work on a copy: the pass may add symbols, which can invalidate a
+      // reference into the symbol table.
+      codet body_copy = to_code(symbol_table.lookup_ref(id).value);
+      sequence_exceptions(body_copy);
+      symbol_table.get_writeable_ref(id).value = std::move(body_copy);
+    }
+    exc_seq_function.clear();
+  }
+
   return false;
 }
 

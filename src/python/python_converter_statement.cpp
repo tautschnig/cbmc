@@ -57,6 +57,26 @@ codet python_convertert::convert_statement(const jsont &stmt)
 
 codet python_convertert::convert_statement_inner(const jsont &stmt)
 {
+  const source_locationt saved_stmt_loc = current_statement_location;
+  current_statement_location = get_location(stmt);
+  codet r = convert_statement_body(stmt);
+  // Generated code without a location of its own (runtime checks, raise
+  // bookkeeping) belongs to this statement.
+  std::function<void(exprt &)> stamp = [&](exprt &e)
+  {
+    if(e.id() == ID_code && e.source_location().get_file().empty())
+      e.add_source_location() = current_statement_location;
+    for(auto &op : e.operands())
+      stamp(op);
+  };
+  if(!current_statement_location.get_file().empty())
+    stamp(r);
+  current_statement_location = saved_stmt_loc;
+  return r;
+}
+
+codet python_convertert::convert_statement_body(const jsont &stmt)
+{
   std::string node_type = json_string(json_member(stmt, "_type"));
 
   // Clear pending checks before converting this statement

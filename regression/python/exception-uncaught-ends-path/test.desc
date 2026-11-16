@@ -1,0 +1,13 @@
+CORE
+main.py
+--unwind 5
+^EXIT=10$
+^SIGNAL=0$
+^\[.*exception\.[0-9]+\] .* line 5 uncaught exception: FAILURE$
+^\[.*assertion\.1\] .* line 13 Python assertion: SUCCESS$
+^VERIFICATION FAILED$
+--
+--
+PLR 8.4: an exception no handler can catch ends the program. It is reported
+where it is raised and the path ends there, instead of setting the exception
+flag, which made every later statement conditional on it.

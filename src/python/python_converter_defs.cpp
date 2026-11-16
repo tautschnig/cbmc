@@ -2691,6 +2691,27 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       body_block.add(code_assertt{cond});
   }
 
+  // PLR 8.4: an exception leaves the function at its end; the rest of the
+  // body is skipped by sequence_exceptions. The result is unconstrained (a
+  // caller's statement using it is itself skipped).
+  {
+    const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
+    const symbolt *fsym = symbol_table.lookup(symbol_id);
+    if(exc_sym != nullptr && fsym != nullptr && fsym->type.id() == ID_code)
+    {
+      const typet &rt = to_code_type(fsym->type).return_type();
+      code_ifthenelset leave{
+        exc_sym->symbol_expr(),
+        rt.id() == ID_empty ? code_frontend_returnt{}
+                            : code_frontend_returnt{side_effect_expr_nondett{
+                                rt, source_locationt{}}}};
+      leave.set(ID_python_exc_observer, true);
+      body_block.add(std::move(leave));
+    }
+    // sequence_exceptions runs once all bodies are converted (convert()),
+    // when it is known which callees can raise.
+  }
+
   // Update the symbol with the body
   symbolt *sym_ptr = symbol_table.get_writeable(symbol_id);
   if(sym_ptr != nullptr)

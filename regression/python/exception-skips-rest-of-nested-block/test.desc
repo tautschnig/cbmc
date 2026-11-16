@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 5
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+PLR 8.4: a raise inside a loop in a try body skips the rest of the loop. The
+loop kept running, so this false assertion was proved.

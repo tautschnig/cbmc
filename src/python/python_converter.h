@@ -23,6 +23,16 @@
 /// This populates the symbol table with function symbols and their bodies
 /// as codet trees, which are then converted to goto programs by the
 /// standard goto_convert pipeline.
+/// Marks lowered code that runs while an exception is active (handler
+/// dispatch): sequence_exceptions does not guard it, but sequences inside.
+inline const irep_idt ID_python_exc_observer{"#python_exc_observer"};
+/// Marks lowered code that runs whether or not an exception is active and
+/// must keep its own sequencing (finally bodies, __exit__ calls):
+/// sequence_exceptions neither guards nor enters it.
+inline const irep_idt ID_python_exc_opaque{"#python_exc_opaque"};
+/// Marks the lowering of a try or with statement.
+inline const irep_idt ID_python_exc_try{"#python_exc_try"};
+
 class python_convertert
 {
 public:
@@ -1816,6 +1826,7 @@ private:
   /// The statement conversion proper; convert_statement wraps it with
   /// the unresolved-name fail-closed check.
   codet convert_statement_inner(const jsont &stmt);
+  codet convert_statement_body(const jsont &stmt);
 
   /// Convert an expression node to an exprt.
   exprt convert_expression(const jsont &expr);
@@ -2603,6 +2614,18 @@ private:
   std::set<std::string> assert_raise_functions;
   /// Fill assert_raise_functions from the given module bodies.
   void collect_assert_raise_functions(const std::vector<const jsont *> &bodies);
+  /// Per function (base name): exception handler names of the protected
+  /// regions it may be called from ("*" = may catch or replace anything:
+  /// bare except, finally, with). Filled by collect_assert_raise_functions.
+  std::map<std::string, std::set<std::string>> function_protected_exceptions;
+  /// PLR 8.4: does a handler naming \p handler catch an exception of class
+  /// \p exc (by name, built-in hierarchy or user MRO)?
+  bool handler_catches_exception(
+    const std::string &handler,
+    const std::string &exc) const;
+  /// Location of the statement being converted (for properties emitted by
+  /// helpers that have no location of their own).
+  source_locationt current_statement_location;
   /// True when \p e is expensive as a solver hypothesis (quantifiers,
   /// lambdas, string/regex intrinsics, nonlinear arithmetic): convert_assert
   /// does not assume such a condition after the property.
@@ -2625,6 +2648,46 @@ private:
   /// True when \p funcdef's body has a nested def, lambda, class or
   /// generator construct (its locals may outlive a call).
   bool function_has_nested_scopes(const jsont &funcdef) const;
+  /// PLR 8.4 / 7.8: while an exception is active, no statement runs except
+  /// the ones that observe it (handler dispatch, finally, __exit__, the
+  /// uncaught-exception properties). Rewrites a converted body so that in
+  /// every block each statement after one that may raise is guarded by
+  /// `!__exception_active`, and a loop whose body may raise is left at the
+  /// end of the iteration. See doc/python-frontend-architecture.md
+  /// "Exception model".
+  void sequence_exceptions(codet &code);
+  /// True when \p e may set __exception_active (an assignment of it other
+  /// than to false, or a function call).
+  bool code_may_raise(const exprt &e) const;
+  /// `return v` / (in a try body) `x = v` where v contains a call that may
+  /// raise: evaluate v into a temporary, then return/assign only without an
+  /// exception.
+  void split_raising_value(codet &s);
+  /// try/with lowerings enclosing the code sequence_exceptions is visiting.
+  unsigned exc_seq_trys = 0;
+  /// Rewrite stmts[k] if it raises an exception that no handler can catch
+  /// from the current body: report it and end the path (PLR 8.4).
+  void
+  lower_uncatchable_raise(code_blockt::code_operandst &stmts, std::size_t k);
+  /// Name (without "python::") of the function whose body is being
+  /// sequenced; empty for the module body.
+  std::string exc_seq_function;
+  /// --function mode: the harness calls one function directly; uncaught
+  /// exceptions are not properties there (as before), the path just ends.
+  bool function_entry_mode = false;
+
+public:
+  void set_function_entry_mode(bool v)
+  {
+    function_entry_mode = v;
+  }
+
+private:
+  /// Functions whose body can set __exception_active, directly or through
+  /// a callee (filled by compute_raising_functions over all bodies).
+  std::set<irep_idt> raising_functions;
+  bool raising_functions_known = false;
+  void compute_raising_functions(const std::vector<irep_idt> &bodies);
   /// The python_value receiver whose subscript convert_subscript_of is
   /// currently splitting by tag (its arms must not split again).
   exprt pv_subscript_receiver = nil_exprt{};

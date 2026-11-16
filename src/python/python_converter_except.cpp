@@ -9,6 +9,7 @@
 #include <util/arith_tools.h>
 #include <util/bitvector_types.h>
 #include <util/c_types.h>
+#include <util/expr_util.h>
 #include <util/json.h>
 #include <util/pointer_expr.h>
 #include <util/std_code.h>
@@ -215,7 +216,8 @@ codet python_convertert::convert_raise(const jsont &stmt)
   // Add a failing assertion for uncaught exceptions only at top level
   // outside of try blocks. Skipped when --python-no-exception-checks
   // is set: benchmark suites that judge only assertion failures
-  // shouldn't see 'raise' as a property violation.
+  // shouldn't see 'raise' as a property violation. (Inside functions,
+  // sequence_exceptions reports a raise that no handler can catch.)
   if(
     current_function.empty() && try_depth == 0 && with_cleanup_depth == 0 &&
     !python_no_exception_checks)
@@ -239,30 +241,10 @@ codet python_convertert::convert_raise(const jsont &stmt)
     // / __exit__ machinery takes over (a __exit__ may suppress the
     // exception). Emitting a return here would bypass that.
   }
-  else
-  {
-    // Inside a function but outside any try block: the
-    // exception flag is set and we must unwind to the
-    // caller. Return a value of the correct type.
-    irep_idt func_id{"python::" + current_function};
-    const symbolt *func_sym = symbol_table.lookup(func_id);
-    if(
-      func_sym != nullptr &&
-      to_code_type(func_sym->type).return_type().id() == ID_empty)
-    {
-      block.add(code_frontend_returnt{});
-    }
-    else if(func_sym != nullptr)
-    {
-      // Return nondet of the declared type. If the type is later
-      // updated by a return statement, CBMC's GOTO conversion will
-      // handle the typecast.
-      typet ret_type = to_code_type(func_sym->type).return_type();
-      block.add(code_frontend_returnt{
-        side_effect_expr_nondett{ret_type, source_locationt{}}});
-    }
-  }
-
+  // Inside a function but outside any try block: nothing more. The flag is
+  // set; sequence_exceptions guards the rest of the function, which falls
+  // through to its end, where the exception leaves the function (an early
+  // return here gave every raise site its own path to the function end).
   return std::move(block);
 }
 
@@ -901,7 +883,10 @@ codet python_convertert::convert_with(const jsont &stmt)
   };
   if(!exit_code.statements().empty())
     inline_exit(block, 0);
-  block.append(exit_code);
+  // __exit__ runs whether or not an exception is active (see
+  // sequence_exceptions).
+  exit_code.set(ID_python_exc_opaque, true);
+  block.add(std::move(exit_code));
 
   // If the exception was not suppressed and there is no enclosing try,
   // propagate it past the `with`: early-return inside a function, or
@@ -940,6 +925,43 @@ codet python_convertert::convert_with(const jsont &stmt)
         code_ifthenelset{exc_active_sym->symbol_expr(), std::move(prop)});
   }
 
+  // PLR 8.5: an exception leaving the body runs __exit__ and, unless it is
+  // suppressed, propagates. When no manager can suppress it and no
+  // __exit__ contains a check or a raise, running __exit__ cannot change
+  // any verdict once the exception is uncaught, so the with statement is
+  // transparent for uncaught-exception lowering (see
+  // lower_uncatchable_raise).
+  bool transparent = !may_suppress;
+  for(const auto &m : with_managers)
+  {
+    const symbolt *xs =
+      symbol_table.lookup("python::" + m.second + "::__exit__");
+    if(
+      xs == nullptr || xs->value.id() != ID_code ||
+      has_subexpr(
+        xs->value,
+        [](const exprt &e)
+        {
+          if(e.id() != ID_code)
+            return false;
+          const irep_idt &st = to_code(e).get_statement();
+          if(st == ID_assert || st == ID_function_call)
+            return true;
+          return st == ID_assign && e.operands()[0].id() == ID_symbol &&
+                 to_symbol_expr(e.operands()[0]).get_identifier() ==
+                   "python::__exception_active";
+        }) ||
+      has_subexpr(
+        xs->value,
+        [](const exprt &e)
+        {
+          return e.id() == ID_side_effect &&
+                 e.get(ID_statement) == ID_function_call;
+        }))
+      transparent = false;
+  }
+  if(!transparent)
+    block.set(ID_python_exc_try, true);
   return std::move(block);
 }
 
@@ -1282,13 +1304,20 @@ codet python_convertert::convert_try(const jsont &stmt)
       code_blockt else_block;
       for(const auto &s : as_array(orelse))
         else_block.add(convert_statement(s));
-      block.add(code_ifthenelset{
+      code_ifthenelset dispatch{
         exc_sym->symbol_expr(),
         std::move(handler_chain),
-        std::move(else_block)});
+        std::move(else_block)};
+      // Handler dispatch runs while the exception is active (see
+      // sequence_exceptions); its bodies are sequenced normally.
+      dispatch.set(ID_python_exc_observer, true);
+      block.add(std::move(dispatch));
     }
     else
+    {
+      handler_chain.set(ID_python_exc_observer, true);
       block.add(std::move(handler_chain));
+    }
   }
   else
   {
@@ -1349,7 +1378,12 @@ codet python_convertert::convert_try(const jsont &stmt)
     };
     inline_finally(block);
 
-    block.append(finally_code); // fallthrough / exception path
+    // Fallthrough / exception path. The finally body runs whether or not an
+    // exception is active, so sequence_exceptions neither guards nor enters
+    // it.
+    code_blockt fin = finally_code;
+    fin.set(ID_python_exc_opaque, true);
+    block.add(std::move(fin));
   }
 
   // Merge arm states: try-success (arm_states[0]) plus each
@@ -1438,5 +1472,461 @@ codet python_convertert::convert_try(const jsont &stmt)
         clear_assigned(s);
   }
 
+  block.set(ID_python_exc_try, true);
   return std::move(block);
+}
+
+bool python_convertert::code_may_raise(const exprt &e) const
+{
+  auto callee_may_raise = [this](const exprt &f)
+  {
+    // Only Python code sets the flag; a callee whose body cannot set it
+    // (directly or through its callees) leaves it unchanged.
+    if(f.id() != ID_symbol)
+      return true;
+    const irep_idt &id = to_symbol_expr(f).get_identifier();
+    const symbolt *fs = symbol_table.lookup(id);
+    if(fs == nullptr || fs->value.id() != ID_code)
+      return false; // no body: nondet result, flag untouched
+    return !raising_functions_known || raising_functions.count(id) > 0;
+  };
+  if(e.id() == ID_side_effect && e.get(ID_statement) == ID_function_call)
+    return callee_may_raise(to_side_effect_expr_function_call(e).function());
+  if(e.id() == ID_code)
+  {
+    const codet &c = to_code(e);
+    const irep_idt &st = c.get_statement();
+    if(st == ID_function_call)
+      return c.operands().size() >= 2 ? callee_may_raise(c.operands()[1])
+                                      : true;
+    if(st == ID_assign && c.operands().size() == 2)
+    {
+      const exprt &lhs = c.op0();
+      if(
+        lhs.id() == ID_symbol &&
+        to_symbol_expr(lhs).get_identifier() == "python::__exception_active" &&
+        !c.op1().is_false())
+        return true;
+    }
+  }
+  for(const auto &op : e.operands())
+    if(code_may_raise(op))
+      return true;
+  return false;
+}
+
+/// True when \p c (an assignment, or an if/block of them) assigns only the
+/// exception record (python::__exception_*) and calls nothing: such code is
+/// part of raising, so it is never skipped as "after the raise".
+static bool only_writes_exception_record(const codet &c)
+{
+  bool saw_assign = false;
+  bool other = false;
+  std::function<void(const exprt &)> walk = [&](const exprt &e)
+  {
+    if(other)
+      return;
+    if(e.id() == ID_side_effect && e.get(ID_statement) == ID_function_call)
+    {
+      other = true;
+      return;
+    }
+    if(e.id() == ID_code)
+    {
+      const codet &k = to_code(e);
+      const irep_idt &st = k.get_statement();
+      if(st == ID_assign)
+      {
+        if(
+          k.op0().id() == ID_symbol &&
+          id2string(to_symbol_expr(k.op0()).get_identifier())
+              .rfind("python::__exception_", 0) == 0)
+        {
+          saw_assign = true;
+          return;
+        }
+        other = true;
+        return;
+      }
+      if(st != ID_block && st != ID_ifthenelse && st != ID_skip)
+      {
+        other = true;
+        return;
+      }
+    }
+    for(const auto &op : e.operands())
+      walk(op);
+  };
+  walk(c);
+  return saw_assign && !other;
+}
+
+/// If \p e is `__exception_type := h` (possibly `c ? h : type`), return h.
+static std::optional<mp_integer> exception_type_written(const exprt &e)
+{
+  if(
+    e.id() != ID_code || to_code(e).get_statement() != ID_assign ||
+    e.operands()[0].id() != ID_symbol ||
+    to_symbol_expr(e.operands()[0]).get_identifier() !=
+      "python::__exception_type")
+    return {};
+  const exprt *v = &e.operands()[1];
+  if(v->id() == ID_if)
+    v = &to_if_expr(*v).true_case();
+  if(!v->is_constant())
+    return {};
+  return numeric_cast<mp_integer>(*v);
+}
+
+/// The exception type a raise at stmts[k] records: in the statement itself,
+/// else in the record writes that follow it.
+static std::optional<mp_integer>
+find_raised_type(const code_blockt::code_operandst &stmts, std::size_t k)
+{
+  std::optional<mp_integer> found;
+  std::function<void(const exprt &)> walk = [&](const exprt &e)
+  {
+    if(found.has_value())
+      return;
+    if(auto h = exception_type_written(e))
+    {
+      found = h;
+      return;
+    }
+    for(const auto &op : e.operands())
+      walk(op);
+  };
+  walk(stmts[k]);
+  for(std::size_t j = k + 1;
+      !found.has_value() && j < stmts.size() && j <= k + 3;
+      ++j)
+    walk(stmts[j]);
+  return found;
+}
+
+void python_convertert::lower_uncatchable_raise(
+  code_blockt::code_operandst &stmts,
+  std::size_t k)
+{
+  const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
+  if(exc_sym == nullptr)
+    return;
+  const symbol_exprt exc = exc_sym->symbol_expr();
+  codet &s = stmts[k];
+  auto is_exc = [&](const exprt &e)
+  {
+    return e.id() == ID_symbol &&
+           to_symbol_expr(e).get_identifier() == "python::__exception_active";
+  };
+  // The condition under which s raises; nil when s is not a raise.
+  auto assign_cond = [&](const codet &a) -> exprt
+  {
+    if(a.get_statement() != ID_assign || !is_exc(a.operands()[0]))
+      return nil_exprt{};
+    const exprt &rhs = a.operands()[1];
+    if(rhs.is_true())
+      return true_exprt{};
+    if(
+      rhs.id() == ID_or && rhs.operands().size() == 2 &&
+      is_exc(rhs.operands()[0]))
+      return rhs.operands()[1];
+    return nil_exprt{};
+  };
+  exprt cond = nil_exprt{};
+  if(s.get_statement() == ID_assign)
+    cond = assign_cond(s);
+  else if(
+    s.get_statement() == ID_ifthenelse &&
+    to_code_ifthenelse(s).else_case().is_nil())
+  {
+    const codet &t = to_code_ifthenelse(s).then_case();
+    const codet *first = &t;
+    if(t.get_statement() == ID_block && !to_code_block(t).statements().empty())
+      first = &to_code_block(t).statements().front();
+    if(assign_cond(*first).is_true())
+      cond = to_code_ifthenelse(s).cond();
+  }
+  if(cond.is_nil())
+    return;
+  const auto h = find_raised_type(stmts, k);
+  if(!h.has_value())
+    return;
+  static const std::vector<std::string> builtin_names = {
+    "Exception",           "BaseException",     "ValueError",
+    "TypeError",           "KeyError",          "IndexError",
+    "AttributeError",      "ZeroDivisionError", "OverflowError",
+    "NameError",           "UnboundLocalError", "RuntimeError",
+    "NotImplementedError", "RecursionError",    "AssertionError",
+    "StopIteration",       "OSError",           "IOError",
+    "FileNotFoundError",   "EOFError",          "ImportError",
+    "ModuleNotFoundError", "LookupError",       "ArithmeticError",
+    "UnicodeError",        "MemoryError",       "FloatingPointError",
+    "SystemExit",          "KeyboardInterrupt", "GeneratorExit"};
+  std::vector<std::string> names;
+  for(const auto &n : builtin_names)
+    if(mp_integer{exception_type_hash(n)} == *h)
+      names.push_back(n);
+  for(const auto &p : class_types)
+    if(mp_integer{exception_type_hash(p.first)} == *h)
+      names.push_back(p.first);
+  if(names.empty())
+    return;
+  for(const auto &n : names)
+  {
+    // Iteration protocol and generator machinery stay on the flag.
+    if(n == "StopIteration" || n == "GeneratorExit")
+      return;
+    if(exc_seq_function.empty())
+      continue; // module level, outside try: uncaught
+    const std::size_t sep = exc_seq_function.rfind("::");
+    const std::string leaf = sep == std::string::npos
+                               ? exc_seq_function
+                               : exc_seq_function.substr(sep + 2);
+    const std::string root =
+      exc_seq_function.substr(0, exc_seq_function.find("::"));
+    for(const std::string &f : {exc_seq_function, root, leaf})
+    {
+      auto it = function_protected_exceptions.find(f);
+      if(it != function_protected_exceptions.end())
+        for(const auto &hn : it->second)
+          if(handler_catches_exception(hn, n))
+            return;
+    }
+  }
+  // PLR 8.4: uncaught, the exception ends the program. Report it here and
+  // end the path. Only the first exception on a path counts.
+  // Without a location the property could not be attributed; keep the flag
+  // (the uncaught-exception check after the module statement reports it).
+  if(s.source_location().get_file().empty())
+    return;
+  const exprt raised = and_exprt{cond, not_exprt{exc}};
+  source_locationt loc = s.source_location();
+  code_blockt rep;
+  if(!python_no_exception_checks && !function_entry_mode)
+  {
+    loc.set_property_class("exception");
+    loc.set_comment("uncaught exception");
+    code_assertt a{not_exprt{raised}};
+    a.add_source_location() = loc;
+    rep.add(std::move(a));
+  }
+  code_assumet as{not_exprt{raised}};
+  as.add_source_location() = loc;
+  rep.add(std::move(as));
+  s = std::move(rep);
+}
+
+void python_convertert::split_raising_value(codet &s)
+{
+  // PLR 8.4 / 7.6: `return f(...)` (or, inside a try body, `x = f(...)`)
+  // must not complete when f raises: the exception propagates instead.
+  // Evaluate the value into a temporary, then return / assign only without
+  // an exception.
+  const irep_idt &st = s.get_statement();
+  exprt *value = nullptr;
+  if(st == ID_return && s.operands().size() == 1 && s.op0().is_not_nil())
+    value = &s.op0();
+  else if(
+    st == ID_assign && exc_seq_trys > 0 &&
+    !(s.operands()[0].id() == ID_symbol &&
+      id2string(to_symbol_expr(s.operands()[0]).get_identifier())
+          .rfind("python::__raise_val_", 0) == 0))
+    value = &s.operands()[1];
+  if(value == nullptr || !code_may_raise(*value))
+    return;
+  if(value->type().id() == ID_empty || value->type().id() == ID_code)
+    return;
+  const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
+  if(exc_sym == nullptr)
+    return;
+  static unsigned ctr = 0;
+  const std::string tn = "__raise_val_" + std::to_string(ctr++);
+  const irep_idt tid{"python::" + tn};
+  symbolt ts{tid, value->type(), "python"};
+  ts.base_name = tn;
+  ts.is_lvalue = true;
+  ts.is_state_var = true;
+  ts.is_static_lifetime = true;
+  symbol_table.add(ts);
+  const symbol_exprt t = ts.symbol_expr();
+  const source_locationt loc = s.source_location();
+  code_blockt b;
+  b.add(code_frontend_assignt{t, std::move(*value)});
+  *value = t;
+  code_ifthenelset finish{not_exprt{exc_sym->symbol_expr()}, std::move(s)};
+  b.add(std::move(finish));
+  b.add_source_location() = loc;
+  s = std::move(b);
+}
+
+void python_convertert::sequence_exceptions(codet &code)
+{
+  const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
+  if(exc_sym == nullptr || code.get_bool(ID_python_exc_opaque))
+    return;
+  const symbol_exprt exc = exc_sym->symbol_expr();
+  auto mentions_exc = [&](const exprt &e)
+  {
+    return has_subexpr(
+      e,
+      [](const exprt &n)
+      {
+        return n.id() == ID_symbol && to_symbol_expr(n).get_identifier() ==
+                                        "python::__exception_active";
+      });
+  };
+  auto as_block = [](codet &c) -> code_blockt &
+  {
+    if(c.get_statement() != ID_block)
+    {
+      code_blockt b;
+      b.add(std::move(c));
+      c = std::move(b);
+    }
+    return to_code_block(c);
+  };
+  const irep_idt &st = code.get_statement();
+  const bool is_try = code.get_bool(ID_python_exc_try);
+  if(is_try)
+    ++exc_seq_trys;
+  // Handler dispatch is part of the try lowering, but an exception raised
+  // in a handler (or the else clause) is not caught by that try (PLR 8.4).
+  const bool leaves_try =
+    !is_try && exc_seq_trys > 0 && code.get_bool(ID_python_exc_observer);
+  if(leaves_try)
+    --exc_seq_trys;
+  if(st == ID_block)
+  {
+    auto &stmts = to_code_block(code).statements();
+    bool may_have_raised = false;
+    for(std::size_t k = 0; k < stmts.size(); ++k)
+    {
+      if(exc_seq_trys == 0)
+        lower_uncatchable_raise(stmts, k);
+      split_raising_value(stmts[k]);
+      codet &s = stmts[k];
+      sequence_exceptions(s);
+      const irep_idt &sst = s.get_statement();
+      // Writes to the exception record itself (type, payload, ...) are part
+      // of raising and are never guarded.
+      const bool exc_record_write = only_writes_exception_record(s);
+      const bool wrappable =
+        sst != ID_decl && sst != ID_dead && sst != ID_label && sst != ID_skip &&
+        !exc_record_write && !s.get_bool(ID_python_exc_observer) &&
+        !s.get_bool(ID_python_exc_opaque) &&
+        !((sst == ID_assert || sst == ID_assume) && mentions_exc(s));
+      const bool raises = code_may_raise(s);
+      if(may_have_raised && wrappable)
+      {
+        code_ifthenelset guarded{not_exprt{exc}, std::move(s)};
+        s = std::move(guarded);
+      }
+      may_have_raised = may_have_raised || raises;
+    }
+  }
+  else if(st == ID_ifthenelse)
+  {
+    auto &ite = to_code_ifthenelse(code);
+    sequence_exceptions(ite.then_case());
+    if(ite.else_case().is_not_nil())
+      sequence_exceptions(ite.else_case());
+  }
+  else if(st == ID_for)
+  {
+    // A for loop over a container: its condition (index < length) has no
+    // effects, so after an exception the loop runs out with its body
+    // skipped. Leaving it early instead (break) would give every iteration
+    // its own path to the loop exit, merged there with everything the
+    // later iterations modified.
+    codet &body = to_code_for(code).body();
+    sequence_exceptions(body);
+    if(code_may_raise(body))
+    {
+      code_ifthenelset guarded{not_exprt{exc}, std::move(body)};
+      body = std::move(guarded);
+    }
+  }
+  else if(st == ID_while)
+  {
+    // The condition may have effects or never become false (`while True`):
+    // leave the loop by its condition, evaluated only without an exception.
+    auto &w = to_code_while(code);
+    sequence_exceptions(w.body());
+    if(code_may_raise(w.body()))
+      w.cond() = and_exprt{not_exprt{exc}, w.cond()};
+  }
+  else if(st == ID_dowhile)
+  {
+    auto &w = to_code_dowhile(code);
+    sequence_exceptions(w.body());
+    if(code_may_raise(w.body()))
+    {
+      code_blockt &b = as_block(w.body());
+      code_ifthenelset leave{exc, code_breakt{}};
+      leave.set(ID_python_exc_observer, true);
+      b.add(std::move(leave));
+    }
+  }
+  if(is_try)
+    --exc_seq_trys;
+  if(leaves_try)
+    ++exc_seq_trys;
+}
+
+void python_convertert::compute_raising_functions(
+  const std::vector<irep_idt> &bodies)
+{
+  raising_functions.clear();
+  raising_functions_known = false;
+  // Direct raisers first (with all calls treated as raising, code_may_raise
+  // would make every caller a raiser); then propagate through call edges.
+  std::map<irep_idt, std::set<irep_idt>> callees;
+  std::set<irep_idt> unknown_callers;
+  std::function<void(const exprt &, const irep_idt &)> scan =
+    [&](const exprt &e, const irep_idt &fn)
+  {
+    const exprt *f = nullptr;
+    if(e.id() == ID_side_effect && e.get(ID_statement) == ID_function_call)
+      f = &to_side_effect_expr_function_call(e).function();
+    else if(e.id() == ID_code && to_code(e).get_statement() == ID_function_call)
+      f = e.operands().size() >= 2 ? &e.operands()[1] : nullptr;
+    if(f != nullptr)
+    {
+      if(f->id() == ID_symbol)
+        callees[fn].insert(to_symbol_expr(*f).get_identifier());
+      else
+        unknown_callers.insert(fn);
+    }
+    if(
+      e.id() == ID_code && to_code(e).get_statement() == ID_assign &&
+      e.operands().size() == 2 && e.operands()[0].id() == ID_symbol &&
+      to_symbol_expr(e.operands()[0]).get_identifier() ==
+        "python::__exception_active" &&
+      !e.operands()[1].is_false())
+      raising_functions.insert(fn);
+    for(const auto &op : e.operands())
+      scan(op, fn);
+  };
+  for(const auto &id : bodies)
+    scan(symbol_table.lookup_ref(id).value, id);
+  for(const auto &id : unknown_callers)
+    raising_functions.insert(id);
+  bool changed = true;
+  while(changed)
+  {
+    changed = false;
+    for(const auto &[fn, cs] : callees)
+    {
+      if(raising_functions.count(fn) > 0)
+        continue;
+      for(const auto &c : cs)
+        if(raising_functions.count(c) > 0)
+        {
+          raising_functions.insert(fn);
+          changed = true;
+          break;
+        }
+    }
+  }
+  raising_functions_known = true;
 }

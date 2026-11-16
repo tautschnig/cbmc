@@ -424,6 +424,7 @@ bool python_languaget::typecheck(
   converter.set_python_check_any_arg_attrs(python_check_any_arg_attrs);
   converter.set_python_missing_return_check(python_missing_return_check);
   converter.set_python_check_iter_none(python_check_iter_none);
+  converter.set_function_entry_mode(!function_entry_point.empty());
   converter.set_module_resolver(
     [this, &message_handler](const std::string &name) -> const jsont *
     { return resolve_module(name, message_handler); });

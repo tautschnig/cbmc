@@ -720,6 +720,11 @@ after every statement (gated on
 `!python_no_exception_checks`) so an unhandled exception
 causes verification failure.
 
+Statements after a possible raise are sequenced so that nothing runs while an
+exception is active (PLR 8.4), and a raise that no handler can catch ends the
+path where it is raised; see
+[python-frontend-exception-sequencing.md](python-frontend-exception-sequencing.md).
+
 ## Method dispatch
 
 `obj.method(args)` in `convert_call`:

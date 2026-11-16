@@ -3,9 +3,9 @@ main.py
 --unwind 6
 ^EXIT=10$
 ^SIGNAL=0$
-^\[.*exception\.[0-9]+\] .* line 5 uncaught exception: FAILURE$
+^\[.*exception\.[0-9]+\] .* line 2 uncaught exception: FAILURE$
 ^VERIFICATION FAILED$
 --
 --
 The str arm keeps the str's own checks (here IndexError), guarded by the
-runtime type.
+runtime type. No handler can catch it, so it is reported where it is raised.
