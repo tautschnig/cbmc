@@ -242,8 +242,8 @@ After the sweep, the class S sites still unproven are:
 | site | status |
 |---|---|
 | FreeBSD `ena_netmap_reg` | **blocked, environment.** `ena_netmap_reg` overwrites `ena_up`'s failure with `ena_restore_device`'s result (`ena_netmap.c:311-319`), so a failed bring-up returns 0 -- the shape of the reported finding. The harness does not build here: `netmap_kern.h` selects a Linux branch without `__FreeBSD__`, and with it `netmap_mbq.h` needs `safe_spinlock_t`. That is build scaffolding, not proof work, and is recorded rather than attempted further. |
-| Linux ENA `ethtool -G` ring-size backoff | not attempted: no Linux ENA build in this tree |
-| Linux ENA AF_XDP wakeup | same |
+| Linux ENA `ethtool -G` ring-size backoff | **fails, reproducing the finding** (2026-11-15). `proof/linux/harness_lx_ringparam.c`, `SR_TAKES_EFFECT`: after an earlier backoff left `rx_ring[0].ring_size` below `requested_rx_ring_size`, a request equal to the requested size returns 0 without touching the queues, and `ethtool -g` reports the smaller size. Holds when there was no earlier backoff; witnesses fail in both. Built by `proof/linux/build_linux_ena.sh` (amzn-drivers against linux_6_12) |
+| Linux ENA AF_XDP wakeup | not attempted. Linux harnesses that reach `arch_static_branch` are **blocked by a CBMC crash** (`cbmc-limitations/asm_goto_file_local_rename.md`); the first one hit is `harness_lx_channels.c` (`ethtool -L` then `-X`) |
 | shared `ena_com` `ethtool -N rx-flow-hash` | the DPDK sibling `ena_rss_hash_update` HOLDS (`SM_HASH_RC`), so if the Linux path fails it does so in the Linux wrapper rather than in `ena_com` |
 
 The last row is worth keeping: proving the DPDK sibling narrows where the
