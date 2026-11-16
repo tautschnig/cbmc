@@ -1,10 +1,11 @@
 CORE
 Test
 --function Test.testNull
-^EXIT=0$
+^EXIT=10$
 ^SIGNAL=0$
-VERIFICATION SUCCESSFUL
+^VERIFICATION FAILED$
+CProverString\.substring.*: FAILURE$
 --
-Null pointer check: FAILURE
 --
-Builtin function exclude the cases where one of the string arguments is null
+The builtin functions check that their string arguments are not null (they
+assumed it, which made the paths of a null argument unreachable).

@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.appendAny --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+append(t) of a null t appends "null", without a null-pointer failure.

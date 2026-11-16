@@ -34,6 +34,7 @@ Date:   April 2017
 
 #include <ansi-c/allocate_objects.h>
 
+#include "java_string_literals.h"
 #include "java_types.h"
 #include "java_utils.h"
 
@@ -322,12 +323,49 @@ java_string_library_preprocesst::convert_exprt_to_string_exprt(
   return string_expr;
 }
 
+/// As convert_exprt_to_string_exprt, but a null \p expr_to_process stands for
+/// the string "null" (as the argument of StringBuilder.append(String)): the
+/// pointer is replaced by the interned literal "null" first. (The literal
+/// symbol is named by its text, so the names of the fresh symbols of other
+/// conversions do not change; the string refinement is sensitive to them.)
+/// \param expr_to_process: a parameter of a type which implements char
+///   sequence
+/// \param loc: location in the source
+/// \param symbol_table: symbol table
+/// \param function_id: name of the function in which the code will be added
+/// \param init_code: code block, in which declarations will be added
+/// \return the processed operand
+refined_string_exprt
+java_string_library_preprocesst::convert_exprt_to_string_exprt_or_null(
+  const exprt &expr_to_process,
+  const source_locationt &loc,
+  symbol_table_baset &symbol_table,
+  const irep_idt &function_id,
+  code_blockt &init_code)
+{
+  PRECONDITION(implements_java_char_sequence_pointer(expr_to_process.type()));
+  PRECONDITION(can_cast_expr<symbol_exprt>(expr_to_process));
+  const pointer_typet &type = to_pointer_type(expr_to_process.type());
+  const symbol_exprt literal =
+    get_or_create_string_literal_symbol("null", symbol_table, true);
+  init_code.add(
+    code_ifthenelset{
+      equal_exprt{expr_to_process, null_pointer_exprt{type}},
+      code_assignt{
+        expr_to_process,
+        typecast_exprt::conditional_cast(address_of_exprt{literal}, type)}},
+    loc);
+  return convert_exprt_to_string_exprt(
+    expr_to_process, loc, symbol_table, function_id, init_code);
+}
+
 /// for each expression that is of a type implementing strings, we declare a new
-/// `cprover_string` whose contents is deduced from the expression, replace
-/// the expression by this cprover_string in the output list, and add an
-/// assumption that the object is not null; in the other case
+/// `cprover_string` whose contents is deduced from the expression, and replace
+/// the expression by this cprover_string in the output list; in the other case
 /// the expression is kept as is for the output list. Also does the same thing
-/// for char array references.
+/// for char array references. The dereferences of a null pointer are checked
+/// by java_bytecode_instrument (a NullPointerException or an assertion), as
+/// for the bytecode.
 /// \param operands: a list of expressions
 /// \param loc: location in the source
 /// \param function_id: name of the function in which the code will be added
@@ -345,10 +383,15 @@ exprt::operandst java_string_library_preprocesst::process_operands(
   exprt::operandst ops;
   for(const auto &p : operands)
   {
-    if(implements_java_char_sequence_pointer(p.type()))
+    if(
+      implements_java_char_sequence_pointer(p.type()) && null_as_null_string &&
+      !ops.empty())
     {
-      init_code.add(code_assumet(
-        notequal_exprt(p, null_pointer_exprt(to_pointer_type(p.type())))));
+      ops.push_back(convert_exprt_to_string_exprt_or_null(
+        p, loc, symbol_table, function_id, init_code));
+    }
+    else if(implements_java_char_sequence_pointer(p.type()))
+    {
       ops.push_back(convert_exprt_to_string_exprt(
         p, loc, symbol_table, function_id, init_code));
     }
@@ -866,7 +909,9 @@ void java_string_library_preprocesst::code_assign_java_string_to_string_expr(
 {
   PRECONDITION(implements_java_char_sequence_pointer(rhs.type()));
 
-  const dereference_exprt deref = checked_dereference(rhs);
+  // (the location names the null-pointer check of java_bytecode_instrument)
+  dereference_exprt deref = checked_dereference(rhs);
+  deref.add_source_location() = loc;
 
   // Although we should not reach this code if rhs is null, the association
   // `pointer -> length` is added to the solver anyway, so we have to make sure
@@ -1298,6 +1343,18 @@ code_blockt java_string_library_preprocesst::make_function_from_call(
   symbol_table_baset &symbol_table)
 {
   code_blockt code;
+  if(function_id == ID_cprover_string_equals_ignore_case_func)
+  {
+    // String.equalsIgnoreCase(null) is false, without an exception
+    const auto &other = type.parameters().back();
+    const symbol_exprt other_expr{other.get_identifier(), other.type()};
+    code.add(
+      code_ifthenelset{
+        equal_exprt{
+          other_expr, null_pointer_exprt{to_pointer_type(other.type())}},
+        code_returnt{from_integer(0, type.return_type())}},
+      loc);
+  }
   const exprt::operandst args =
     process_parameters(type.parameters(), loc, function_id, symbol_table, code);
   code.add(
@@ -1687,6 +1744,7 @@ codet java_string_library_preprocesst::code_for_function(
   const irep_idt &function_id = symbol.name;
   const java_method_typet &type = to_java_method_type(symbol.type);
   const source_locationt &loc = symbol.location;
+  null_as_null_string = null_argument_as_null_string.count(function_id) != 0;
   auto it_id=cprover_equivalent_to_java_function.find(function_id);
   if(it_id!=cprover_equivalent_to_java_function.end())
     return make_function_from_call(it_id->second, type, loc, symbol_table);
@@ -1740,6 +1798,23 @@ void java_string_library_preprocesst::initialize_known_type_table()
 void java_string_library_preprocesst::initialize_conversion_table()
 {
   character_preprocess.initialize_conversion_table();
+
+  // (Java appends and inserts "null" for a null argument of these)
+  null_argument_as_null_string = {
+    "java::java.lang.StringBuilder.append:(Ljava/lang/String;)"
+    "Ljava/lang/StringBuilder;",
+    "java::java.lang.StringBuilder.append:(Ljava/lang/CharSequence;)"
+    "Ljava/lang/StringBuilder;",
+    "java::java.lang.StringBuilder.append:(Ljava/lang/StringBuffer;)"
+    "Ljava/lang/StringBuilder;",
+    "java::java.lang.StringBuffer.append:(Ljava/lang/String;)"
+    "Ljava/lang/StringBuffer;",
+    "java::java.lang.StringBuffer.append:(Ljava/lang/StringBuffer;)"
+    "Ljava/lang/StringBuffer;",
+    "java::org.cprover.CProverString.insert:(Ljava/lang/StringBuilder;I"
+    "Ljava/lang/String;)Ljava/lang/StringBuilder;",
+    "java::org.cprover.CProverString.append:(Ljava/lang/StringBuilder;"
+    "Ljava/lang/CharSequence;II)Ljava/lang/StringBuilder;"};
 
   // The following list of function is organized by libraries, with
   // constructors first and then methods in alphabetic order.

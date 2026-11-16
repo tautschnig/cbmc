@@ -231,6 +231,21 @@ private:
     symbol_table_baset &symbol_table,
     code_blockt &init_code);
 
+  /// The Java methods whose CharSequence arguments (after the first operand)
+  /// stand for "null" when they are null, as in StringBuilder.append(String)
+  std::unordered_set<irep_idt> null_argument_as_null_string;
+
+  /// Whether the method of which code_for_function makes the code is one of
+  /// null_argument_as_null_string
+  bool null_as_null_string = false;
+
+  refined_string_exprt convert_exprt_to_string_exprt_or_null(
+    const exprt &expr_to_process,
+    const source_locationt &loc,
+    symbol_table_baset &symbol_table,
+    const irep_idt &function_name,
+    code_blockt &init_code);
+
   refined_string_exprt replace_char_array(
     const exprt &array_pointer,
     const source_locationt &loc,
