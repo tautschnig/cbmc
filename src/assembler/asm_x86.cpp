@@ -172,6 +172,24 @@ public:
     return x86_64 ? 64 : 32;
   }
 
+  bool reference_widens(const std::string &modifier, std::size_t natural_width)
+    const override
+  {
+    std::size_t read = natural_width <= 8    ? 8
+                       : natural_width <= 16 ? 16
+                       : natural_width <= 32 ? 32
+                                             : 64;
+    if(modifier == "b" || modifier == "h")
+      read = 8;
+    else if(modifier == "w")
+      read = 16;
+    else if(modifier == "k")
+      read = 32;
+    else if(modifier == "q")
+      read = 64;
+    return read > natural_width;
+  }
+
   constraint_classt classify_constraint(
     const std::string &constraint,
     std::size_t &pos,

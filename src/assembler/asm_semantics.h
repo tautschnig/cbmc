@@ -146,7 +146,12 @@ public:
   /// Initialise operand storage; must be called before lowering
   /// instructions.
   /// \return false if an operand cannot be modelled
-  bool prepare();
+  /// Initialise operand storage; must be called before lowering
+  /// instructions.
+  /// \param instructions: the instructions of the statement, used to decide
+  ///   whether an input operand is read above its natural width
+  /// \return false if an operand cannot be modelled
+  bool prepare(const std::vector<asm_instructiont> &instructions);
 
   /// Assemble the complete lowering of the statement into \p dest: prologue
   /// (inputs), instructions, epilogue (outputs).
@@ -220,6 +225,23 @@ public:
 
   /// The width of general-purpose registers in bits
   virtual std::size_t register_width() const = 0;
+
+  /// \return true if a `%`-reference with the given \p modifier reads an
+  ///   operand of natural width \p natural_width bits at a wider view, so that
+  ///   bits above \p natural_width are observed. For an input operand narrower
+  ///   than the register, those bits are unspecified (except where the
+  ///   architecture defines them), so when any reference to it widens, its
+  ///   register is initialised with non-deterministic upper bits rather than
+  ///   zero-extended. When none do, zero-extension is exact and keeps the
+  ///   register a constant when the input is one.
+  virtual bool
+  reference_widens(const std::string &modifier, std::size_t natural_width) const
+  {
+    // Conservative default (used only where instruction semantics are absent):
+    // a bare reference reads the natural width, a modifier may select a wider
+    // view.
+    return !modifier.empty();
+  }
 
   /// How a constraint letter is interpreted
   enum class constraint_classt

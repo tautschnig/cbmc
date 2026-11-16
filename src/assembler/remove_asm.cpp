@@ -315,7 +315,7 @@ bool remove_asmt::lower_gcc(
   if(code.has_goto_target())
     ctx.goto_target = code.goto_target();
 
-  if(!ctx.prepare())
+  if(!ctx.prepare(instructions))
   {
     failure = ctx.failure;
     return false;

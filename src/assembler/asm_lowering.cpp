@@ -23,6 +23,7 @@ Author: Kiro
 #include "asm_semantics.h"
 
 #include <algorithm>
+#include <set>
 
 asm_lowering_contextt::asm_lowering_contextt(
   symbol_table_baset &_symbol_table,
@@ -261,9 +262,32 @@ exprt asm_lowering_contextt::from_bits(const exprt &bits, const typet &type)
   return typecast_exprt::conditional_cast(resized, type);
 }
 
-bool asm_lowering_contextt::prepare()
+bool asm_lowering_contextt::prepare(
+  const std::vector<asm_instructiont> &instructions)
 {
   const std::size_t register_width = semantics.register_width();
+
+  // Which input operands are read above their natural width by some
+  // reference: those must keep non-deterministic upper bits (see below).
+  std::set<std::size_t> widened;
+  for(const auto &instruction : instructions)
+  {
+    for(const auto &tokens : instruction.operands)
+    {
+      for(const auto &token : tokens)
+      {
+        if(
+          token.kind == asm_tokent::kindt::OPERAND &&
+          token.index < operands.operands.size())
+        {
+          const std::size_t w =
+            width(operands.operands[token.index].expr.type());
+          if(w != 0 && semantics.reference_widens(token.modifier, w))
+            widened.insert(token.index);
+        }
+      }
+    }
+  }
 
   if(goto_target.is_not_nil())
   {
@@ -297,10 +321,14 @@ bool asm_lowering_contextt::prepare()
 
       if(operand.is_read)
       {
+        // The value, zero-extended to the register width.
         const exprt value = to_bits(operand.expr, register_width);
-        if(w < register_width)
+
+        if(w < register_width && widened.count(i) != 0)
         {
-          // the upper bits of the register are unspecified
+          // Some reference reads this operand above its natural width, where
+          // the bits are unspecified. Model them non-deterministically by
+          // keeping the (uninitialised) upper bits of the register.
           const mp_integer mask = power(2, w) - 1;
           prologue.add(goto_programt::make_assignment(
             s,
@@ -311,7 +339,16 @@ bool asm_lowering_contextt::prepare()
             location));
         }
         else
+        {
+          // No reference reads above the operand's width, so zero-extension is
+          // exact. Unlike the merge above, the register is then a plain
+          // function of the input, so when the input is a constant the
+          // register stays a constant and symex constant propagation keeps
+          // working. (The merge would make, for example, a spinlock word
+          // written through the operand symbolic, forcing symex to unwind the
+          // lock's spin loops to the unwinding bound.)
           prologue.add(goto_programt::make_assignment(s, value, location));
+        }
       }
       break;
     }

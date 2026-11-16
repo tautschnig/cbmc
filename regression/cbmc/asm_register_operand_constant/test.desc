@@ -1,0 +1,18 @@
+CORE
+main.c
+--arch x86_64 --unwind 5 --unwinding-assertions
+^VERIFICATION SUCCESSFUL$
+^EXIT=0$
+^SIGNAL=0$
+--
+^warning: ignoring
+inline assembly not understood
+--
+A sub-register input operand that is a known constant must stay a constant
+after the asm is lowered. Before the fix the input was merged into an
+uninitialised register temporary, so the lock word became symbolic and both
+spin loops unwound to the bound; the outer loop is fully unwound here (five
+iterations cover the four spin_lock/spin_unlock calls) so any remaining
+unwinding-assertion failure would come from an unresolved spin loop. With the
+fix the input is zero-extended and stays concrete, the spin loops resolve to a
+single iteration, and verification succeeds.

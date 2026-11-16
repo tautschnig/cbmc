@@ -168,6 +168,13 @@ public:
     return 32;
   }
 
+  bool reference_widens(const std::string &, std::size_t natural_width)
+    const override
+  {
+    // AArch32 references always read the full 32-bit register
+    return 32 > natural_width;
+  }
+
   constraint_classt classify_constraint(
     const std::string &constraint,
     std::size_t &pos,

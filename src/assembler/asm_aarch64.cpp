@@ -98,6 +98,13 @@ public:
     return 64;
   }
 
+  bool reference_widens(const std::string &modifier, std::size_t natural_width)
+    const override
+  {
+    const std::size_t read = modifier == "w" ? 32 : 64;
+    return read > natural_width;
+  }
+
   constraint_classt classify_constraint(
     const std::string &constraint,
     std::size_t &pos,
