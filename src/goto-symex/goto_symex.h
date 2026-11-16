@@ -690,6 +690,21 @@ protected:
     symex_assignt &symex_assign,
     const function_application_exprt &f_l1);
 
+  /// Attempt to constant propagate the number slots of a constant format
+  /// string of Java's String.format (see java_format_number_codes).
+  bool constant_propagate_format_numbers(
+    statet &state,
+    symex_assignt &symex_assign,
+    const function_application_exprt &f_l1);
+
+  /// Attempt to constant propagate the uses of a constant format string of
+  /// Java's String.format (see java_format_uses) into \p lhs.
+  bool constant_propagate_format_uses(
+    statet &state,
+    symex_assignt &symex_assign,
+    const ssa_exprt &lhs,
+    const function_application_exprt &f_l1);
+
   /// Assign constant string length and string data given by a char array to
   /// given ssa variables
   ///

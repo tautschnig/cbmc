@@ -27,6 +27,9 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/string_expr.h>
 #include <util/string_utils.h>
 
+#include <solvers/strings/string_format_builtin_function.h>
+#include <solvers/strings/string_refinement_util.h>
+
 #include "expr_skeleton.h"
 #include "simplify_expr_with_value_set.h"
 #include "symex_assign.h"
@@ -359,6 +362,13 @@ bool goto_symext::constant_propagate_assignment_with_side_effects(
 
       const irep_idt &func_id = to_symbol_expr(f_l1.function()).identifier();
 
+      // Value-returning intrinsics of constant inputs.
+      if(func_id == ID_cprover_string_format_uses_func && is_ssa_expr(lhs))
+      {
+        return constant_propagate_format_uses(
+          state, symex_assign, to_ssa_expr(lhs), f_l1);
+      }
+
       // String-producing intrinsics whose first two arguments are the output
       // (length, content). When constant propagation below succeeds it
       // installs real backing for the result; when it fails (symbolic
@@ -451,6 +461,11 @@ bool goto_symext::constant_propagate_assignment_with_side_effects(
       {
         return with_backing(
           constant_propagate_replace(state, symex_assign, f_l1));
+      }
+      else if(func_id == ID_cprover_string_format_numbers_func)
+      {
+        return with_backing(
+          constant_propagate_format_numbers(state, symex_assign, f_l1));
       }
     }
   }
@@ -737,6 +752,71 @@ goto_symext::try_evaluate_constant(const statet &state, const exprt &expr)
 
   return std::optional<std::reference_wrapper<const constant_exprt>>(
     to_constant_expr(constant_expr_opt->get()));
+}
+
+/// The Java string of the constant characters \p data (UTF-16 code units),
+/// as the string solver reads a format string.
+/// The Java string of the UTF-16 characters of \p data.
+static std::string java_string_of(const array_exprt &data)
+{
+  return utf16_constant_array_to_java(data, data.operands().size());
+}
+
+bool goto_symext::constant_propagate_format_numbers(
+  statet &state,
+  symex_assignt &symex_assign,
+  const function_application_exprt &f_l1)
+{
+  if(f_l1.arguments().size() != 3)
+    return false;
+  const auto &f_type = f_l1.function_type();
+  const auto &length_type = f_type.domain().at(0);
+  const auto &char_type = to_pointer_type(f_type.domain().at(1)).base_type();
+  const exprt &format = f_l1.arguments().at(2);
+  if(!can_cast_expr<refined_string_exprt>(format))
+    return false;
+  const auto data =
+    try_evaluate_constant_string(state, to_string_expr(format).content());
+  if(!data.has_value())
+    return false;
+  exprt::operandst characters;
+  for(const unsigned code :
+      java_format_number_codes(java_string_of(data->get())))
+    characters.push_back(from_integer(code, char_type));
+  const constant_exprt length = from_integer(characters.size(), length_type);
+  const array_exprt array{
+    std::move(characters), array_typet{char_type, length}};
+  assign_string_constant(
+    state,
+    symex_assign,
+    to_ssa_expr(f_l1.arguments().at(0)),
+    length,
+    to_ssa_expr(f_l1.arguments().at(1)),
+    array);
+  return true;
+}
+
+bool goto_symext::constant_propagate_format_uses(
+  statet &state,
+  symex_assignt &symex_assign,
+  const ssa_exprt &lhs,
+  const function_application_exprt &f_l1)
+{
+  if(f_l1.arguments().size() != 1)
+    return false;
+  const exprt &format = f_l1.arguments().at(0);
+  if(!can_cast_expr<refined_string_exprt>(format))
+    return false;
+  const auto data =
+    try_evaluate_constant_string(state, to_string_expr(format).content());
+  if(!data.has_value())
+    return false;
+  symex_assign.assign_symbol(
+    lhs,
+    expr_skeletont{},
+    from_integer(java_format_uses(java_string_of(data->get())), lhs.type()),
+    {});
+  return true;
 }
 
 void goto_symext::constant_propagate_empty_string(
