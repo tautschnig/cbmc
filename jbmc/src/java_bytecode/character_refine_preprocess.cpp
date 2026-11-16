@@ -858,7 +858,8 @@ exprt character_refine_preprocesst::expr_of_is_supplementary_code_point(
   const exprt &chr, const typet &type)
 {
   (void)type; // unused parameter
-  return binary_relation_exprt(chr, ID_gt, from_integer(0xFFFF, chr.type()));
+  // (up to the last code point)
+  return in_interval_expr(chr, 0x10000, 0x10FFFF);
 }
 
 /// Converts function call to an assignment of an expression corresponding to
@@ -1068,7 +1069,8 @@ exprt character_refine_preprocesst::expr_of_is_valid_code_point(
   const exprt &chr, const typet &type)
 {
   (void)type; // unused parameter
-  return binary_relation_exprt(chr, ID_le, from_integer(0x10FFFF, chr.type()));
+  // (from 0: a negative int is not a code point)
+  return in_interval_expr(chr, 0, 0x10FFFF);
 }
 
 /// Converts function call to an assignment of an expression corresponding to
