@@ -1,0 +1,11 @@
+CORE
+Test
+--function Test.user --unwind 3
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+unwinding assertion loop 0: FAILURE
+--
+--
+The loops of the program are unwound as --unwind says, also counted
+ones: the unwinding assertion fails.

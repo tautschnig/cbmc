@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.library --unwind 3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+The counted loops of a class of the library (org.cprover here, as the
+models of java.math) are unwound fully, beyond --unwind 3.

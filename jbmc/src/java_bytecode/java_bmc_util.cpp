@@ -11,9 +11,13 @@ Author: Daniel Kroening, Peter Schrammel
 
 #include "java_bmc_util.h"
 
-#include <goto-checker/symex_bmc.h>
 #include <goto-programs/abstract_goto_model.h>
+
+#include <goto-checker/symex_bmc.h>
 #include <java_bytecode/java_enum_static_init_unwind_handler.h>
+#include <java_bytecode/java_library_loop_unwind_handler.h>
+
+#include <memory>
 
 void java_setup_symex(
   const optionst &options,
@@ -38,4 +42,15 @@ void java_setup_symex(
       });
     // clang-format on
   }
+
+  // unwinds the counted loops of the models of the library fully
+  auto library_loops =
+    std::make_shared<java_library_loop_unwind_handlert>(goto_model);
+  symex.add_loop_unwind_handler(
+    [library_loops](
+      const call_stackt &context,
+      unsigned loop_num,
+      unsigned unwind,
+      unsigned &max_unwind)
+    { return (*library_loops)(context, loop_num, unwind, max_unwind); });
 }

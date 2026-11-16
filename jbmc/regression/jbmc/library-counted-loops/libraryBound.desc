@@ -1,0 +1,11 @@
+CORE
+Test
+--function Test.libraryBound --unwind 3
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+unwinding assertion loop 0: FAILURE
+--
+--
+A loop of the library whose bound is not a constant is unwound as
+--unwind says: its unwinding assertion fails.
