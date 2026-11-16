@@ -63,3 +63,21 @@ the static entry points through `netdev->ethtool_ops` instead of calling
 them directly would drop the need for the flag, but other static helpers
 still get renamed when same-named statics in several translation units are
 linked, and that path has not been checked.
+
+## Resolution
+
+Fixed by the first suggested fix. The goto-target temporary is carried as the
+optional sixth operand of `code_asm_gcct` (`has_goto_target()`,
+`goto_target()`, `add_goto_target()` in `src/util/std_code.h`) instead of the
+named sub `ID_asm_goto_target`, which has been removed. `rename_symbolt` and
+`replace_symbolt` walk operands, so `--export-file-local-symbols` (and any
+other pass renaming through them) now rewrites the target with the rest of the
+function body. `goto_asm.cpp`, `remove_asm.cpp`, `asm_approximation.cpp` and
+`expr2c.cpp` read the target through the new accessors.
+
+With the fix, `build-asm --export-file-local-symbols` on the reproducer is
+VERIFICATION SUCCESSFUL and the stale `arch_static_branch::$tmp::
+tmp_asm_goto_target` identifier is gone. Regression test
+`regression/goto-cc-file-local/asm-goto` pins it (asm goto in a static
+function, compiled and linked with the flag, symex succeeds). This unblocks
+the Linux kernel harnesses that call `static` driver functions.

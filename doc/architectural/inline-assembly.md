@@ -69,6 +69,16 @@ last instruction; memory operands are accessed in place. Values read from a
 register wider than the bound C expression have unspecified upper bits, which
 the model makes non-deterministic.
 
+When an input operand narrower than a register is loaded into a register
+temporary, the value is zero-extended to the register width, so a constant
+input stays constant and symex can propagate it. The only exception is an
+operand some reference reads above its natural width (an operand modifier that
+names a wider sub-register, see `asm_semanticst::reference_widens`): there the
+upper bits are unspecified, so they are made non-deterministic. Making the
+common case constant matters for performance as well as precision -- a lock
+word written through a sub-register input must stay concrete, or the spin
+loops around it become undecidable and unwind to the bound.
+
 ## Lowering pipeline
 
 For each `asm` statement, `remove_asmt`:

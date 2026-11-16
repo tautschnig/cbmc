@@ -70,3 +70,21 @@ does read the upper bits.
 `--unwindset rte_spinlock_lock.0:2,rte_spinlock_lock.1:2` together with
 `--unwinding-assertions` is sound: if a lock could ever spin, the unwinding
 assertion for that loop fails. Not yet applied to the runners.
+
+## Resolution
+
+Fixed. The lowering now zero-extends a sub-register input directly
+(`asm_opN := (u64)value`) so a constant input stays a constant, and keeps the
+old nondet-upper-bits merge only when some template reference reads the operand
+above its natural width. Whether a reference widens is decided per
+architecture by the new virtual `asm_semanticst::reference_widens(modifier,
+natural_width)` (x86/AArch64/ARM overrides derive the read width from the
+operand modifier), and `asm_lowering_contextt::prepare` scans the instruction
+tokens to collect the widened operands.
+
+With the fix the reproducer shows 0 spin-loop unwindings at every bound
+(unwind 5/20/40, previously 72/1197/4797). The regression test
+`regression/cbmc/asm_register_operand_constant` pins this: four lock/unlock
+pairs on a known-constant word, outer loop fully unwound, verify that no spin
+loop needs unwinding. The `--unwindset rte_spinlock_lock` workaround in the
+proof runners is no longer required for correctness, only as a bound.
