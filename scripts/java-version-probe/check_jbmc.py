@@ -29,7 +29,9 @@ import subprocess
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-MODELS = REPO / "jbmc/lib/java-models-library/target"
+# the models jar directory (JBMC_MODELS in the environment)
+MODELS = Path(os.environ.get(
+    "JBMC_MODELS", REPO / "jbmc/lib/java-models-library/target"))
 # a javac that compiles for every release from 8 (JAVAC in the environment)
 JAVAC = os.environ.get("JAVAC", "javac")
 

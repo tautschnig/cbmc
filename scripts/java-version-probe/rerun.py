@@ -4,7 +4,7 @@ import json, re, subprocess, sys, concurrent.futures
 d, jbmc = sys.argv[1], sys.argv[2]
 pat = sys.argv[3] if len(sys.argv) > 3 else '.'
 import os
-M = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../jbmc/lib/java-models-library/target')
+M = os.environ.get('JBMC_MODELS', os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../jbmc/lib/java-models-library/target'))
 res = json.load(open(f'{d}/results.json'))
 todo = [r for r in res if re.search(pat, r['method']) and any(v in ('excluded', 'unreachable') for k, v in r['verdicts'].items() if not k.startswith('jbmc '))]
 def run(r):
