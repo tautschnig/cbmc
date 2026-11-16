@@ -47,6 +47,41 @@
 /// (recorded in function_returns_fresh). AST-only, so it can run before any
 /// body is converted -- a call site converted before its callee then binds
 /// the result the same way as one converted after it.
+/// True when a function definition contains a nested scope (def, lambda,
+/// class, or a comprehension) or a `nonlocal`/`global` statement that could
+/// observe its locals after the call returns.
+bool python_convertert::function_has_nested_scopes(const jsont &funcdef) const
+{
+  bool found = false;
+  std::function<void(const jsont &)> walk = [&](const jsont &n)
+  {
+    if(found)
+      return;
+    if(n.is_array())
+    {
+      for(const auto &c : as_array(n))
+        walk(c);
+      return;
+    }
+    if(!n.is_object())
+      return;
+    if(
+      is_node_type(n, "FunctionDef") || is_node_type(n, "AsyncFunctionDef") ||
+      is_node_type(n, "Lambda") || is_node_type(n, "ClassDef") ||
+      is_node_type(n, "Yield") || is_node_type(n, "YieldFrom") ||
+      is_node_type(n, "Await"))
+    {
+      found = true;
+      return;
+    }
+    for(const auto &kv : to_json_object(n))
+      if(kv.first != "_type")
+        walk(kv.second);
+  };
+  walk(json_member(funcdef, "body"));
+  return found;
+}
+
 void python_convertert::record_function_freshness(
   const jsont &stmt,
   const std::string &qualified_func_name)
@@ -2192,6 +2227,48 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       }
     };
     inject_at_returns(body_block);
+  }
+
+  // PLR 4.2.2: a function's local variables exist only for the duration of
+  // a call. Declare them at function entry; goto-convert then ends their
+  // lifetime (DEAD) at every exit. Without this they behaved like globals:
+  // their values survived the call, and every merge of paths later in the
+  // program (each raise/return is a path to the function end) carried a
+  // phi for every local of every function called so far -- a million
+  // merge steps on a 4-row real-world input. Conservative scope: user
+  // locals of functions without nested scopes (defs, lambdas, classes,
+  // comprehension closures capturing them) and not generators, whose
+  // locals can outlive the call; their unbound-local flags and versioned
+  // rebindings likewise.
+  if(!is_generator && !function_has_nested_scopes(stmt))
+  {
+    const std::string prefix = "python::" + current_function + "::";
+    std::vector<codet> decls;
+    auto add_decl = [&](const irep_idt &id)
+    {
+      const symbolt *ls = symbol_table.lookup(id);
+      if(
+        ls == nullptr || ls->is_parameter || ls->is_static_lifetime ||
+        ls->type.id() == ID_code || ls->type.id() == ID_empty)
+        return;
+      decls.push_back(code_frontend_declt{ls->symbol_expr()});
+    };
+    for(const std::string &nm : current_function_locals)
+    {
+      if(global_names.count(nm) > 0 || nonlocal_names.count(nm) > 0)
+        continue;
+      add_decl(irep_idt{prefix + nm});
+      add_decl(irep_idt{prefix + nm + "$bound"});
+      for(unsigned v = 1;; ++v)
+      {
+        const irep_idt vid{prefix + nm + "__v" + std::to_string(v)};
+        if(symbol_table.lookup(vid) == nullptr)
+          break;
+        add_decl(vid);
+      }
+    }
+    auto &stmts = body_block.statements();
+    stmts.insert(stmts.begin(), decls.begin(), decls.end());
   }
 
   current_function = saved_function;

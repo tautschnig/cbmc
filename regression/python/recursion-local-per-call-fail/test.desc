@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 4
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+Twin of recursion-local-per-call: keep(2) is 2, not the innermost call's 0
+(this was a false proof).

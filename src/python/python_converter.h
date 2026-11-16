@@ -2622,6 +2622,9 @@ private:
   void record_function_freshness(
     const jsont &stmt,
     const std::string &qualified_func_name);
+  /// True when \p funcdef's body has a nested def, lambda, class or
+  /// generator construct (its locals may outlive a call).
+  bool function_has_nested_scopes(const jsont &funcdef) const;
   /// The python_value receiver whose subscript convert_subscript_of is
   /// currently splitting by tag (its arms must not split again).
   exprt pv_subscript_receiver = nil_exprt{};

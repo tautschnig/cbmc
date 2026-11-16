@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 4
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+PLR 4.2.2: each call has its own local variables. Locals were single
+global-like symbols, so the recursive call overwrote the caller's `a`.
