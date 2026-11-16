@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.bufferValues --unwind 10 --unwinding-assertions --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+StringBuffer.append(boolean), append(long), replace and reverse change the buffer (they did not). The loop of reverse needs --unwind.

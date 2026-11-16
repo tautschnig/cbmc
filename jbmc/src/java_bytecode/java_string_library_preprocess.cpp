@@ -1696,9 +1696,36 @@ code_returnt java_string_library_preprocesst::make_may_run_on_code(
   return ret;
 }
 
-bool java_string_library_preprocesst::implements_function(
-  const irep_idt &function_id) const
+/// The code of CProverRuntime.fixedVersion() of the models: the version of
+/// the Java runtime where only one may run the program (--java-version), 0
+/// otherwise (see configt::javat).
+code_returnt java_string_library_preprocesst::make_fixed_version_code(
+  const java_method_typet &type,
+  const source_locationt &loc,
+  const irep_idt &function_id,
+  symbol_table_baset &symbol_table,
+  message_handlert &message_handler)
 {
+  (void)function_id;
+  (void)symbol_table;
+  (void)message_handler;
+  PRECONDITION(type.parameters().empty());
+  const std::size_t version =
+    config.java.max_version != 0 &&
+        config.java.min_version == config.java.max_version
+      ? config.java.max_version
+      : 0;
+  code_returnt ret{from_integer(version, type.return_type())};
+  ret.add_source_location() = loc;
+  return ret;
+}
+
+bool java_string_library_preprocesst::implements_function(
+  const irep_idt &function_id,
+  bool has_bytecode) const
+{
+  if(has_bytecode && only_without_model.count(function_id) != 0)
+    return false;
   for(const id_mapt *map : id_maps)
     if(map->count(function_id) != 0)
       return true;
@@ -2062,6 +2089,15 @@ void java_string_library_preprocesst::initialize_conversion_table()
   cprover_equivalent_to_java_function
     ["java::java.lang.String.lastIndexOf:(Ljava/lang/String;I)I"]=
       ID_cprover_string_last_index_of_func;
+  conversion_table["java::java.lang.CProverRuntime.fixedVersion:()I"] =
+    std::bind(
+      &java_string_library_preprocesst::make_fixed_version_code,
+      this,
+      std::placeholders::_1,
+      std::placeholders::_2,
+      std::placeholders::_3,
+      std::placeholders::_4,
+      std::placeholders::_5);
   conversion_table["java::java.lang.CProverRuntime.mayRunOn:(II)Z"] = std::bind(
     &java_string_library_preprocesst::make_may_run_on_code,
     this,
@@ -2200,10 +2236,7 @@ void java_string_library_preprocesst::initialize_conversion_table()
         std::placeholders::_4,
         std::placeholders::_5);
   cprover_equivalent_to_java_constructor
-    ["java::java.lang.StringBuilder.<init>:()V"]=
-      ID_cprover_string_empty_string_func;
-  cprover_equivalent_to_java_constructor
-    ["java::java.lang.StringBuilder.<init>:(I)V"] =
+    ["java::java.lang.StringBuilder.<init>:()V"] =
       ID_cprover_string_empty_string_func;
 
   cprover_equivalent_to_java_assign_and_return_function
@@ -2218,22 +2251,6 @@ void java_string_library_preprocesst::initialize_conversion_table()
   cprover_equivalent_to_java_assign_and_return_function
     ["java::java.lang.StringBuilder.append:(Ljava/lang/StringBuffer;)"
      "Ljava/lang/StringBuilder;"] = ID_cprover_string_concat_func;
-  cprover_equivalent_to_java_assign_and_return_function
-    ["java::java.lang.StringBuilder.appendCodePoint:(I)"
-     "Ljava/lang/StringBuilder;"]=
-      ID_cprover_string_concat_code_point_func;
-  cprover_equivalent_to_java_function
-    ["java::java.lang.StringBuilder.charAt:(I)C"]=
-      ID_cprover_string_char_at_func;
-  cprover_equivalent_to_java_function
-    ["java::java.lang.StringBuilder.codePointAt:(I)I"]=
-      ID_cprover_string_code_point_at_func;
-  cprover_equivalent_to_java_function
-    ["java::java.lang.StringBuilder.codePointBefore:(I)I"]=
-      ID_cprover_string_code_point_before_func;
-  cprover_equivalent_to_java_function
-    ["java::java.lang.StringBuilder.codePointCount:(II)I"]=
-      ID_cprover_string_code_point_count_func;
   conversion_table["java::java.lang.StringBuilder.length:()I"] = std::bind(
     &java_string_library_preprocesst::make_string_length_code,
     this,
@@ -2242,12 +2259,6 @@ void java_string_library_preprocesst::initialize_conversion_table()
     std::placeholders::_3,
     std::placeholders::_4,
     std::placeholders::_5);
-  cprover_equivalent_to_java_string_returning_function
-    ["java::java.lang.StringBuilder.substring:(II)Ljava/lang/String;"]=
-      ID_cprover_string_substring_func;
-  cprover_equivalent_to_java_string_returning_function
-    ["java::java.lang.StringBuilder.substring:(I)Ljava/lang/String;"]=
-      ID_cprover_string_substring_func;
   conversion_table
     ["java::java.lang.StringBuilder.toString:()Ljava/lang/String;"] = std::bind(
       &java_string_library_preprocesst::make_copy_string_code,
@@ -2257,6 +2268,87 @@ void java_string_library_preprocesst::initialize_conversion_table()
       std::placeholders::_3,
       std::placeholders::_4,
       std::placeholders::_5);
+
+  // Without the models (no bytecode for them), these methods are the string
+  // solver's functions, without their checks; the models check, and then
+  // call the private cprover* methods below.
+  for(const std::string cls : {"StringBuilder", "StringBuffer"})
+  {
+    const std::string prefix = "java::java.lang." + cls + ".";
+    const std::string self = "Ljava/lang/" + cls + ";";
+    const auto fallback =
+      [this](id_mapt &table, const std::string &id, const irep_idt &function)
+    {
+      table[id] = function;
+      only_without_model.insert(id);
+    };
+    fallback(
+      cprover_equivalent_to_java_function,
+      prefix + "charAt:(I)C",
+      ID_cprover_string_char_at_func);
+    fallback(
+      cprover_equivalent_to_java_function,
+      prefix + "codePointAt:(I)I",
+      ID_cprover_string_code_point_at_func);
+    fallback(
+      cprover_equivalent_to_java_function,
+      prefix + "codePointBefore:(I)I",
+      ID_cprover_string_code_point_before_func);
+    fallback(
+      cprover_equivalent_to_java_function,
+      prefix + "codePointCount:(II)I",
+      ID_cprover_string_code_point_count_func);
+    fallback(
+      cprover_equivalent_to_java_string_returning_function,
+      prefix + "substring:(II)Ljava/lang/String;",
+      ID_cprover_string_substring_func);
+    fallback(
+      cprover_equivalent_to_java_string_returning_function,
+      prefix + "substring:(I)Ljava/lang/String;",
+      ID_cprover_string_substring_func);
+    fallback(
+      cprover_equivalent_to_java_assign_and_return_function,
+      prefix + "appendCodePoint:(I)" + self,
+      ID_cprover_string_concat_code_point_func);
+    fallback(
+      cprover_equivalent_to_java_constructor,
+      prefix + "<init>:(I)V",
+      ID_cprover_string_empty_string_func);
+  }
+
+  // The operations of the string solver that the models of StringBuilder
+  // and StringBuffer call after their checks (the private cprover* methods)
+  for(const std::string cls : {"StringBuilder", "StringBuffer"})
+  {
+    const std::string prefix = "java::java.lang." + cls + ".cprover";
+    const std::string self = "Ljava/lang/" + cls + ";";
+    cprover_equivalent_to_java_function[prefix + "CharAt:(I)C"] =
+      ID_cprover_string_char_at_func;
+    cprover_equivalent_to_java_function[prefix + "CodePointAt:(I)I"] =
+      ID_cprover_string_code_point_at_func;
+    cprover_equivalent_to_java_function[prefix + "CodePointBefore:(I)I"] =
+      ID_cprover_string_code_point_before_func;
+    cprover_equivalent_to_java_function[prefix + "CodePointCount:(II)I"] =
+      ID_cprover_string_code_point_count_func;
+    cprover_equivalent_to_java_string_returning_function
+      [prefix + "Substring:(II)Ljava/lang/String;"] =
+        ID_cprover_string_substring_func;
+    cprover_equivalent_to_java_assign_and_return_function
+      [prefix + "AppendCodePoint:(I)" + self] =
+        ID_cprover_string_concat_code_point_func;
+    cprover_equivalent_to_java_assign_and_return_function
+      [prefix + "Insert:(ILjava/lang/String;)" + self] =
+        ID_cprover_string_insert_func;
+    cprover_equivalent_to_java_assign_and_return_function
+      [prefix + "Delete:(II)" + self] = ID_cprover_string_delete_func;
+    cprover_equivalent_to_java_assign_and_return_function
+      [prefix + "DeleteCharAt:(I)" + self] =
+        ID_cprover_string_delete_char_at_func;
+    cprover_equivalent_to_java_assign_function[prefix + "SetCharAt:(IC)V"] =
+      ID_cprover_string_char_set_func;
+    cprover_equivalent_to_java_assign_function[prefix + "SetLength:(I)V"] =
+      ID_cprover_string_set_length_func;
+  }
 
   // StringBuffer library
   conversion_table
@@ -2282,25 +2374,8 @@ void java_string_library_preprocesst::initialize_conversion_table()
   cprover_equivalent_to_java_assign_and_return_function
     ["java::java.lang.StringBuffer.append:(Ljava/lang/StringBuffer;)"
      "Ljava/lang/StringBuffer;"] = ID_cprover_string_concat_func;
-  cprover_equivalent_to_java_assign_and_return_function
-    ["java::java.lang.StringBuffer.appendCodePoint:(I)"
-     "Ljava/lang/StringBuffer;"]=
-      ID_cprover_string_concat_code_point_func;
-  cprover_equivalent_to_java_function
-    ["java::java.lang.StringBuffer.codePointAt:(I)I"]=
-      ID_cprover_string_code_point_at_func;
-  cprover_equivalent_to_java_function
-    ["java::java.lang.StringBuffer.codePointBefore:(I)I"]=
-      ID_cprover_string_code_point_before_func;
-  cprover_equivalent_to_java_function
-    ["java::java.lang.StringBuffer.codePointCount:(II)I"]=
-      ID_cprover_string_code_point_count_func;
-  conversion_table
-    ["java::java.lang.StringBuffer.length:()I"]=
-      conversion_table["java::java.lang.String.length:()I"];
-  cprover_equivalent_to_java_string_returning_function
-    ["java::java.lang.StringBuffer.substring:(I)Ljava/lang/String;"]=
-      ID_cprover_string_substring_func;
+  conversion_table["java::java.lang.StringBuffer.length:()I"] =
+    conversion_table["java::java.lang.String.length:()I"];
   conversion_table
     ["java::java.lang.StringBuffer.toString:()Ljava/lang/String;"] = std::bind(
       &java_string_library_preprocesst::make_copy_string_code,

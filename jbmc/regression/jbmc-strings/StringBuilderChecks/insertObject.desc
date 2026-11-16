@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.insertObject --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+insert(int, Object) inserts its string (it did not change the builder).

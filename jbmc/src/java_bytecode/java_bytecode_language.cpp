@@ -1025,7 +1025,8 @@ bool java_bytecode_languaget::typecheck(
     // Now convert all newly added string methods
     for(const auto &fn_name : journalling_symbol_table.get_inserted())
     {
-      if(string_preprocess.implements_function(fn_name))
+      if(string_preprocess.implements_function(
+           fn_name, method_bytecode.get(fn_name).has_value()))
         convert_single_method(
           fn_name, symbol_table, class_to_declared_symbols, message_handler);
     }
@@ -1362,7 +1363,7 @@ bool java_bytecode_languaget::convert_single_method_code(
   synthetic_methods_mapt::iterator synthetic_method_it;
 
   // Check if have a string solver implementation
-  if(string_preprocess.implements_function(function_id))
+  if(string_preprocess.implements_function(function_id, cmb.has_value()))
   {
     symbolt &writable_symbol = symbol_table.get_writeable_ref(function_id);
     // Load parameter names from any extant bytecode before filling in body

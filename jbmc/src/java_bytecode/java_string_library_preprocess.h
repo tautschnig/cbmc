@@ -47,7 +47,11 @@ public:
   void initialize_known_type_table();
   void initialize_conversion_table();
 
-  bool implements_function(const irep_idt &function_id) const;
+  /// Whether the string solver implements the method \p function_id (some
+  /// only where the models give it no bytecode, see only_without_model)
+  bool implements_function(
+    const irep_idt &function_id,
+    bool has_bytecode = false) const;
   void get_all_function_names(std::unordered_set<irep_idt> &methods) const;
 
   codet code_for_function(
@@ -193,6 +197,13 @@ private:
     symbol_table_baset &symbol_table,
     message_handlert &message_handler);
 
+  code_returnt make_fixed_version_code(
+    const java_method_typet &type,
+    const source_locationt &loc,
+    const irep_idt &function_id,
+    symbol_table_baset &symbol_table,
+    message_handlert &message_handler);
+
   code_blockt make_class_identifier_code(
     const java_method_typet &type,
     const source_locationt &loc,
@@ -230,6 +241,10 @@ private:
     const irep_idt &function_name,
     symbol_table_baset &symbol_table,
     code_blockt &init_code);
+
+  /// The methods that the string solver implements only where they have no
+  /// bytecode (without the models)
+  std::unordered_set<irep_idt> only_without_model;
 
   /// The Java methods whose CharSequence arguments (after the first operand)
   /// stand for "null" when they are null, as in StringBuilder.append(String)
