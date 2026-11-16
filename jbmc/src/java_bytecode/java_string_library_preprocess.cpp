@@ -21,6 +21,7 @@ Date:   April 2017
 #include <util/arith_tools.h>
 #include <util/bitvector_expr.h>
 #include <util/c_types.h>
+#include <util/config.h>
 #include <util/expr_initializer.h>
 #include <util/floatbv_expr.h>
 #include <util/ieee_float.h>
@@ -1603,6 +1604,41 @@ code_returnt java_string_library_preprocesst::make_string_length_code(
   return ret;
 }
 
+/// The code of CProverRuntime.mayRunOn(first, last) of the models: whether
+/// a Java runtime of a version from first to last (0 for no bound) may run
+/// the program (see configt::javat::may_run_on).
+code_returnt java_string_library_preprocesst::make_may_run_on_code(
+  const java_method_typet &type,
+  const source_locationt &loc,
+  const irep_idt &function_id,
+  symbol_table_baset &symbol_table,
+  message_handlert &message_handler)
+{
+  (void)function_id;
+  (void)symbol_table;
+  (void)message_handler;
+  const java_method_typet::parameterst &params = type.parameters();
+  PRECONDITION(params.size() == 2);
+  const symbol_exprt first{params[0].get_identifier(), params[0].type()};
+  const symbol_exprt last{params[1].get_identifier(), params[1].type()};
+  const typet &int_type = first.type();
+  const auto constant = [&](std::size_t v)
+  { return from_integer(v, int_type); };
+  // (last == 0 || min <= last) && (max == 0 || max >= first)
+  exprt result = and_exprt{
+    or_exprt{
+      equal_exprt{last, constant(0)},
+      binary_relation_exprt{constant(config.java.min_version), ID_le, last}},
+    config.java.max_version == 0
+      ? exprt{true_exprt{}}
+      : exprt{binary_relation_exprt{
+          constant(config.java.max_version), ID_ge, first}}};
+  code_returnt ret{
+    typecast_exprt::conditional_cast(result, type.return_type())};
+  ret.add_source_location() = loc;
+  return ret;
+}
+
 bool java_string_library_preprocesst::implements_function(
   const irep_idt &function_id) const
 {
@@ -1947,6 +1983,14 @@ void java_string_library_preprocesst::initialize_conversion_table()
   cprover_equivalent_to_java_function
     ["java::java.lang.String.lastIndexOf:(Ljava/lang/String;I)I"]=
       ID_cprover_string_last_index_of_func;
+  conversion_table["java::java.lang.CProverRuntime.mayRunOn:(II)Z"] = std::bind(
+    &java_string_library_preprocesst::make_may_run_on_code,
+    this,
+    std::placeholders::_1,
+    std::placeholders::_2,
+    std::placeholders::_3,
+    std::placeholders::_4,
+    std::placeholders::_5);
   conversion_table["java::java.lang.String.length:()I"] = std::bind(
     &java_string_library_preprocesst::make_string_length_code,
     this,

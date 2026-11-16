@@ -1,0 +1,11 @@
+CORE
+Unwind
+--function Unwind.arithmetic --unwind 3 --max-nondet-string-length 60 -cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+With --unwind 3, the counted loops of the model (over the limbs and bits
+of multiply, toString, divide, mod, gcd and sqrt) are unwound fully
+whatever --unwind says (see java_library_loop_unwind_handlert).

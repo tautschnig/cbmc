@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.wide --max-nondet-string-length 60 -cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Beyond 128 bits, the sign and the order against smaller values are kept.

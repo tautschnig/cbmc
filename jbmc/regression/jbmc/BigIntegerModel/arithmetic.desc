@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.arithmetic --max-nondet-string-length 60 -cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Division, modulo, toString(16), gcd and pow of values of up to 128 bits
+are exact (Java 8 to 25).
