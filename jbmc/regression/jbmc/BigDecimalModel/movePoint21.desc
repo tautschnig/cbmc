@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.movePoint --java-version 21 --max-nondet-string-length 60 -cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+movePointLeft(0) of a negative scale gives a scale of 0, but in Java 13
+to 19.

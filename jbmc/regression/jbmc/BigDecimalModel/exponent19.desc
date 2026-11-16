@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.exponent19 --java-version 19 --max-nondet-string-length 60 -cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+From Java 19, an exponent beyond int is fine where the scale is in range.

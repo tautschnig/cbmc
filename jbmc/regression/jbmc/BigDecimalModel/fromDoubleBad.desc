@@ -1,0 +1,11 @@
+CORE
+Test
+--function Test.fromDoubleBad --max-nondet-string-length 60 -cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+The exact value of 0.1 has 55 digits (183 bits), beyond the 128 bits of
+the BigInteger model: its digits are any (and Java's would fail the
+assertion anyway).

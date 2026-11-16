@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.symbolicRound --max-nondet-string-length 60 -cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Rounding a symbolic int with scale 2 to an integer does not increase its
+magnitude beyond the int's.

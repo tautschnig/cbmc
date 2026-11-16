@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.parseMessage9 --java-version 9 --max-nondet-string-length 60 -cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+From Java 9, the NumberFormatException of the parse has a message.
