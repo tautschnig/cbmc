@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+`box[0] = f(1) + 10` must not store when f raises: the store came right
+after the lifted call within the same statement.

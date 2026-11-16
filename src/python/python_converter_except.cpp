@@ -19,6 +19,7 @@
 
 #include "python_converter.h"
 #include "python_converter_helpers.h"
+#include "python_exception_instrumentation.h"
 #include "python_types.h"
 #include "python_value_type.h"
 
@@ -1716,46 +1717,58 @@ void python_convertert::lower_uncatchable_raise(
   s = std::move(rep);
 }
 
-void python_convertert::split_raising_value(codet &s)
+void python_convertert::tag_raising_calls(codet &s)
 {
-  // PLR 8.4 / 7.6: `return f(...)` (or, inside a try body, `x = f(...)`)
-  // must not complete when f raises: the exception propagates instead.
-  // Evaluate the value into a temporary, then return / assign only without
-  // an exception.
+  // Calls in this statement's own expressions (not in nested statements,
+  // which were tagged when their blocks were sequenced) whose callee may
+  // raise get the statement's tag; a SKIP with the same tag ends the
+  // statement (see instrument_python_call_exceptions).
+  const irep_idt tag{std::to_string(++exc_stmt_tag_counter)};
+  bool any = false;
+  std::function<void(exprt &, bool)> walk = [&](exprt &e, bool in_code)
+  {
+    if(e.id() == ID_code && in_code)
+      return; // a nested statement: handled at its own level
+    if(e.id() == ID_side_effect && e.get(ID_statement) == ID_function_call)
+    {
+      const exprt &f = to_side_effect_expr_function_call(e).function();
+      bool raises = true;
+      if(f.id() == ID_symbol)
+      {
+        const irep_idt &id = to_symbol_expr(f).get_identifier();
+        const symbolt *fs = symbol_table.lookup(id);
+        raises = fs != nullptr && fs->value.id() == ID_code &&
+                 (!raising_functions_known || raising_functions.count(id) > 0);
+      }
+      if(raises && e.source_location().get(ID_python_exc_stmt).empty())
+      {
+        e.add_source_location().set(ID_python_exc_stmt, tag);
+        // goto-convert takes the FUNCTION_CALL's location from the callee
+        // expression (do_function_call_symbol), so tag that occurrence too.
+        to_side_effect_expr_function_call(e)
+          .function()
+          .add_source_location()
+          .set(ID_python_exc_stmt, tag);
+        any = true;
+      }
+    }
+    for(auto &op : e.operands())
+      walk(op, true);
+  };
   const irep_idt &st = s.get_statement();
-  exprt *value = nullptr;
-  if(st == ID_return && s.operands().size() == 1 && s.op0().is_not_nil())
-    value = &s.op0();
-  else if(
-    st == ID_assign && exc_seq_trys > 0 &&
-    !(s.operands()[0].id() == ID_symbol &&
-      id2string(to_symbol_expr(s.operands()[0]).get_identifier())
-          .rfind("python::__raise_val_", 0) == 0))
-    value = &s.operands()[1];
-  if(value == nullptr || !code_may_raise(*value))
+  if(st == ID_block || st == ID_decl || st == ID_dead)
     return;
-  if(value->type().id() == ID_empty || value->type().id() == ID_code)
+  for(auto &op : s.operands())
+    walk(op, op.id() == ID_code);
+  if(!any)
     return;
-  const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
-  if(exc_sym == nullptr)
-    return;
-  static unsigned ctr = 0;
-  const std::string tn = "__raise_val_" + std::to_string(ctr++);
-  const irep_idt tid{"python::" + tn};
-  symbolt ts{tid, value->type(), "python"};
-  ts.base_name = tn;
-  ts.is_lvalue = true;
-  ts.is_state_var = true;
-  ts.is_static_lifetime = true;
-  symbol_table.add(ts);
-  const symbol_exprt t = ts.symbol_expr();
-  const source_locationt loc = s.source_location();
+  code_skipt end;
+  source_locationt loc = s.source_location();
+  loc.set(ID_python_exc_stmt, tag);
+  end.add_source_location() = loc;
   code_blockt b;
-  b.add(code_frontend_assignt{t, std::move(*value)});
-  *value = t;
-  code_ifthenelset finish{not_exprt{exc_sym->symbol_expr()}, std::move(s)};
-  b.add(std::move(finish));
-  b.add_source_location() = loc;
+  b.add(std::move(s));
+  b.add(std::move(end));
   s = std::move(b);
 }
 
@@ -1803,7 +1816,7 @@ void python_convertert::sequence_exceptions(codet &code)
     {
       if(exc_seq_trys == 0)
         lower_uncatchable_raise(stmts, k);
-      split_raising_value(stmts[k]);
+      tag_raising_calls(stmts[k]);
       codet &s = stmts[k];
       sequence_exceptions(s);
       const irep_idt &sst = s.get_statement();

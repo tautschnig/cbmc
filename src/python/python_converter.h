@@ -2659,10 +2659,10 @@ private:
   /// True when \p e may set __exception_active (an assignment of it other
   /// than to false, or a function call).
   bool code_may_raise(const exprt &e) const;
-  /// `return v` / (in a try body) `x = v` where v contains a call that may
-  /// raise: evaluate v into a temporary, then return/assign only without an
-  /// exception.
-  void split_raising_value(codet &s);
+  /// Tag the calls in statement \p s that may raise and append the SKIP
+  /// that ends the statement (see python_exception_instrumentation.h).
+  void tag_raising_calls(codet &s);
+  unsigned exc_stmt_tag_counter = 0;
   /// try/with lowerings enclosing the code sequence_exceptions is visiting.
   unsigned exc_seq_trys = 0;
   /// Rewrite stmts[k] if it raises an exception that no handler can catch

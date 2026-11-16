@@ -53,9 +53,14 @@ function body and the module body.
    * a `for` loop over a container whose body may raise gets its body
      guarded (the loop runs out); a `while` loop gets the flag in its
      condition;
-   * `return v` (and, in a try body, `x = v`) where v contains a raising call
-     is split: v into a temporary, then return/assign only without an
-     exception;
+   * a call that may raise inside an expression: the front-end tags the call
+     and appends a SKIP that ends its Python statement
+     (`tag_raising_calls`); after goto conversion, which lifts the call out
+     of the expression, `instrument_python_call_exceptions` inserts
+     `IF __exception_active THEN GOTO <that SKIP>` right after the call
+     (cbmc's process_goto_program, before remove_skip). This covers the
+     rest of the expression, the store, return values, the selected branch
+     of an if, and short-circuit operands;
    * a raise in a function no longer returns early; the function leaves with
      the exception at its end.
 
@@ -93,8 +98,8 @@ only under its STR tag.
 
 ## Not covered
 
-* Within one statement other than `return` / try-body assignment, evaluation
-  after a raising call still happens: `xs.append(f())` appends even if f
-  raised. This is observable when the exception is caught and `xs` is read
-  afterwards (a known remaining gap).
+* Runtime checks of a statement are emitted before the whole statement, not
+  in Python's evaluation order: in `box[i] = f()` the IndexError check on
+  `box[i]` runs before `f` (PLR 6.16: the right-hand side first). If both
+  would raise, the wrong exception type is modelled.
 * Handler and finally bodies keep their own internal sequencing.

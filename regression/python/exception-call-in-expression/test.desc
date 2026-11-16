@@ -1,0 +1,13 @@
+CORE
+main.py
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+PLR 8.4: a call that raises inside an expression stops the rest of its
+statement -- the enclosing call (`note(f(1))`), the branch an if condition
+selects, the rest of a short-circuit expression. goto-convert lifts the call
+out of the expression; a goto-level pass jumps to the end of the Python
+statement right after it (python_exception_instrumentation).

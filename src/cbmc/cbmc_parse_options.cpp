@@ -57,6 +57,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <langapi/language.h>
 #include <langapi/mode.h>
 #include <pointer-analysis/add_failed_symbols.h>
+#include <python/python_exception_instrumentation.h>
 
 #include "c_test_input_generator.h"
 
@@ -1141,6 +1142,10 @@ bool cbmc_parse_optionst::process_goto_program(
   // add failed symbols
   // needs to be done before pointer analysis
   add_failed_symbols(goto_model.symbol_table);
+
+  // Python: propagate exceptions at call sites inside statements (before
+  // remove_skip, which would drop the statement-end markers).
+  instrument_python_call_exceptions(goto_model);
 
   // remove skips such that trivial GOTOs are deleted and not considered
   // for coverage annotation:

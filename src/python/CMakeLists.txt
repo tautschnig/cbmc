@@ -7,4 +7,4 @@ add_library(python-frontend ${sources})
 
 generic_includes(python-frontend)
 
-target_link_libraries(python-frontend util json langapi)
+target_link_libraries(python-frontend util json langapi goto-programs)
