@@ -3591,6 +3591,48 @@ bool python_convertert::convert()
         is_node_type(stmt, "ClassDef"))
         main_module_defs.insert(json_string(json_member(stmt, "name")));
     }
+    // PLR 4.2.2 / 7.11: a function body reads globals at call time, so a
+    // name bound by a module-level `from M import n` is in scope inside
+    // bodies even though pass 2 reaches the import only later. Register
+    // these bindings now (module-level statements, including those nested
+    // in if/try/with blocks; not function or class bodies), or a call of
+    // an imported user function from a function body is misreported as a
+    // NameError.
+    std::function<void(const jsont &)> scan_imports = [&](const jsont &b)
+    {
+      if(!b.is_array())
+        return;
+      for(const auto &st : as_array(b))
+      {
+        if(is_node_type(st, "ImportFrom"))
+        {
+          const jsont &names = json_member(st, "names");
+          if(names.is_array())
+            for(const auto &a : as_array(names))
+            {
+              const std::string nm = json_string(json_member(a, "name"));
+              std::string as = json_string(json_member(a, "asname"));
+              if(as.empty())
+                as = nm;
+              if(nm == "*")
+                saw_import_star = true;
+              else
+              {
+                explicitly_imported_names.insert(nm);
+                explicitly_imported_names.insert(as);
+              }
+            }
+          continue;
+        }
+        if(
+          is_node_type(st, "FunctionDef") ||
+          is_node_type(st, "AsyncFunctionDef") || is_node_type(st, "ClassDef"))
+          continue;
+        for(const char *k : {"body", "orelse", "finalbody", "handlers"})
+          scan_imports(json_member(st, k));
+      }
+    };
+    scan_imports(body);
     for(const auto &stmt : as_array(body))
     {
       if((is_node_type(stmt, "FunctionDef") ||

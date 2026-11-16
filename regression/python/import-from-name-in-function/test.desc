@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+PLR 4.2.2 / 7.11: a name bound by a module-level `from M import n` is in
+scope inside the module's function bodies. Bodies are converted before the
+import statement is reached, so the call was reported as a NameError.

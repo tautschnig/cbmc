@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 6
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+Twin: `other` is defined in the imported module but not imported, so the
+call raises NameError.
