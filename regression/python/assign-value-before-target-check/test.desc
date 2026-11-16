@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+PLR 7.2: the right-hand side of an assignment is evaluated before the
+target. The target's IndexError check ran before the call, so the model
+raised IndexError where CPython raises the call's KeyError.

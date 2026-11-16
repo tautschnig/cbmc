@@ -96,10 +96,20 @@ inverted (must fail). The remaining c1 solver wall was string refinement on
 (`simplify_string_parse_int`), with the parse of a runtime-typed value done
 only under its STR tag.
 
+## Evaluation order
+
+A statement's runtime checks are collected in `pending_checks` while its
+expressions are converted and run before the statement. A call nested in a
+larger expression is evaluated into a temporary at that point
+(`convert_expression`, `materialize_call_operand`), so calls and checks run in
+the order the expression is converted (left to right, PLR 6.16), and each call
+runs exactly once -- before, its result expression was copied into several
+checks and reads and called once per copy. For an assignment with a subscript
+or attribute target whose value is a user-function call, the value is
+evaluated first (PLR 7.2). Conditional contexts (and/or operands, while
+conditions, comprehension bodies) already place pending_checks under their
+condition or inside their loop.
+
 ## Not covered
 
-* Runtime checks of a statement are emitted before the whole statement, not
-  in Python's evaluation order: in `box[i] = f()` the IndexError check on
-  `box[i]` runs before `f` (PLR 6.16: the right-hand side first). If both
-  would raise, the wrong exception type is modelled.
 * Handler and finally bodies keep their own internal sequencing.

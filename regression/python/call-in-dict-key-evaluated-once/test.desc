@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Same as call-in-subscript-evaluated-once for a dict key (the key was
+compared against every slot, each comparison calling f again).

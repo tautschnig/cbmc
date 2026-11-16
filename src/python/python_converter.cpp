@@ -6462,6 +6462,25 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
 
 exprt python_convertert::convert_expression(const jsont &expr)
 {
+  struct nesting_guardt
+  {
+    unsigned &depth;
+    explicit nesting_guardt(unsigned &d) : depth(d)
+    {
+      ++depth;
+    }
+    ~nesting_guardt()
+    {
+      --depth;
+    }
+  } nesting_guard{expression_nesting};
+  // A value evaluated ahead of its statement (see convert_statement).
+  if(!preconverted_values.empty())
+  {
+    auto pre = preconverted_values.find(&expr);
+    if(pre != preconverted_values.end())
+      return pre->second;
+  }
   std::string node_type = json_string(json_member(expr, "_type"));
 
   exprt result = nil_exprt{};
@@ -6481,6 +6500,26 @@ exprt python_convertert::convert_expression(const jsont &expr)
   else if(node_type == "Call")
   {
     result = convert_call(expr);
+    // PLR 6.16 / 6.3.4: a call nested in a larger expression is evaluated
+    // once, at its place in the left-to-right evaluation. Evaluate it into
+    // a temporary now, in order with the runtime checks the enclosing
+    // expression emits (pending_checks): the result expression may be
+    // copied into several checks and reads (index normalisation, bounds
+    // checks, ...), each of which would call it again, and the checks of
+    // operands converted earlier must run before it, those converted later
+    // after it. Conditional contexts (and/or operands, while conditions,
+    // comprehension bodies) already place pending_checks under their
+    // condition / in their loop.
+    if(expression_nesting > 1)
+    {
+      if(
+        result.id() == ID_typecast &&
+        to_typecast_expr(result).op().id() == ID_side_effect)
+        to_typecast_expr(result).op() =
+          materialize_call_operand(to_typecast_expr(result).op());
+      else
+        result = materialize_call_operand(result);
+    }
     // PLR §7.12 + object identity: a call of ANY form (free function,
     // method, transitively) may mutate module globals -- a global
     // scalar (`global cfg; cfg=...`) or a global dict in place

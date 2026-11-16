@@ -3162,6 +3162,13 @@ private:
   /// builtins (abs/min/max) so a mutating call argument executes exactly ONCE
   /// instead of once per duplicated branch (a false proof otherwise).
   exprt materialize_call_operand(const exprt &e);
+  /// Depth of convert_expression recursion: a Call converted at depth > 1
+  /// is nested in a larger expression and is evaluated into a temporary
+  /// in evaluation order (see convert_expression).
+  unsigned expression_nesting = 0;
+  /// Values of the current statement already evaluated (into temporaries)
+  /// ahead of the rest of it, keyed by their AST node.
+  std::map<const jsont *, exprt> preconverted_values;
 
   /// PLR §4.1 (Truth Value Testing): return a `bool_typet`-typed
   /// expression that is true iff `e` is "truthy" in Python.

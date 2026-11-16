@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+A call nested in an expression is evaluated exactly once. Its result
+expression was copied into the index normalisation and the bounds checks,
+and goto-convert lifted each copy into a separate call: here f was called 33
+times (the capacity check on its side effect failed).

@@ -120,7 +120,39 @@ codet python_convertert::convert_statement_body(const jsont &stmt)
   }
   else if(node_type == "Assign")
   {
+    // PLR 7.2: the right-hand side is evaluated before the targets. With a
+    // subscript or attribute target (whose conversion emits its own checks,
+    // e.g. IndexError), evaluate a user-function call value first, so its
+    // effects and exceptions precede the target's.
+    const jsont &value = json_member(stmt, "value");
+    bool store_target = false;
+    const jsont &tgts = json_member(stmt, "targets");
+    if(tgts.is_array())
+      for(const auto &t : as_array(tgts))
+        if(is_node_type(t, "Subscript") || is_node_type(t, "Attribute"))
+          store_target = true;
+    bool user_call = false;
+    if(store_target && is_node_type(value, "Call"))
+    {
+      const jsont &fn = json_member(value, "func");
+      if(is_node_type(fn, "Name"))
+      {
+        const std::string fname = json_string(json_member(fn, "id"));
+        const symbolt *fs = symbol_table.lookup("python::" + fname);
+        user_call = fs != nullptr && fs->type.id() == ID_code &&
+                    class_types.count(fname) == 0;
+      }
+    }
+    if(user_call)
+    {
+      ++expression_nesting; // evaluate as a nested call: into a temporary
+      exprt v = convert_expression(value);
+      --expression_nesting;
+      if(v.is_not_nil())
+        preconverted_values[&value] = v;
+    }
     result = convert_assign(stmt);
+    preconverted_values.erase(&value);
     // PLR §7.5: an assignment to a del-tracked name (re)binds it, clearing its
     // deleted flag (this also provides the flag's init-false at the binding).
     if(!deleted_name_targets.empty())

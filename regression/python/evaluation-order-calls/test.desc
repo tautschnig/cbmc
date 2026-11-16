@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Evaluation order of calls: a short-circuited operand is not evaluated, a
+while condition is evaluated on every iteration, operands left to right.
