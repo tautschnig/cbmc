@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.lshr
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+The distance of a long >> is masked by 63.

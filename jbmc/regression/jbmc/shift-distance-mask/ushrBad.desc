@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.ushrBad
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+-8 >>> 33 is not 0.

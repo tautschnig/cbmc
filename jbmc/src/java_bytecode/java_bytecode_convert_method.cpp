@@ -1518,7 +1518,11 @@ java_bytecode_convert_methodt::convert_instructions(const methodt &method)
     else if(bytecode == patternt("?shr"))
     {
       PRECONDITION(op.size() == 2 && results.size() == 1);
-      results[0]=ashr_exprt(op[0], op[1]);
+      // (the distance is masked as for ?shl, see convert_shl)
+      const std::size_t width =
+        get_bytecode_type_width(java_type_from_char(statement[0]));
+      results[0] = ashr_exprt{
+        op[0], bitand_exprt{op[1], from_integer(width - 1, op[1].type())}};
     }
     else if(bytecode == patternt("?ushr"))
     {
@@ -2811,8 +2815,11 @@ exprt::operandst &java_bytecode_convert_methodt::convert_ushr(
   const std::size_t width = get_bytecode_type_width(type);
   typet target = unsignedbv_typet(width);
 
+  // According to JLS 15.19 Shift Operators, as for convert_shl, a mask
+  // 0b11111 is applied to the distance for int and 0b111111 for long.
   exprt lhs = typecast_exprt::conditional_cast(op[0], target);
-  exprt rhs = typecast_exprt::conditional_cast(op[1], target);
+  exprt rhs = typecast_exprt::conditional_cast(
+    bitand_exprt{op[1], from_integer(width - 1, op[1].type())}, target);
 
   results[0] =
     typecast_exprt::conditional_cast(lshr_exprt(lhs, rhs), op[0].type());

@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.ushr
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+The distance of >>> is masked (i >>> 33 was 0).

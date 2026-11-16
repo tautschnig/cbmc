@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.shrBad
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+-8 >> 32 is -8, not -1.

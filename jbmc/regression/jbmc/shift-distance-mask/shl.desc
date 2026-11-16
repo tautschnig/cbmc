@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.shl
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+The distance of << was masked already.

@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.shr
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+The distance of >> is masked (i >> -1 was 0 or -1).
