@@ -1790,12 +1790,13 @@ void java_string_library_preprocesst::initialize_conversion_table()
   format_signature += ")Ljava/lang/String;";
   cprover_equivalent_to_java_string_returning_function[format_signature] =
     ID_cprover_string_format_func;
-  // with the kind of a locale and the strings of the calls on the arguments
-  // (see cproverFormatWith of the models), and those calls
+  // with the kind of a locale, the strings of the calls on the arguments and
+  // those of their numbers (see cproverFormatWith of the models), the calls
+  // and the numbers
   {
     std::string signature =
       "java::java.lang.String.cproverFormatWith:(ILjava/lang/String;";
-    for(std::size_t i = 0; i < 2 * MAX_FORMAT_ARGS; ++i)
+    for(std::size_t i = 0; i < 3 * MAX_FORMAT_ARGS; ++i)
       signature += "Ljava/lang/String;";
     signature += ")Ljava/lang/String;";
     cprover_equivalent_to_java_string_returning_function[signature] =
@@ -1807,6 +1808,9 @@ void java_string_library_preprocesst::initialize_conversion_table()
     calls += ")Ljava/lang/String;";
     cprover_equivalent_to_java_string_returning_function[calls] =
       ID_cprover_string_format_calls_func;
+    cprover_equivalent_to_java_string_returning_function
+      ["java::java.lang.String.cproverFormatNumbers:(Ljava/lang/String;)Ljava/"
+       "lang/String;"] = ID_cprover_string_format_numbers_func;
   }
 
   cprover_equivalent_to_java_assign_and_return_function

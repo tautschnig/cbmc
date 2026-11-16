@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.oxZeros --java-locale en-US --max-nondet-string-length 60 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+The zeros of %(#010x of a negative BigInteger come after the prefix.

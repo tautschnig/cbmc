@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.g --java-locale en-US --max-nondet-string-length 60 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+%g of a BigDecimal between 10^-4 and 10^6 is printed as %f.

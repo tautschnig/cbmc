@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.g16 --java-locale en-US --java-version 16 --max-nondet-string-length 60 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+As g17: up to Java 16, 100.0.

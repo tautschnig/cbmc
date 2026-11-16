@@ -50,12 +50,14 @@ string_format_builtin_functiont::string_format_builtin_functiont(
 
   // List of arguments after the format string
   inputs = make_range(fun_args.begin() + 3, fun_args.end())
-             .map([&](const exprt &arg) {
-               INVARIANT(
-                 is_refined_string_type(arg.type()),
-                 "arguments of format should be strings");
-               return get_string_expr(array_pool, arg);
-             })
+             .map(
+               [&](const exprt &arg)
+               {
+                 INVARIANT(
+                   is_refined_string_type(arg.type()),
+                   "arguments of format should be strings");
+                 return get_string_expr(array_pool, arg);
+               })
              .collect<std::vector<array_string_exprt>>();
 
   // format_string is only initialized if the expression is constant
@@ -322,8 +324,11 @@ static std::pair<array_string_exprt, string_constraintst> argument_text(
 /// \param message_handler: message handler for warnings
 /// \param cases: the case families that the upper case may follow (see
 ///   java_locale_symbolst)
-/// \param call_text: for a %s or %h, the string of the call that the models
-///   made on an object argument (see is_called_object), if any
+/// \param call_text: the string that the models give for the specifier (see
+///   string_format_builtin_functiont): for a %s or %h, that of the call that
+///   they made on an object argument (see is_called_object); for a %d, %o or
+///   %x, the digits of a BigInteger; for a %e, %f or %g, the string of a
+///   BigDecimal
 /// \return String expression representing the output of String.format.
 static std::pair<array_string_exprt, string_constraintst>
 add_axioms_for_format_specifier(
@@ -352,7 +357,6 @@ add_axioms_for_format_specifier(
     constraints = std::move(return_code.second);
     constraints.existential.push_back(
       string_is_constant_if(null, res, "null", array_pool));
-    // (the digits of a BigInteger are not modelled)
     string_equals_if(
       generator,
       kind_is_one_of(string_arg, integral_kinds),
@@ -360,13 +364,24 @@ add_axioms_for_format_specifier(
       digits,
       constraints,
       message_handler);
+    // the digits of a BigInteger, which the models give (see number_texts)
+    if(call_text.has_value())
+    {
+      string_equals_if(
+        generator,
+        kind_is(string_arg, kind_big_integer),
+        res,
+        *call_text,
+        constraints,
+        message_handler);
+    }
     return {res, std::move(constraints)};
   }
   case format_specifiert::HEXADECIMAL_INTEGER:
   case format_specifiert::OCTAL_INTEGER:
   {
-    // the unsigned value of a Byte, Short, Integer or Long (the digits of a
-    // BigInteger are not modelled)
+    // the unsigned value of a Byte, Short, Integer or Long; the signed one
+    // of a BigInteger, which the models give (see number_texts)
     const exprt null = is_null(string_arg, array_pool);
     const array_string_exprt digits =
       array_pool.fresh_string(index_type, char_type);
@@ -387,6 +402,16 @@ add_axioms_for_format_specifier(
       digits,
       constraints,
       message_handler);
+    if(call_text.has_value())
+    {
+      string_equals_if(
+        generator,
+        kind_is(string_arg, kind_big_integer),
+        res,
+        *call_text,
+        constraints,
+        message_handler);
+    }
     return {res, std::move(constraints)};
   }
   case format_specifiert::CHARACTER:
@@ -575,7 +600,8 @@ add_axioms_for_format_specifier(
   case format_specifiert::HEXADECIMAL_FLOAT:
   {
     // Formatter's string of the double value of a Float or Double (see
-    // java_format_float), or "null" (that of a BigDecimal is not modelled)
+    // java_format_float), or "null"; that of a BigDecimal, which the models
+    // give (see number_texts)
     const exprt null = is_null(string_arg, array_pool);
     const array_string_exprt printed =
       array_pool.fresh_string(index_type, char_type);
@@ -593,6 +619,16 @@ add_axioms_for_format_specifier(
       printed,
       constraints,
       message_handler);
+    if(call_text.has_value())
+    {
+      string_equals_if(
+        generator,
+        kind_is(string_arg, kind_big_decimal),
+        res,
+        *call_text,
+        constraints,
+        message_handler);
+    }
     return {res, std::move(constraints)};
   }
   }
@@ -907,10 +943,29 @@ add_axioms_for_decorated_specifier(
     core = core_result.first;
   }
 
-  // whether the argument is a number that the conversion prints as one
+  // whether the argument is a number that the conversion prints as one: for
+  // %d also a BigInteger, and for %e, %f and %g a BigDecimal, whose core
+  // the models give (see number_texts) with the sign and the digits as
+  // those of the others
   exprt numeric = false_exprt{};
-  if(c == 'd' || c == 'o' || c == 'x')
+  // (%% and %n have no argument)
+  // (without a text of the models, the argument is none of them)
+  const bool big = call_text.has_value();
+  const exprt big_decimal =
+    big && is_float ? kind_is(arg, kind_big_decimal) : exprt{false_exprt{}};
+  if(c == 'd' && big)
+    numeric = kind_is_one_of(arg, integral_kinds + kind_big_integer);
+  else if(c == 'd')
     numeric = kind_is_one_of(arg, integral_kinds);
+  else if(c == 'o' || c == 'x')
+    numeric = kind_is_one_of(arg, integral_kinds);
+  else if(c == 'a')
+    numeric = kind_is_one_of(arg, std::string{kind_float, kind_double});
+  else if(is_float && big)
+  {
+    numeric = kind_is_one_of(
+      arg, std::string{kind_float, kind_double, kind_big_decimal});
+  }
   else if(is_float)
     numeric = kind_is_one_of(arg, std::string{kind_float, kind_double});
 
@@ -940,7 +995,8 @@ add_axioms_for_decorated_specifier(
       array_string_exprt magnitude = magnitude_plain;
       if(has(alternate) && precision == 0 && (c == 'e' || c == 'f'))
       {
-        // the point of `#`, for a finite value
+        // the point of `#`, for a finite value (that of a BigDecimal is in
+        // the string of the models)
         const array_string_exprt dotted =
           c == 'f'
             ? p.concat({magnitude_plain, p.constant(".")})
@@ -950,7 +1006,8 @@ add_axioms_for_decorated_specifier(
                  p.substring(
                    magnitude_plain, p.index(1), p.length(magnitude_plain))});
         magnitude = p.choice(
-          {{or_exprt{nan, infinite}, magnitude_plain}, {true_exprt{}, dotted}});
+          {{or_exprt{nan, infinite, big_decimal}, magnitude_plain},
+           {true_exprt{}, dotted}});
       }
       // the separators of `,` in the integer part (before the zeros, which
       // Formatter inserts after them)
@@ -1016,7 +1073,10 @@ add_axioms_for_decorated_specifier(
       number_body = p.choice({{nan, core}, {true_exprt{}, finite}});
     }
   }
-  else if(c == 'o' || c == 'x')
+  // the body of a BigInteger for %o and %x (Formatter.print(BigInteger)):
+  // the sign of the magnitude, the prefix, then the zeros
+  std::optional<array_string_exprt> big_body;
+  if(c == 'o' || c == 'x')
   {
     const array_string_exprt prefix =
       p.constant(has(alternate) ? (c == 'o' ? "0" : "0x") : std::string{});
@@ -1026,12 +1086,41 @@ add_axioms_for_decorated_specifier(
             minus_exprt{p.index(width), p.length(prefix)}, p.length(core)}}
         : p.index(0);
     number_body = p.concat({prefix, p.repeat('0', zeros_count), core});
+
+    if(big)
+    {
+      const exprt negative = equal_exprt{core[p.index(0)], p.character('-')};
+      const array_string_exprt magnitude = p.substring(
+        core, if_exprt{negative, p.index(1), p.index(0)}, p.length(core));
+      const bool paren = has(parentheses);
+      const array_string_exprt lead = p.choice(
+        {{negative, p.constant(paren ? "(" : "-")},
+         {true_exprt{},
+          p.constant(
+            has(plus)            ? "+"
+            : has(leading_space) ? " "
+                                 : std::string{})}});
+      const array_string_exprt trail = p.choice(
+        {{paren ? negative : false_exprt{}, p.constant(")")},
+         {true_exprt{}, p.constant("")}});
+      const exprt big_zeros =
+        has(zero_pad) ? exprt{minus_exprt{
+                          p.index(width),
+                          plus_exprt{
+                            plus_exprt{p.length(lead), p.length(prefix)},
+                            plus_exprt{p.length(magnitude), p.length(trail)}}}}
+                      : p.index(0);
+      big_body =
+        p.concat({lead, prefix, p.repeat('0', big_zeros), magnitude, trail});
+    }
   }
 
   // the body otherwise: the core with the precision (as "null" for %.2f)
   const array_string_exprt text_body =
     precision != -1 ? p.substring(core, p.index(0), p.index(precision)) : core;
   std::vector<std::pair<exprt, array_string_exprt>> bodies;
+  if(big_body.has_value())
+    bodies.emplace_back(kind_is(arg, kind_big_integer), *big_body);
   if(number_body.has_value())
     bodies.emplace_back(numeric, *number_body);
   else if(!number_body_known)
@@ -1215,6 +1304,20 @@ static void localize_numbers(
     message_handler);
 }
 
+/// Whether \p fs is the specifier of a number slot: %d, %o, %x, %e, %f or %g
+/// (in either case), whose string the models give for a BigInteger or a
+/// BigDecimal (see string_format_builtin_functiont::number_texts).
+static bool is_number_slot(const format_specifiert &fs)
+{
+  const char c = static_cast<char>(tolower(fs.conversion));
+  return !fs.dt &&
+         (c == 'd' || c == 'o' || c == 'x' || c == 'e' || c == 'f' || c == 'g');
+}
+
+/// The number of number slots (see is_number_slot), as the encoded
+/// arguments.
+static const std::size_t format_number_slot_count = 10;
+
 /// Parse `s` and add axioms ensuring the output corresponds to the output of
 /// String.format.
 /// \param generator: constraint generator
@@ -1224,6 +1327,9 @@ static void localize_numbers(
 /// \param locale: the locale of the numbers and the case
 /// \param call_texts: the strings of the calls that the models made for the
 ///   %s and %h of each slot (see string_format_builtin_functiont::call_texts)
+/// \param number_texts: the strings of the BigIntegers and BigDecimals of the
+///   %d, %o, %x, %e, %f and %g of each slot (see
+///   string_format_builtin_functiont::number_texts)
 /// \param message_handler: message handler for warnings
 /// \return code, 0 on success
 static std::pair<exprt, string_constraintst> add_axioms_for_format(
@@ -1233,6 +1339,7 @@ static std::pair<exprt, string_constraintst> add_axioms_for_format(
   const std::vector<array_string_exprt> &args,
   const java_locale_symbolst &locale,
   const std::vector<array_string_exprt> &call_texts,
+  const std::vector<array_string_exprt> &number_texts,
   message_handlert &message_handler)
 {
   string_constraintst constraints;
@@ -1243,8 +1350,10 @@ static std::pair<exprt, string_constraintst> add_axioms_for_format(
   const typet &index_type = res.length_type();
 
   array_string_exprt string_arg;
-  // the slot of the next %s or %h (see is_call_slot)
+  // the slot of the next %s or %h (see is_call_slot), and that of the next
+  // number (see is_number_slot)
   std::size_t slot = 0;
+  std::size_t number_slot = 0;
 
   // the zero digit, the decimal separator and the grouping of the locale,
   // the same for the whole call (one of the entries of the locale where
@@ -1290,16 +1399,9 @@ static std::pair<exprt, string_constraintst> add_axioms_for_format(
     {
       const format_specifiert &fs = fe.get_format_specifier();
       const auto position = argument_position(fs, args.size());
-      if(!fs.is_modelled() || (takes_argument(fs) && !position.has_value()))
-      {
-        generator.approximation_warning(
-          "String.format", "is not modelled for missing arguments");
-        intermediary_strings.push_back(
-          array_pool.fresh_string(index_type, char_type));
-        continue;
-      }
-      if(takes_argument(fs))
-        string_arg = args[*position];
+      // the text of the models for the specifier (counting the slots of all
+      // specifiers, as cprover_string_format_calls_func and
+      // cprover_string_format_numbers_func do)
       std::optional<array_string_exprt> call_text;
       const char lower = static_cast<char>(tolower(fs.conversion));
       if(!fs.dt && (lower == 's' || lower == 'h'))
@@ -1313,6 +1415,32 @@ static std::pair<exprt, string_constraintst> add_axioms_for_format(
         }
         ++slot;
       }
+      else if(is_number_slot(fs))
+      {
+        // (a text that the models give as "" says that the argument is no
+        // BigInteger or BigDecimal, whose texts are never empty: the
+        // solver then does not encode them)
+        if(number_slot < number_texts.size())
+        {
+          const exprt length =
+            array_pool.get_or_create_length(number_texts[number_slot]);
+          if(!length.is_constant() || !length.is_zero())
+            call_text = number_texts[number_slot];
+        }
+        else if(!number_texts.empty())
+          call_text = array_pool.fresh_string(index_type, char_type);
+        ++number_slot;
+      }
+      if(!fs.is_modelled() || (takes_argument(fs) && !position.has_value()))
+      {
+        generator.approximation_warning(
+          "String.format", "is not modelled for missing arguments");
+        intermediary_strings.push_back(
+          array_pool.fresh_string(index_type, char_type));
+        continue;
+      }
+      if(takes_argument(fs))
+        string_arg = args[*position];
 
       auto result = fs.has_decoration() ? add_axioms_for_decorated_specifier(
                                             generator,
@@ -1822,6 +1950,7 @@ string_constraintst string_format_builtin_functiont::constraints(
     inputs,
     locale,
     call_texts,
+    number_texts,
     message_handler);
   INVARIANT(
     simplify_expr(result_constraint_pair.first, generator.ns) == 0,
@@ -1975,9 +2104,10 @@ std::optional<exprt> length_for_format_specifier(
   case format_specifiert::BOOLEAN:
   case format_specifiert::BOOLEAN_UPPER:
   {
-    return if_exprt{format_arg_from_string(arg, ID_boolean, array_pool),
-                    from_integer(4, index_type),
-                    from_integer(5, index_type)};
+    return if_exprt{
+      format_arg_from_string(arg, ID_boolean, array_pool),
+      from_integer(4, index_type),
+      from_integer(5, index_type)};
   }
   case format_specifiert::STRING:
     // the text after the kind and the value
@@ -2048,6 +2178,14 @@ bool string_format_builtin_functiont::length_is_exact() const
       if(!call_texts.empty())
         return false;
       break;
+    case format_specifiert::DECIMAL_INTEGER:
+    case format_specifiert::OCTAL_INTEGER:
+    case format_specifiert::HEXADECIMAL_INTEGER:
+    case format_specifiert::HEXADECIMAL_INTEGER_UPPER:
+      // (nor for the digits of a BigInteger, see number_texts)
+      if(!number_texts.empty())
+        return false;
+      break;
     default:
       break;
     }
@@ -2116,8 +2254,8 @@ exprt string_format_builtin_functiont::length_constraint() const
     total_length =
       plus_exprt{std::move(total_length), intermediary_string_lengths[i]};
   }
-  constraints.push_back(equal_exprt{array_pool.get_or_create_length(result),
-                                    std::move(total_length)});
+  constraints.push_back(equal_exprt{
+    array_pool.get_or_create_length(result), std::move(total_length)});
 
   return conjunction(constraints);
 }
@@ -2628,6 +2766,77 @@ string_constraint_generatort::add_axioms_for_format_calls(
   return {return_code, constraints};
 }
 
+/// The number slots of a format string (see is_number_slot), of which the
+/// models give the strings of the BigIntegers and BigDecimals: three
+/// characters for each of the first format_number_slot_count, in the order of
+/// parse_format_string: the argument (from 1, 0 for none), the conversion
+/// (in lower case) and the precision (plus 1, 0 for none, 0xffff for one
+/// beyond), and then one for the flags (java_format_flagst). For a format
+/// string that is not constant, any string.
+/// \param f: function application with the result (its length and
+///   content) and the format string
+/// \return a return code
+std::pair<exprt, string_constraintst>
+string_constraint_generatort::add_axioms_for_format_numbers(
+  const function_application_exprt &f)
+{
+  PRECONDITION(f.arguments().size() == 3);
+  string_constraintst constraints;
+  const array_string_exprt res =
+    array_pool.find(f.arguments()[1], f.arguments()[0]);
+  const array_string_exprt str = get_string_expr(array_pool, f.arguments()[2]);
+  const exprt return_code = from_integer(0, f.type());
+  const exprt length = array_pool.get_or_create_length(str);
+  if(!length.is_constant() || str.content().id() != ID_array)
+  {
+    approximation_warning(
+      "String.format",
+      "only prints BigIntegers and BigDecimals for a constant format string");
+    return {return_code, constraints};
+  }
+  const auto size = numeric_cast_v<std::size_t>(to_constant_expr(length));
+  const std::string format =
+    utf16_constant_array_to_java(to_array_expr(str.content()), size);
+  const typet &index_type = res.length_type();
+  const typet &char_type = to_type_with_subtype(res.content().type()).subtype();
+  const std::vector<unsigned> codes = java_format_number_codes(format);
+  exprt::operandst conjuncts{equal_exprt{
+    array_pool.get_or_create_length(res),
+    from_integer(codes.size(), index_type)}};
+  for(std::size_t i = 0; i < codes.size(); ++i)
+  {
+    conjuncts.push_back(equal_exprt{
+      res[from_integer(i, index_type)], from_integer(codes[i], char_type)});
+  }
+  constraints.existential.push_back(conjunction(conjuncts));
+  return {return_code, constraints};
+}
+
+std::vector<unsigned> java_format_number_codes(const std::string &format)
+{
+  std::vector<unsigned> codes;
+  for(const format_elementt &fe : parse_format_string(format))
+  {
+    if(!fe.is_format_specifier())
+      continue;
+    const format_specifiert &fs = fe.get_format_specifier();
+    if(!is_number_slot(fs))
+      continue;
+    if(codes.size() >= 4 * format_number_slot_count)
+      break;
+    const auto position = argument_position(fs, format_number_slot_count);
+    codes.push_back(position.has_value() ? *position + 1 : 0);
+    codes.push_back(static_cast<unsigned char>(tolower(fs.conversion)));
+    codes.push_back(
+      fs.precision < 0         ? 0
+      : fs.precision >= 0xfffe ? 0xffff
+                               : static_cast<unsigned>(fs.precision) + 1);
+    codes.push_back(static_cast<unsigned>(
+      java_format_flags(fs.flag, fs.conversion) & 0xffff));
+  }
+  return codes;
+}
+
 /// The calls of toString and hashCode that the arguments of String.format
 /// need for a format string, as bits: bit 2i for the toString of the
 /// argument i (from 0) for a %s, bit 2i+1 for its hashCode for a %h, for
@@ -2647,6 +2856,11 @@ string_constraint_generatort::add_axioms_for_format_uses(
   const auto size = numeric_cast_v<std::size_t>(to_constant_expr(length));
   const std::string format =
     utf16_constant_array_to_java(to_array_expr(str.content()), size);
+  return {from_integer(java_format_uses(format), f.type()), {}};
+}
+
+std::uint32_t java_format_uses(const std::string &format)
+{
   // (those of any of the versions of Formatter that may run the program)
   std::uint32_t uses = 0;
   for(const java_formatter_versiont version : java_formatter_versions())
@@ -2662,5 +2876,5 @@ string_constraint_generatort::add_axioms_for_format_uses(
         uses |= std::uint32_t{1} << (2 * (fs.argument - 1) + 1);
     }
   }
-  return {from_integer(uses, f.type()), {}};
+  return uses;
 }

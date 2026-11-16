@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.ox --java-locale en-US --max-nondet-string-length 60 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+%o and %x of a BigInteger are signed (unlike those of an int), with the
+prefix of # after the sign, and ( + allowed.

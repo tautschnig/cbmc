@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.g17 --java-locale en-US --java-version 17 --max-nondet-string-length 60 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+From Java 17, %g rounds the BigDecimal first: 99.995 to 3 digits is
+100 (Java 8 to 16 print 100.0).

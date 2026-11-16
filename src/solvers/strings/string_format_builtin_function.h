@@ -15,6 +15,8 @@ Author: Romain Brenguier, Joel Allred
 #include "java_locale.h"
 #include "string_builtin_function.h"
 
+#include <cstdint>
+
 class format_specifiert;
 
 /// Built-in function for String.format().
@@ -77,6 +79,11 @@ public:
   /// toString, or Integer.toHexString of hashCode, of an argument whose
   /// string the encoding does not give. None, or ten.
   std::vector<array_string_exprt> call_texts;
+  /// The strings that the models gave for the %d, %o, %x, %e, %f and %g of
+  /// each slot (see cprover_string_format_numbers_func): toString (of the
+  /// radix) of a BigInteger, and Formatter's string of a BigDecimal, with
+  /// its sign. None, or ten.
+  std::vector<array_string_exprt> number_texts;
 
   /// Constructor from arguments of a function application.
   /// The arguments in `fun_args` should be in order:
@@ -97,6 +104,7 @@ public:
   {
     std::vector<array_string_exprt> arguments = inputs;
     arguments.insert(arguments.end(), call_texts.begin(), call_texts.end());
+    arguments.insert(arguments.end(), number_texts.begin(), number_texts.end());
     return arguments;
   }
 
@@ -151,5 +159,13 @@ std::optional<exprt> length_for_format_specifier(
 /// threes, and the case conversion of the default locale), 2 for another
 /// (which the models do not know, so any).
 java_locale_symbolst java_format_locale(const exprt &kind);
+
+/// The characters of cprover_string_format_numbers_func for the constant
+/// format string \p format (see add_axioms_for_format_numbers).
+std::vector<unsigned> java_format_number_codes(const std::string &format);
+
+/// The value of cprover_string_format_uses_func for the constant format
+/// string \p format (see add_axioms_for_format_uses).
+std::uint32_t java_format_uses(const std::string &format);
 
 #endif // CPROVER_SOLVERS_STRINGS_STRING_FORMAT_BUILTIN_FUNCTION_H
