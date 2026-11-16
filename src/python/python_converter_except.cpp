@@ -760,8 +760,17 @@ codet python_convertert::convert_with(const jsont &stmt)
     symbol_table.lookup("python::__exception_active");
   const bool has_cleanup = !with_managers.empty() && exc_active_sym != nullptr;
   const jsont &body = json_member(stmt, "body");
+  // PLR 8.5: only a truthy __exit__ result suppresses the exception. If
+  // no manager's __exit__ can return a truthy value, an exception leaving
+  // the body behaves as if uncaught by this with statement.
+  bool may_suppress = false;
+  for(const auto &m : with_managers)
+    if(exit_may_suppress(m.second))
+      may_suppress = true;
   if(has_cleanup)
     with_cleanup_depth++;
+  if(has_cleanup && may_suppress)
+    with_suppress_depth++;
   if(body.is_array())
   {
     bool first = true;
@@ -778,6 +787,8 @@ codet python_convertert::convert_with(const jsont &stmt)
   }
   if(has_cleanup)
     with_cleanup_depth--;
+  if(has_cleanup && may_suppress)
+    with_suppress_depth--;
 
   // PLR §8.5: build the __exit__(self, exc_type, exc_val, exc_tb)
   // sequence (reverse order of entry). It (a) checks any assertion /
@@ -940,6 +951,63 @@ codet python_convertert::convert_with(const jsont &stmt)
 // __exception_type (hash of exception class name).
 // "The try statement specifies exception handlers and/or cleanup code
 // for a group of statements."
+bool python_convertert::exit_may_suppress(const std::string &cls_name) const
+{
+  // Look for the class's (or an ancestor's) converted __exit__ body. An
+  // unknown manager may suppress.
+  std::vector<std::string> work{cls_name};
+  std::set<std::string> seen;
+  while(!work.empty())
+  {
+    const std::string c = work.back();
+    work.pop_back();
+    if(!seen.insert(c).second)
+      continue;
+    const symbolt *fs = symbol_table.lookup("python::" + c + "::__exit__");
+    if(fs != nullptr)
+    {
+      if(fs->value.id() != ID_code)
+        return true;
+      bool truthy_possible = false;
+      std::function<void(const exprt &)> walk = [&](const exprt &e)
+      {
+        if(truthy_possible)
+          return;
+        if(e.id() == ID_code && to_code(e).get_statement() == ID_return)
+        {
+          const auto &r = to_code_frontend_return(to_code(e));
+          if(!r.has_return_value())
+            return;
+          const exprt &v = r.return_value();
+          // A constant falsy value (False, 0, None sentinel) cannot suppress.
+          if(v.is_constant())
+          {
+            if(v.is_false() || v.is_zero())
+              return;
+            if(
+              v.type().id() == ID_signedbv &&
+              numeric_cast<mp_integer>(v) ==
+                mp_integer{python_none_sentinel_int()})
+              return;
+          }
+          truthy_possible = true;
+          return;
+        }
+        for(const auto &op : e.operands())
+          walk(op);
+      };
+      walk(fs->value);
+      return truthy_possible;
+    }
+    auto bit = class_bases.find(c);
+    if(bit == class_bases.end())
+      return true;
+    for(const auto &b : bit->second)
+      work.push_back(b);
+  }
+  return true;
+}
+
 codet python_convertert::convert_try(const jsont &stmt)
 {
   code_blockt block;

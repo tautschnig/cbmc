@@ -1,0 +1,11 @@
+CORE
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+PLR 8.5: a context manager whose __exit__ returns a truthy value swallows
+the AssertionError raised by an assert in the with body, and the rest of the
+body is skipped.

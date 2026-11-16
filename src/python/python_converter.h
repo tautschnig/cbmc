@@ -2597,6 +2597,16 @@ private:
   std::set<std::string> assert_raise_functions;
   /// Fill assert_raise_functions from the given module bodies.
   void collect_assert_raise_functions(const std::vector<const jsont *> &bodies);
+  /// True when \p e is expensive as a solver hypothesis (quantifiers,
+  /// lambdas, string/regex intrinsics, nonlinear arithmetic): convert_assert
+  /// does not assume such a condition after the property.
+  bool assert_condition_costly(const exprt &e) const;
+  /// True unless the converted __exit__ of \p cls_name (or its nearest
+  /// ancestor defining one) can only return constant falsy values (PLR 8.5:
+  /// only a truthy result suppresses the exception).
+  bool exit_may_suppress(const std::string &cls_name) const;
+  /// Depth of enclosing with bodies whose manager may suppress exceptions.
+  unsigned with_suppress_depth = 0;
   /// Function bodies are converted (sub-pass 1c) BEFORE the module-level
   /// assignments (pass 2), so an unannotated global is only a pass-0
   /// placeholder there (or not registered at all). Each function body's

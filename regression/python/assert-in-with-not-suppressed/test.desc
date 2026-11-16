@@ -1,0 +1,13 @@
+CORE
+main.py
+
+^EXIT=10$
+^SIGNAL=0$
+^\[.*assertion\.1\] .* line 10 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+--
+An __exit__ that only returns False never suppresses, so the assert stays an
+ordinary property. Lowering every assert in any with body to a raise wrapped
+the rest of the body in exception guards and made a 36 s benchmark exceed
+900 s.

@@ -67,7 +67,7 @@ codet python_convertert::convert_assert(const jsont &stmt)
     for(const char *n : {"", "AssertionError", "Exception", "BaseException"})
       if(caught.count(n) > 0)
         handler_catches = true;
-  const bool catchable = handler_catches || with_cleanup_depth > 0 ||
+  const bool catchable = handler_catches || with_suppress_depth > 0 ||
                          (!current_function.empty() &&
                           (assert_raise_functions.count(current_function) > 0 ||
                            assert_raise_functions.count(fn_root) > 0));
@@ -120,11 +120,56 @@ codet python_convertert::convert_assert(const jsont &stmt)
   loc.set_comment("Python assertion");
   code_assertt assertion{cond};
   assertion.add_source_location() = loc;
-  code_assumet assume{cond};
-  assume.add_source_location() = loc;
   block.add(std::move(assertion));
-  block.add(std::move(assume));
+  // The assumption is a precision device: dropping it only makes later
+  // properties also checked on paths where this assert failed (extra
+  // reports, never a hidden failure -- this assert itself still fails).
+  // Assume only conditions that are cheap for the solver; a nonlinear or
+  // quantified hypothesis inherited by every later property made whole
+  // programs undecidable in practice.
+  if(!assert_condition_costly(test))
+  {
+    code_assumet assume{cond};
+    assume.add_source_location() = loc;
+    block.add(std::move(assume));
+  }
   return std::move(block);
+}
+
+bool python_convertert::assert_condition_costly(const exprt &e) const
+{
+  bool costly = false;
+  std::function<void(const exprt &)> walk = [&](const exprt &n)
+  {
+    if(costly)
+      return;
+    const irep_idt &id = n.id();
+    if(
+      id == ID_forall || id == ID_exists || id == ID_lambda ||
+      id == ID_array_comprehension || id == ID_function_application ||
+      id == ID_power || id == ID_side_effect)
+    {
+      costly = true;
+      return;
+    }
+    if(id == ID_mult || id == ID_div || id == ID_mod)
+    {
+      // Linear unless at least two operands are non-constant.
+      std::size_t nonconst = 0;
+      for(const auto &op : n.operands())
+        if(!op.is_constant())
+          ++nonconst;
+      if(nonconst >= 2)
+      {
+        costly = true;
+        return;
+      }
+    }
+    for(const auto &op : n.operands())
+      walk(op);
+  };
+  walk(e);
+  return costly;
 }
 
 void python_convertert::collect_assert_raise_functions(
