@@ -502,6 +502,18 @@ try_get_string_data_array(const exprt &content, const namespacet &ns)
 
   const auto &array_start = to_index_expr(array_pointer.object());
 
+  // The content may point straight at an array literal (after constant
+  // propagation of a string literal), not only at a constant symbol.
+  if(
+    array_start.array().id() == ID_array &&
+    array_start.array().type().id() == ID_array &&
+    array_start.index().is_constant() &&
+    numeric_cast<mp_integer>(array_start.index()) == mp_integer{0})
+  {
+    return std::optional<std::reference_wrapper<const array_exprt>>(
+      to_array_expr(array_start.array()));
+  }
+
   if(
     array_start.array().id() != ID_symbol ||
     array_start.array().type().id() != ID_array)

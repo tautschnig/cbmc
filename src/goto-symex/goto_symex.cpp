@@ -509,6 +509,19 @@ void goto_symext::associate_array_to_pointer(
   const array_exprt &new_char_array,
   const address_of_exprt &string_data)
 {
+  // Language front-ends other than Java's models (e.g. Python) do not
+  // pre-declare the association intrinsic; declare it on first use, as
+  // setup_string_result_backing does.
+  if(!state.symbol_table.has_symbol(ID_cprover_associate_array_to_pointer_func))
+  {
+    symbolt fs{
+      ID_cprover_associate_array_to_pointer_func,
+      mathematical_function_typet(
+        {new_char_array.type(), string_data.type()}, signedbv_typet{32}),
+      language_mode};
+    fs.base_name = id2string(ID_cprover_associate_array_to_pointer_func);
+    state.symbol_table.insert(std::move(fs));
+  }
   const symbolt &function_symbol =
     ns.lookup(ID_cprover_associate_array_to_pointer_func);
 
@@ -646,6 +659,11 @@ goto_symext::try_evaluate_constant_string(
   const statet &state,
   const exprt &content)
 {
+  // Content that constant propagation has already turned into the address
+  // of a constant array literal (the Python front-end's string literals).
+  if(content.id() == ID_address_of)
+    return try_get_string_data_array(content, ns);
+
   if(content.id() != ID_symbol)
   {
     return {};
@@ -665,6 +683,10 @@ goto_symext::try_evaluate_constant_string(
 std::optional<std::reference_wrapper<const constant_exprt>>
 goto_symext::try_evaluate_constant(const statet &state, const exprt &expr)
 {
+  if(expr.is_constant())
+    return std::optional<std::reference_wrapper<const constant_exprt>>(
+      to_constant_expr(expr));
+
   if(expr.id() != ID_symbol)
   {
     return {};

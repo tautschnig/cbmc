@@ -1,0 +1,13 @@
+CORE
+main.py
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+String equality of constant operands (cprover_string_equal_func over
+`{length, &literal[0]}`) is folded during symbolic execution, and the
+address of a constant array literal propagates as a constant. Before, the
+filter stayed symbolic, every drain loop was unwound in full, and this did
+not finish in minutes at the bound needed.

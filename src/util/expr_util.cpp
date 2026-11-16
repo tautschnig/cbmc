@@ -301,6 +301,15 @@ bool can_forward_propagatet::is_constant_address_of(const exprt &expr) const
   }
   else if(expr.id() == ID_string_constant)
     return true;
+  else if(expr.id() == ID_array)
+  {
+    // An array literal whose elements are all constant denotes a fixed
+    // object, like a string constant.
+    for(const auto &op : expr.operands())
+      if(!is_constant(op))
+        return false;
+    return true;
+  }
 
   return false;
 }

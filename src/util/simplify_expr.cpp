@@ -761,6 +761,71 @@ static simplify_exprt::resultt<> simplify_string_startswith(
   return from_integer(is_prefix ? 1 : 0, expr.type());
 }
 
+/// Characters of a constant refined string: the length must be a constant
+/// and the content a constant character array at least that long; the
+/// string is the first `length` characters.
+static std::optional<std::vector<exprt>>
+try_get_constant_string_chars(const exprt &arg, const namespacet &ns)
+{
+  if(!can_cast_expr<refined_string_exprt>(arg))
+    return {};
+  const auto &str = to_string_expr(arg);
+  const auto length = numeric_cast<std::size_t>(str.length());
+  if(!length.has_value())
+    return {};
+  // A string of constant length 0 is empty whatever its content points to.
+  if(*length == 0)
+    return std::vector<exprt>{};
+  const auto data = try_get_string_data_array(str.content(), ns);
+  if(!data.has_value())
+    return {};
+  const auto &chars = data->get().operands();
+  if(chars.size() < *length)
+    return {};
+  std::vector<exprt> result;
+  result.reserve(*length);
+  for(std::size_t i = 0; i < *length; ++i)
+  {
+    if(!chars[i].is_constant())
+      return {};
+    result.push_back(chars[i]);
+  }
+  return result;
+}
+
+/// Fold equality / prefix / suffix of two constant strings.
+static simplify_exprt::resultt<> simplify_string_binary_predicate(
+  const function_application_exprt &expr,
+  const namespacet &ns)
+{
+  const irep_idt &func_id = to_symbol_expr(expr.function()).identifier();
+  if(expr.arguments().size() != 2)
+    return simplify_exprt::unchanged(expr);
+  const auto a = try_get_constant_string_chars(expr.arguments()[0], ns);
+  if(!a.has_value())
+    return simplify_exprt::unchanged(expr);
+  const auto b = try_get_constant_string_chars(expr.arguments()[1], ns);
+  if(!b.has_value())
+    return simplify_exprt::unchanged(expr);
+  bool result;
+  if(func_id == ID_cprover_string_equal_func)
+    result = *a == *b;
+  else if(func_id == ID_cprover_string_is_prefix_func)
+    // is_prefix(prefix, s): prefix is the first argument
+    result =
+      a->size() <= b->size() && std::equal(a->begin(), a->end(), b->begin());
+  else if(func_id == ID_cprover_string_is_suffix_func)
+    // is_suffix(suffix, s): suffix is the first argument
+    result =
+      a->size() <= b->size() && std::equal(a->rbegin(), a->rend(), b->rbegin());
+  else
+    return simplify_exprt::unchanged(expr);
+  if(expr.type().id() == ID_bool)
+    return result ? static_cast<exprt>(true_exprt{})
+                  : static_cast<exprt>(false_exprt{});
+  return from_integer(result ? 1 : 0, expr.type());
+}
+
 simplify_exprt::resultt<> simplify_exprt::simplify_function_application(
   const function_application_exprt &expr)
 {
@@ -812,6 +877,13 @@ simplify_exprt::resultt<> simplify_exprt::simplify_function_application(
   else if(func_id == ID_cprover_string_equals_ignore_case_func)
   {
     return simplify_string_equals_ignore_case(expr, ns);
+  }
+  else if(
+    func_id == ID_cprover_string_equal_func ||
+    func_id == ID_cprover_string_is_prefix_func ||
+    func_id == ID_cprover_string_is_suffix_func)
+  {
+    return simplify_string_binary_predicate(expr, ns);
   }
 
   return unchanged(expr);
