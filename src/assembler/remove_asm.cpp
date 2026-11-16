@@ -176,7 +176,9 @@ void remove_asmt::process_instruction(
 
   const irep_idt &flavor = code.get_flavor();
 
-  if(flavor == ID_gcc && code.operands().size() == 5)
+  if(
+    flavor == ID_gcc &&
+    (code.operands().size() == 5 || code.operands().size() == 6))
     process_instruction_gcc(function_id, to_code_asm_gcc(code), dest);
   else if(flavor == ID_msc && code.operands().size() == 1)
     process_instruction_msc(function_id, code, dest);
@@ -194,7 +196,9 @@ void remove_asmt::approximate(
   goto_programt &dest)
 {
   std::string havocked;
-  if(code.get_flavor() == ID_gcc && code.operands().size() == 5)
+  if(
+    code.get_flavor() == ID_gcc &&
+    (code.operands().size() == 5 || code.operands().size() == 6))
     havocked = approximate_gcc_asm(code, symbol_table, dest);
   else
   {
@@ -308,7 +312,8 @@ bool remove_asmt::lower_gcc(
 
   asm_lowering_contextt ctx(
     symbol_table, function_id, code.source_location(), operands, *semantics);
-  ctx.goto_target = static_cast<const exprt &>(code.find(ID_asm_goto_target));
+  if(code.has_goto_target())
+    ctx.goto_target = code.goto_target();
 
   if(!ctx.prepare())
   {

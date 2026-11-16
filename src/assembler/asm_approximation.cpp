@@ -148,11 +148,10 @@ std::string approximate_gcc_asm(
                    "objects are not havocked)";
   }
 
-  const exprt &goto_target =
-    static_cast<const exprt &>(code.find(ID_asm_goto_target));
-  if(goto_target.is_not_nil())
+  const code_asm_gcct &gcc_goto = static_cast<const code_asm_gcct &>(code);
+  if(gcc_goto.has_goto_target())
   {
-    havoc_lvalue(goto_target, location, dest);
+    havoc_lvalue(gcc_goto.goto_target(), location, dest);
     description += ", and the choice of asm goto label";
   }
 

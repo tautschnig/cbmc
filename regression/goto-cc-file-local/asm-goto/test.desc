@@ -1,0 +1,17 @@
+CORE
+main.c
+compile-and-link assertion-check
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^\*\*\*\* WARNING: no body for function
+--
+An asm goto in a file-local (static) function, built with goto-cc
+--export-file-local-symbols.  The kernel's arch_static_branch (static keys)
+has this shape.  The asm-goto lowering creates a temporary for the jump
+target; storing it as a named sub of the asm code left it unrenamed when the
+enclosing function was mangled, so symex aborted with "failed to find
+...::tmp_asm_goto_target".  Carrying the target as an operand lets the rename
+pass reach it, so symex succeeds and the assertion is proven.

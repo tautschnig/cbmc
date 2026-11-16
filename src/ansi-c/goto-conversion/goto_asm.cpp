@@ -23,7 +23,7 @@ void goto_convertt::convert_asm(
   goto_programt &dest,
   const irep_idt &mode)
 {
-  if(code.get_flavor() != ID_gcc || code.operands().size() != 5)
+  if(code.get_flavor() != ID_gcc || code.operands().size() < 5)
   {
     // copy as OTHER
     copy(code, OTHER, dest);
@@ -51,9 +51,12 @@ void goto_convertt::convert_asm(
   // asm goto: the statement chooses a label, or falls through, which the
   // lowering of the statement records in a variable that is dispatched on
   // here
-  const auto &labels = new_code.labels().operands();
+  std::vector<irep_idt> label_identifiers;
+  for(const auto &label : new_code.labels().operands())
+    label_identifiers.push_back(label.get(ID_identifier));
+
   symbol_exprt goto_target{irep_idt{}, typet{}};
-  if(!labels.empty())
+  if(!label_identifiers.empty())
   {
     goto_target = new_tmp_symbol(
                     unsigned_int_type(),
@@ -62,7 +65,7 @@ void goto_convertt::convert_asm(
                     code.source_location(),
                     mode)
                     .symbol_expr();
-    new_code.add(ID_asm_goto_target, goto_target);
+    new_code.add_goto_target(goto_target);
   }
 
   copy(new_code, OTHER, dest);
@@ -71,9 +74,9 @@ void goto_convertt::convert_asm(
   // (1-based) of the label the block jumped to, or 0 to fall through. Dispatch
   // on it with ordinary conditional gotos, converted through the normal path
   // so that scopes and destructors are handled correctly.
-  for(std::size_t i = 0; i < labels.size(); ++i)
+  for(std::size_t i = 0; i < label_identifiers.size(); ++i)
   {
-    code_gotot code_goto{labels[i].get(ID_identifier)};
+    code_gotot code_goto{label_identifiers[i]};
     code_goto.add_source_location() = code.source_location();
 
     code_ifthenelset if_goto{

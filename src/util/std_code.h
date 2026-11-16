@@ -1352,6 +1352,33 @@ public:
     return operands()[4];
   }
 
+  /// \return true if this statement is an `asm goto` for which goto conversion
+  ///   has recorded the target variable (see \ref goto_convertt::convert_asm)
+  bool has_goto_target() const
+  {
+    return operands().size() >= 6;
+  }
+
+  /// The variable that the lowering of an `asm goto` sets to the (1-based)
+  /// index of the label the block branched to, or 0 for fall-through. Stored
+  /// as an operand (not a named sub) so that symbol renaming and replacement
+  /// passes update it like any other symbol.
+  exprt &goto_target()
+  {
+    return operands()[5];
+  }
+
+  const exprt &goto_target() const
+  {
+    return operands()[5];
+  }
+
+  void add_goto_target(exprt target)
+  {
+    PRECONDITION(operands().size() == 5);
+    operands().push_back(std::move(target));
+  }
+
 protected:
   using code_asmt::op0;
   using code_asmt::op1;
@@ -1367,7 +1394,11 @@ inline bool can_cast_expr<code_asm_gcct>(const exprt &base)
 
 inline void validate_expr(const code_asm_gcct &x)
 {
-  validate_operands(x, 5, "code_asm_gcc must have five operands");
+  // five operands (template, outputs, inputs, clobbers, labels), with an
+  // optional sixth for the asm-goto target variable
+  validate_operands(x, 5, "code_asm_gcc must have five or six operands", true);
+  DATA_INVARIANT(
+    x.operands().size() <= 6, "code_asm_gcc must have five or six operands");
 }
 
 inline code_asm_gcct &to_code_asm_gcc(codet &code)
