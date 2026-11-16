@@ -1050,6 +1050,12 @@ private:
   /// the int default. Without this the typecast at append
   /// time zeros struct-typed elements (e.g. strings).
   std::map<irep_idt, typet> empty_list_inferred_types;
+  /// Inner element type of a name bound to a list of EMPTY lists
+  /// (`xs = [[], []]` or `xs = [[] for _ in range(n)]`), inferred by
+  /// collect_empty_list_inferred_types from a later `xs[i].append(v)`
+  /// (PLR 3.2: the empty inner lists receive v's type). Without it the
+  /// inner lists defaulted to list[int] and the append punned v.
+  std::map<irep_idt, typet> nested_empty_list_inner_types;
   /// Analogous to empty_list_inferred_types but for dicts: an
   /// unannotated `d = {}` whose first `d[k] = v` is found by the
   /// pre-scan records (key_type, value_type) here, so the `{}`

@@ -2184,6 +2184,43 @@ codet python_convertert::convert_assign(const jsont &stmt)
     }
   }
 
+  // PLR 3.2: a list of EMPTY lists (`[[], []]` or `[[] for _ in
+  // range(n)]`) whose inner lists later receive `name[i].append(v)`: build
+  // the inner lists with v's inferred type (nested_empty_list_inner_types),
+  // keeping the outer length. The default list[int] inner type punned a
+  // str (or any non-int) append.
+  if(
+    (is_node_type(value, "List") || is_node_type(value, "ListComp")) &&
+    as_array(targets).size() == 1 &&
+    is_node_type(*as_array(targets).begin(), "Name") &&
+    is_python_list_type(rhs.type()))
+  {
+    irep_idt lhs_id{
+      qualify_name(json_string(json_member(*as_array(targets).begin(), "id")))};
+    auto nit = nested_empty_list_inner_types.find(lhs_id);
+    if(nit != nested_empty_list_inner_types.end())
+    {
+      const struct_typet inner_t = python_list_type(nit->second);
+      const auto &inner_data_t = to_array_type(inner_t.components()[1].type());
+      const struct_exprt empty_inner{
+        {from_integer(0, signedbv_typet{64}),
+         build_list_data(exprt::operandst{}, inner_data_t)},
+        inner_t};
+      const struct_typet outer_t = python_list_type(inner_t);
+      const auto &outer_data_t = to_array_type(outer_t.components()[1].type());
+      const typet &slot_t = outer_data_t.element_type();
+      exprt slot_v = slot_t == inner_t ? exprt{empty_inner}
+                                       : coerce_element(empty_inner, slot_t);
+      const member_exprt old_len{rhs, "length", signedbv_typet{64}};
+      exprt len = rhs.id() == ID_struct && !rhs.operands().empty()
+                    ? rhs.operands()[0]
+                    : exprt{old_len};
+      rhs = struct_exprt{
+        {std::move(len), array_of_exprt{std::move(slot_v), outer_data_t}},
+        outer_t};
+    }
+  }
+
   // §list widening: a NON-empty list literal whose element inference widened to
   // python_value (the pre-pass detected a later `xs[i] = <mismatch>` store) is
   // rebuilt with python_value elements so the runtime tag is PRESERVED -- else

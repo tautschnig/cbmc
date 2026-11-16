@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 4
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+An append of a user function's result takes the function's declared scalar
+return type as the list's element type. It was uninferable, which widened
+the list to boxed python_value elements and made every store at a symbolic
+index expand into 16 seven-field box updates.

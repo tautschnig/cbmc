@@ -1961,6 +1961,23 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
       // lose the tag of any other subclass appended later).
       if(class_types.find(callee) != class_types.end())
         return python_value_type();
+      // A user function whose signature is already registered (sub-pass
+      // 1b runs before bodies are converted): its declared scalar return
+      // type is the element type. Without this an append of such a call
+      // result was uninferable and widened the list to python_value,
+      // whose 7-field boxes made every symbolic-index store expensive.
+      // Scalars only (int/float/bool/str): a container or object result
+      // keeps the conservative path.
+      const symbolt *fs = symbol_table.lookup(irep_idt{"python::" + callee});
+      if(fs != nullptr && fs->type.id() == ID_code)
+      {
+        const typet &rt = to_code_type(fs->type).return_type();
+        if(
+          rt.id() == ID_signedbv || rt.id() == ID_integer ||
+          rt.id() == ID_floatbv || rt.id() == ID_bool ||
+          is_python_string_type(rt))
+          return rt;
+      }
     }
     // Arithmetic / concatenation: int op int -> int, float involved
     // -> float, str + str -> str. Lets e.g. `d[i] = i * 2` infer an
@@ -2000,8 +2017,30 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
           if(vt.id() == ID_pointer)
             vt = to_pointer_type(vt).base_type();
           if(is_python_list_type(vt))
+          {
+            // A slice of a list is a list of the same type.
+            if(is_node_type(json_member(n, "slice"), "Slice"))
+              return vt;
             return to_array_type(to_struct_type(vt).components()[1].type())
               .element_type();
+          }
+          // PLR 6.3.2: indexing or slicing a str gives a str.
+          if(is_python_string_type(vt))
+            return python_string_type();
+        }
+      }
+      else
+      {
+        // Nested subscript (`rows[i][2:18]`): type the base first.
+        typet bt = type_of_expr(v);
+        if(is_python_string_type(bt))
+          return python_string_type();
+        if(is_python_list_type(bt))
+        {
+          if(is_node_type(json_member(n, "slice"), "Slice"))
+            return bt;
+          return to_array_type(to_struct_type(bt).components()[1].type())
+            .element_type();
         }
       }
     }
@@ -2011,6 +2050,10 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
   // Track which names are pending (i.e. we've seen 'name = []'
   // but not yet seen the inferring append).
   std::set<irep_idt> pending;
+  // Names bound to a list of EMPTY lists (literal `[[], []]` or the
+  // binder-independent comprehension `[[] for _ in range(n)]`), whose
+  // inner element type a later `name[i].append(v)` decides.
+  std::set<irep_idt> pending_nested;
   // Names bound to an empty `{}` dict, not yet resolved by a d[k]=v.
   std::set<irep_idt> pending_dict;
   // Walk top-level statements in order. Reset pending when we
@@ -2069,6 +2112,41 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
           // lists NOT admitted) so the append/insert annotation-MISMATCH check
           // can fire on the incompatible store -- that opt-in mode reports the
           // laundering as a property instead of soundly widening it away.
+          // A list of empty lists: `[[], []]` or `[[] for _ in range(n)]`.
+          auto is_empty_list = [this](const jsont &n)
+          {
+            return is_node_type(n, "List") &&
+                   json_member(n, "elts").is_array() &&
+                   as_array(json_member(n, "elts")).empty();
+          };
+          bool nested_empty = false;
+          if(is_node_type(value, "List"))
+          {
+            const jsont &elts = json_member(value, "elts");
+            if(elts.is_array() && !as_array(elts).empty())
+            {
+              nested_empty = true;
+              for(const auto &e : as_array(elts))
+                if(!is_empty_list(e))
+                  nested_empty = false;
+            }
+          }
+          else if(is_node_type(value, "ListComp"))
+          {
+            const jsont &gens = json_member(value, "generators");
+            nested_empty =
+              is_empty_list(json_member(value, "elt")) && gens.is_array() &&
+              as_array(gens).size() == 1 &&
+              (!json_member(*as_array(gens).begin(), "ifs").is_array() ||
+               as_array(json_member(*as_array(gens).begin(), "ifs")).empty());
+          }
+          if(nested_empty && !is_ann)
+          {
+            pending_nested.insert(sid);
+            nested_empty_list_inner_types.erase(sid);
+          }
+          else
+            pending_nested.erase(sid);
           if(
             is_node_type(value, "List") &&
             json_member(value, "elts").is_array() &&
@@ -2410,6 +2488,38 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
                     pending_dict.erase(did);
                   }
                 }
+              }
+            }
+            // `name[i].append(v)` on a list of empty lists: v's type is the
+            // inner element type. Same Any-dominance rules as below: an
+            // uninferable or a second, different type widens to
+            // python_value.
+            if(
+              is_node_type(obj_node, "Subscript") &&
+              is_node_type(json_member(obj_node, "value"), "Name") &&
+              !is_node_type(json_member(obj_node, "slice"), "Slice") &&
+              (method == "append" || method == "insert"))
+            {
+              irep_idt sid{qualify_name(json_string(
+                json_member(json_member(obj_node, "value"), "id")))};
+              const bool tracked = pending_nested.count(sid) > 0 ||
+                                   nested_empty_list_inner_types.count(sid) > 0;
+              const jsont &args = json_member(val, "args");
+              const std::size_t vi = method == "insert" ? 1 : 0;
+              if(tracked && args.is_array() && as_array(args).size() > vi)
+              {
+                auto ait = as_array(args).begin();
+                std::advance(ait, vi);
+                typet t = type_of_expr(*ait);
+                const bool inferable = !t.id().empty() && t.id() != ID_empty;
+                auto cur = nested_empty_list_inner_types.find(sid);
+                if(!inferable)
+                  nested_empty_list_inner_types[sid] = python_value_type();
+                else if(cur == nested_empty_list_inner_types.end())
+                  nested_empty_list_inner_types[sid] = t;
+                else if(!is_python_value_type(cur->second) && cur->second != t)
+                  nested_empty_list_inner_types[sid] = python_value_type();
+                pending_nested.erase(sid);
               }
             }
             if(

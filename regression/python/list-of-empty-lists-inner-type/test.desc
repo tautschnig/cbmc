@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 4
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+PLR 3.2: the inner lists of `[[], []]` / `[[] for _ in range(n)]` take the
+type of what `name[i].append(v)` stores (python_value when the types
+differ). They defaulted to list[int], so a str append was punned into an int
+(its first character code).

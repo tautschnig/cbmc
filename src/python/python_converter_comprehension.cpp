@@ -1171,7 +1171,59 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
         if(single_arg && bound_is_int && single_gen)
         {
           const source_locationt loc = get_location(expr);
-          typet et = python_int_type();
+          // A filter-free element expression that does not mention the
+          // comprehension variable (`[[] for _ in range(n)]`,
+          // `[0 for _ in range(n)]`) denotes the SAME value in every
+          // slot: PLR 6.2.4 evaluates it once per iteration, and a fresh
+          // empty/constant value is equal each time. Fill the data with
+          // it instead of nondet, with the element's real type (the int
+          // default made `[[] ...]` a list of nondet ints).
+          exprt uniform_elt = nil_exprt{};
+          if(no_ifs)
+          {
+            const std::string vn =
+              json_string(json_member(json_member(gen, "target"), "id"));
+            std::function<bool(const jsont &)> mentions =
+              [&](const jsont &n) -> bool
+            {
+              if(n.is_array())
+              {
+                for(const auto &c : as_array(n))
+                  if(mentions(c))
+                    return true;
+                return false;
+              }
+              if(!n.is_object())
+                return false;
+              if(
+                is_node_type(n, "Name") &&
+                json_string(json_member(n, "id")) == vn)
+                return true;
+              // Calls may have effects or read state: not uniform.
+              if(
+                is_node_type(n, "Call") || is_node_type(n, "NamedExpr") ||
+                is_node_type(n, "Await") || is_node_type(n, "Yield"))
+                return true;
+              for(const auto &kv : to_json_object(n))
+                if(kv.first != "_type" && mentions(kv.second))
+                  return true;
+              return false;
+            };
+            if(!mentions(elt))
+            {
+              const std::size_t pc0 = pending_checks.size();
+              exprt ev = convert_expression(elt);
+              if(
+                ev.is_not_nil() && pending_checks.size() == pc0 &&
+                !has_subexpr(ev, ID_side_effect))
+                uniform_elt = std::move(ev);
+              else
+                pending_checks.erase(
+                  pending_checks.begin() + pc0, pending_checks.end());
+            }
+          }
+          typet et =
+            uniform_elt.is_nil() ? python_int_type() : uniform_elt.type();
           struct_typet lt = python_list_type(et);
           static unsigned rc_ctr = 0;
           irep_idt tid{
@@ -1198,8 +1250,21 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
             if_exprt{binary_relation_exprt{b64, ID_gt, cap}, cap, b64}};
           member_exprt len_m{tmp, "length", signedbv_typet{64}};
           if(no_ifs)
+          {
             // No filter: length is EXACTLY the range size.
             pending_checks.push_back(code_frontend_assignt{len_m, clamped});
+            if(uniform_elt.is_not_nil())
+            {
+              const typet &data_t = lt.components()[1].type();
+              const typet &slot_t = to_array_type(data_t).element_type();
+              exprt slot_v = uniform_elt.type() == slot_t
+                               ? uniform_elt
+                               : coerce_element(uniform_elt, slot_t);
+              pending_checks.push_back(code_frontend_assignt{
+                member_exprt{tmp, "data", data_t},
+                array_of_exprt{std::move(slot_v), to_array_type(data_t)}});
+            }
+          }
           else
           {
             // Filter: 0 <= length <= range size (unknown how many survive).

@@ -1,0 +1,14 @@
+CORE
+main.py
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+A comprehension over range(n) with a bound that is not a conversion-time
+constant, whose element expression does not mention the loop variable
+(`[[] for _ in range(n)]`), has that value in every slot. Its elements were
+nondet, so the "empty" inner lists could be non-empty and every loop over
+them stayed open; a stored string slice was punned as in
+list-of-empty-lists-inner-type.

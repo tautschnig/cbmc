@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 4
+^EXIT=10$
+^SIGNAL=0$
+^\[.*assertion\.4\] .* line 14 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+--
+Refutation twin: the int stored in the second inner list is 5.
