@@ -34,6 +34,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "simplify_expr_with_value_set.h"
 #include "symex_assign.h"
 
+#include <algorithm>
 #include <climits>
 #include <iostream>
 
@@ -872,8 +873,40 @@ bool goto_symext::constant_propagate_string_concat(
 
   const array_exprt &s2_data = s2_data_opt->get();
 
-  const std::size_t new_size =
-    s1_data.operands().size() + s2_data.operands().size();
+  // The substring of s2 from the optional start and end arguments, bounded
+  // as by the solver (string_concatenation_builtin_functiont): from
+  // max(0, start) to max(min(end, |s2|), max(0, start)).
+  const std::size_t s2_size = s2_data.operands().size();
+  std::size_t start = 0;
+  std::size_t end = s2_size;
+  if(f_l1.arguments().size() > 4)
+  {
+    if(f_l1.arguments().size() != 6)
+      return false;
+    const auto start_opt = try_evaluate_constant(state, f_l1.arguments()[4]);
+    const auto end_opt = try_evaluate_constant(state, f_l1.arguments()[5]);
+    if(!start_opt || !end_opt)
+      return false;
+    const mp_integer start_index =
+      numeric_cast_v<mp_integer>(to_constant_expr(*start_opt));
+    const mp_integer end_index =
+      numeric_cast_v<mp_integer>(to_constant_expr(*end_opt));
+    const mp_integer first = std::max(start_index, mp_integer{0});
+    const mp_integer last =
+      std::max(std::min(end_index, mp_integer{s2_size}), first);
+    if(first > s2_size)
+    {
+      start = s2_size;
+      end = s2_size;
+    }
+    else
+    {
+      start = numeric_cast_v<std::size_t>(first);
+      end = numeric_cast_v<std::size_t>(last);
+    }
+  }
+
+  const std::size_t new_size = s1_data.operands().size() + (end - start);
 
   const constant_exprt new_char_array_length =
     from_integer(new_size, length_type);
@@ -882,7 +915,9 @@ bool goto_symext::constant_propagate_string_concat(
 
   exprt::operandst operands(s1_data.operands());
   operands.insert(
-    operands.end(), s2_data.operands().begin(), s2_data.operands().end());
+    operands.end(),
+    s2_data.operands().begin() + start,
+    s2_data.operands().begin() + end);
 
   const array_exprt new_char_array(std::move(operands), new_char_array_type);
 
