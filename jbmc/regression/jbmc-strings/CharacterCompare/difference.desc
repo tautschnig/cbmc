@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.difference --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Character.compare is the difference of the characters (it was -1, 0 or 1).

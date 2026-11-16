@@ -118,14 +118,12 @@ codet character_refine_preprocesst::convert_compare(conversion_inputt &target)
   const exprt &char2=function_call.arguments()[1];
   const exprt &result=function_call.lhs();
   const typet &type=result.type();
-  binary_relation_exprt smaller(char1, ID_lt, char2);
-  binary_relation_exprt greater(char1, ID_gt, char2);
-  if_exprt expr(
-    smaller,
-    from_integer(-1, type),
-    if_exprt(greater, from_integer(1, type), from_integer(0, type)));
-
-  return code_assignt(result, expr);
+  // x - y, as Character.compare (not only its sign)
+  return code_assignt{
+    result,
+    minus_exprt{
+      typecast_exprt::conditional_cast(char1, type),
+      typecast_exprt::conditional_cast(char2, type)}};
 }
 
 /// Converts function call to an assignment of an expression corresponding to
