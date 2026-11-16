@@ -1,0 +1,14 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+A function calling a constructor-returning function defined LATER in the file
+bound the call result as an object struct, while the callee returned a
+pointer to a fresh object (the return type was only fixed when the callee's
+body was converted), so the field read was garbage. Signatures now get the
+reference-instance return rules when they are registered, and freshness is
+computed for every function before any body is converted.

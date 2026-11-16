@@ -2617,6 +2617,11 @@ private:
   /// Subscript `expr` (an AST Subscript node) applied to an already
   /// converted receiver \p value.
   exprt convert_subscript_of(const jsont &expr, exprt value);
+  /// Provable-freshness scan of a function definition (see
+  /// function_returns_fresh); AST-only.
+  void record_function_freshness(
+    const jsont &stmt,
+    const std::string &qualified_func_name);
   /// The python_value receiver whose subscript convert_subscript_of is
   /// currently splitting by tag (its arms must not split again).
   exprt pv_subscript_receiver = nil_exprt{};

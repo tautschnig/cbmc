@@ -837,6 +837,11 @@ void python_convertert::process_imported_module(
             ret_type = inf.type;
         }
 
+        if(user_module && !returns.is_null())
+        {
+          maybe_pointer_field_return(stmt, "", ret_type);
+          maybe_nullable_instance_return(returns, ret_type);
+        }
         code_typet func_type{params, ret_type};
         symbolt func_sym{sym_id, func_type, "python"};
         func_sym.base_name = fname;
@@ -871,7 +876,13 @@ void python_convertert::process_imported_module(
         // type surface. The main-file functions are handled
         // by convert_function_def (non-lazy) so they still
         // get their bodies.
-        if(!python_lazy_stubs)
+        // A USER module's function bodies are converted later, by
+        // convert_function_def (see convert()), like the main module's: the
+        // statement-only loop below skips the per-function pre-passes
+        // (empty-list element inference, local/bound-name analysis, ...),
+        // so imported code was modelled less precisely than the same code
+        // in the main file (lists of str punned into ints).
+        if(!python_lazy_stubs && !user_module)
         {
           const jsont &func_body = json_member(stmt, "body");
           if(func_body.is_array())
@@ -1151,27 +1162,7 @@ void python_convertert::process_imported_module(
 
 void python_convertert::reconvert_imported_function_body(const jsont &stmt)
 {
-  const std::string fname = json_string(json_member(stmt, "name"));
-  const irep_idt sym_id{"python::" + fname};
-  const symbolt *fs = symbol_table.lookup(sym_id);
-  if(fs == nullptr || fs->type.id() != ID_code || python_lazy_stubs)
-    return;
-  const typet ret_type = to_code_type(fs->type).return_type();
-  const std::string saved_func = current_function;
-  if(!current_function.empty())
-    enclosing_functions.push_back(current_function);
-  current_function = fname;
-  code_blockt body_block;
-  const jsont &func_body = json_member(stmt, "body");
-  if(func_body.is_array())
-    for(const auto &s : as_array(func_body))
-      body_block.add(convert_statement(s));
-  if(ret_type.id() != ID_empty)
-    body_block.add(code_frontend_returnt{safe_zero(ret_type)});
-  current_function = saved_func;
-  if(!enclosing_functions.empty() && enclosing_functions.back() == saved_func)
-    enclosing_functions.pop_back();
-  symbol_table.get_writeable_ref(sym_id).value = body_block;
+  convert_function_def(stmt);
 }
 
 bool python_convertert::convert()
@@ -3295,6 +3286,14 @@ bool python_convertert::convert()
             ret_type = convert_type_annotation(returns);
           if(ret_type.id() == ID_empty)
             ret_type = python_int_type();
+          // The same reference-instance return rules convert_function_def
+          // applies (AST-only), so a call converted before the callee's
+          // body already sees the final return type.
+          if(!returns.is_null())
+          {
+            maybe_pointer_field_return(stmt, "", ret_type);
+            maybe_nullable_instance_return(returns, ret_type);
+          }
           code_typet fn_type{{}, ret_type};
           symbolt fn_sym{sym_id, fn_type, "python"};
           fn_sym.base_name = fname;
@@ -3688,6 +3687,39 @@ bool python_convertert::convert()
       }
     };
     scan_imports(body);
+    // Freshness of every module-level function (main and imported user
+    // modules) before any body is converted, so that calls converted before
+    // their callee bind fresh-instance results like later ones.
+    if(python_ref_instances_flag())
+    {
+      for(const auto &st : as_array(body))
+        if(
+          is_node_type(st, "FunctionDef") ||
+          is_node_type(st, "AsyncFunctionDef"))
+          record_function_freshness(st, json_string(json_member(st, "name")));
+      for(const auto &[nm, def] : imported_user_defs)
+        if(
+          is_node_type(*def.first, "FunctionDef") ||
+          is_node_type(*def.first, "AsyncFunctionDef"))
+          record_function_freshness(*def.first, nm);
+    }
+    // Function bodies of imported USER modules (signatures were registered
+    // in pass 0.1), with the same conversion as the main module's.
+    for(const auto &[nm, def] : imported_user_defs)
+    {
+      const jsont &st = *def.first;
+      if(
+        !is_node_type(st, "FunctionDef") &&
+        !is_node_type(st, "AsyncFunctionDef"))
+        continue;
+      const std::string saved_filename = filename;
+      filename = def.second;
+      const bool saved_processing = processing_import;
+      processing_import = true;
+      convert_function_def(st);
+      processing_import = saved_processing;
+      filename = saved_filename;
+    }
     for(const auto &stmt : as_array(body))
     {
       if((is_node_type(stmt, "FunctionDef") ||
