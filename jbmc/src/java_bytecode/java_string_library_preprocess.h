@@ -197,6 +197,13 @@ private:
     symbol_table_baset &symbol_table,
     message_handlert &message_handler);
 
+  code_blockt make_not_modelled_unless_code(
+    const java_method_typet &type,
+    const source_locationt &loc,
+    const irep_idt &function_id,
+    symbol_table_baset &symbol_table,
+    message_handlert &message_handler);
+
   code_returnt make_fixed_version_code(
     const java_method_typet &type,
     const source_locationt &loc,

@@ -1,0 +1,10 @@
+CORE
+Test
+--function Test.splitRegex --max-nondet-string-length 4 --unwind 10 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+do not model this case.*: FAILURE$
+--
+--
+split with a regex that the models do not model fails a not-modelled property (assumed away before).

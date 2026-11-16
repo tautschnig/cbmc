@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.encode --unwind 10 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+getBytes of UTF-8, ISO-8859-1, US-ASCII and UTF-16BE beyond ASCII (the model assumed ASCII strings).

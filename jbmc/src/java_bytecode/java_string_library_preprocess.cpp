@@ -1696,6 +1696,35 @@ code_returnt java_string_library_preprocesst::make_may_run_on_code(
   return ret;
 }
 
+/// The code of CProverRuntime.notModelledUnless(condition) of the models: a
+/// property that fails where the models meet a case that they do not model
+/// (so that the case is not assumed away silently), and then an assumption
+/// of the condition.
+code_blockt java_string_library_preprocesst::make_not_modelled_unless_code(
+  const java_method_typet &type,
+  const source_locationt &loc,
+  const irep_idt &function_id,
+  symbol_table_baset &symbol_table,
+  message_handlert &message_handler)
+{
+  (void)function_id;
+  (void)symbol_table;
+  (void)message_handler;
+  const java_method_typet::parameterst &params = type.parameters();
+  PRECONDITION(params.size() == 1);
+  const symbol_exprt condition{params[0].get_identifier(), params[0].type()};
+  const exprt holds =
+    notequal_exprt{condition, from_integer(0, condition.type())};
+  source_locationt check_loc = loc;
+  check_loc.set_comment(
+    "the Java models do not model this case of a library method");
+  check_loc.set_property_class("not-modelled");
+  code_blockt code;
+  code.add(code_assertt{holds}, check_loc);
+  code.add(code_assumet{holds}, loc);
+  return code;
+}
+
 /// The code of CProverRuntime.fixedVersion() of the models: the version of
 /// the Java runtime where only one may run the program (--java-version), 0
 /// otherwise (see configt::javat).
@@ -2089,6 +2118,15 @@ void java_string_library_preprocesst::initialize_conversion_table()
   cprover_equivalent_to_java_function
     ["java::java.lang.String.lastIndexOf:(Ljava/lang/String;I)I"]=
       ID_cprover_string_last_index_of_func;
+  conversion_table["java::java.lang.CProverRuntime.notModelledUnless:(Z)V"] =
+    std::bind(
+      &java_string_library_preprocesst::make_not_modelled_unless_code,
+      this,
+      std::placeholders::_1,
+      std::placeholders::_2,
+      std::placeholders::_3,
+      std::placeholders::_4,
+      std::placeholders::_5);
   conversion_table["java::java.lang.CProverRuntime.fixedVersion:()I"] =
     std::bind(
       &java_string_library_preprocesst::make_fixed_version_code,
