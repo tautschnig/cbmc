@@ -1,0 +1,11 @@
+CORE
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+int(s, base) of a string that is constant after propagation is evaluated
+during symbolic execution (an optional '-' and digits of the base); this
+removed every string-solver call from a real-world input.

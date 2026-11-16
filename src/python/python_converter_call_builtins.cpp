@@ -956,11 +956,25 @@ std::optional<exprt> python_convertert::try_builtin_call(
         {
           const typet it = python_int_type();
           const exprt is_str = python_value_is(arg, python_type_tagt::STR);
+          // Parse only on paths where the value is a str: an unconditional
+          // parse of the (empty) string field of a non-str value is dead
+          // work for the string solver on every path.
+          const std::size_t pc_parse = pending_checks.size();
           exprt str_case = emit_int_parse(
             python_value_str(arg),
             parse_base,
             has_base_arg_nonconst,
             get_location(expr));
+          if(pending_checks.size() > pc_parse)
+          {
+            code_blockt parse_block;
+            for(std::size_t i = pc_parse; i < pending_checks.size(); ++i)
+              parse_block.add(std::move(pending_checks[i]));
+            pending_checks.erase(
+              pending_checks.begin() + pc_parse, pending_checks.end());
+            pending_checks.push_back(
+              code_ifthenelset{is_str, std::move(parse_block)});
+          }
           if(str_case.type() != it)
             str_case = typecast_exprt{str_case, it};
           if(have_base)

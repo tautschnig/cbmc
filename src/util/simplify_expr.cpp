@@ -826,6 +826,67 @@ static simplify_exprt::resultt<> simplify_string_binary_predicate(
   return from_integer(result ? 1 : 0, expr.type());
 }
 
+/// Fold parse_int(s, radix) of a constant string that is an optional '-'
+/// followed by one or more digits of the radix and fits the result type:
+/// on such strings every parsing convention agrees. Anything else (signs,
+/// whitespace, prefixes, invalid or empty input) is left to the solver.
+static simplify_exprt::resultt<> simplify_string_parse_int(
+  const function_application_exprt &expr,
+  const namespacet &ns)
+{
+  if(
+    expr.arguments().empty() || expr.arguments().size() > 2 ||
+    expr.type().id() != ID_signedbv)
+    return simplify_exprt::unchanged(expr);
+  const auto chars = try_get_constant_string_chars(expr.arguments()[0], ns);
+  if(!chars.has_value() || chars->empty())
+    return simplify_exprt::unchanged(expr);
+  mp_integer radix = 10;
+  if(expr.arguments().size() == 2)
+  {
+    const auto r = numeric_cast<mp_integer>(expr.arguments()[1]);
+    if(!r.has_value() || *r < 2 || *r > 36)
+      return simplify_exprt::unchanged(expr);
+    radix = *r;
+  }
+  std::size_t i = 0;
+  bool negative = false;
+  const auto ch = [&](std::size_t k) -> std::optional<mp_integer>
+  { return numeric_cast<mp_integer>((*chars)[k]); };
+  if(auto c0 = ch(0); c0.has_value() && *c0 == '-')
+  {
+    negative = true;
+    i = 1;
+  }
+  if(i == chars->size())
+    return simplify_exprt::unchanged(expr);
+  mp_integer value = 0;
+  for(; i < chars->size(); ++i)
+  {
+    const auto c = ch(i);
+    if(!c.has_value())
+      return simplify_exprt::unchanged(expr);
+    mp_integer d;
+    if(*c >= '0' && *c <= '9')
+      d = *c - '0';
+    else if(*c >= 'a' && *c <= 'z')
+      d = *c - 'a' + 10;
+    else if(*c >= 'A' && *c <= 'Z')
+      d = *c - 'A' + 10;
+    else
+      return simplify_exprt::unchanged(expr);
+    if(d >= radix)
+      return simplify_exprt::unchanged(expr);
+    value = value * radix + d;
+  }
+  if(negative)
+    value = -value;
+  const auto &bv = to_signedbv_type(expr.type());
+  if(value < bv.smallest() || value > bv.largest())
+    return simplify_exprt::unchanged(expr);
+  return from_integer(value, expr.type());
+}
+
 simplify_exprt::resultt<> simplify_exprt::simplify_function_application(
   const function_application_exprt &expr)
 {
@@ -877,6 +938,10 @@ simplify_exprt::resultt<> simplify_exprt::simplify_function_application(
   else if(func_id == ID_cprover_string_equals_ignore_case_func)
   {
     return simplify_string_equals_ignore_case(expr, ns);
+  }
+  else if(func_id == ID_cprover_string_parse_int_func)
+  {
+    return simplify_string_parse_int(expr, ns);
   }
   else if(
     func_id == ID_cprover_string_equal_func ||
