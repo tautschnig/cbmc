@@ -12,6 +12,8 @@ Date:   June 2017
 
 #include <util/arith_tools.h>
 #include <util/c_types.h>
+#include <util/namespace.h>
+#include <util/prefix.h>
 #include <util/std_code.h>
 #include <util/symbol_table_base.h>
 
@@ -44,7 +46,11 @@ protected:
   code_ifthenelset throw_exception(
     const exprt &cond,
     const source_locationt &original_loc,
-    const irep_idt &exc_name);
+    const irep_idt &exc_name,
+    const std::vector<std::pair<irep_idt, exprt>> &jvm_fields = {});
+
+  std::optional<member_exprt>
+  throwable_member(const exprt &object, const irep_idt &name) const;
 
   codet check_array_access(
     const exprt &array_struct,
@@ -81,6 +87,41 @@ const std::vector<std::string> exception_needed_classes = {
   "java.lang.NegativeArraySizeException",
   "java.lang.NullPointerException"};
 
+/// The kinds of the exceptions of the JVM in the models of Throwable
+static const std::map<irep_idt, int> jvm_exception_kinds = {
+  {"java.lang.ArrayIndexOutOfBoundsException", 1},
+  {"java.lang.ArithmeticException", 2},
+  {"java.lang.NegativeArraySizeException", 3},
+  {"java.lang.ClassCastException", 4},
+  {"java.lang.NullPointerException", 5}};
+
+/// The field \p name of java.lang.Throwable in \p object, through the base
+/// classes of its type (the components "@...") if it has that field
+std::optional<member_exprt> java_bytecode_instrumentt::throwable_member(
+  const exprt &object,
+  const irep_idt &name) const
+{
+  if(object.type().id() != ID_struct_tag)
+    return {};
+  const namespacet ns{symbol_table};
+  const struct_typet &struct_type =
+    ns.follow_tag(to_struct_tag_type(object.type()));
+  if(
+    struct_type.has_component(name) &&
+    to_struct_tag_type(object.type()).get_identifier() ==
+      "java::java.lang.Throwable")
+  {
+    return member_exprt{object, name, struct_type.get_component(name).type()};
+  }
+  if(struct_type.components().empty())
+    return {};
+  const auto &base = struct_type.components().front();
+  if(!has_prefix(id2string(base.get_name()), "@"))
+    return {};
+  return throwable_member(
+    member_exprt{object, base.get_name(), base.type()}, name);
+}
+
 /// Creates a class stub for exc_name and generates a
 ///  conditional GOTO such that exc_name is thrown when
 ///  cond is met.
@@ -88,12 +129,16 @@ const std::vector<std::string> exception_needed_classes = {
 ///   to throw an exception
 /// \param original_loc: source location in the original program
 /// \param exc_name: the name of the exception to be thrown
+/// \param jvm_fields: values of fields of the models of Throwable that the
+///   message of the JVM depends on (see their getMessage), set with
+///   `cproverJvmKind` where the models have these fields
 /// \return Returns the code initialising the throwing the
 ///   exception
 code_ifthenelset java_bytecode_instrumentt::throw_exception(
   const exprt &cond,
   const source_locationt &original_loc,
-  const irep_idt &exc_name)
+  const irep_idt &exc_name,
+  const std::vector<std::pair<irep_idt, exprt>> &jvm_fields)
 {
   irep_idt exc_class_name("java::"+id2string(exc_name));
 
@@ -119,8 +164,30 @@ code_ifthenelset java_bytecode_instrumentt::throw_exception(
   side_effect_expr_throwt throw_expr(irept(), typet(), original_loc);
   throw_expr.copy_to_operands(new_symbol.symbol_expr());
 
-  code_ifthenelset if_code(
-    cond, code_blockt({assign_new, code_expressiont(throw_expr)}));
+  code_blockt throw_code{{assign_new}};
+  // The fields of the models of Throwable from which they make the message of
+  // the JVM (see Throwable.getMessage there)
+  const auto kind = jvm_exception_kinds.find(exc_name);
+  if(kind != jvm_exception_kinds.end())
+  {
+    std::vector<std::pair<irep_idt, exprt>> fields{
+      {"cproverJvmKind", from_integer(kind->second, java_int_type())}};
+    fields.insert(fields.end(), jvm_fields.begin(), jvm_fields.end());
+    for(const auto &field : fields)
+    {
+      if(
+        const auto member = throwable_member(
+          dereference_exprt{new_symbol.symbol_expr()}, field.first))
+      {
+        throw_code.add(code_assignt{
+          *member,
+          typecast_exprt::conditional_cast(field.second, member->type())});
+      }
+    }
+  }
+  throw_code.add(code_expressiont(throw_expr));
+
+  code_ifthenelset if_code(cond, std::move(throw_code));
 
   if_code.add_source_location()=original_loc;
 
@@ -180,7 +247,8 @@ codet java_bytecode_instrumentt::check_array_access(
     return throw_exception(
       not_exprt(cond),
       original_loc,
-      "java.lang.ArrayIndexOutOfBoundsException");
+      "java.lang.ArrayIndexOutOfBoundsException",
+      {{"cproverJvmIndex", idx}, {"cproverJvmLength", length_field}});
 
   code_blockt bounds_checks;
 
@@ -292,7 +360,8 @@ codet java_bytecode_instrumentt::check_array_length(
     return throw_exception(
       not_exprt(ge_zero),
       original_loc,
-      "java.lang.NegativeArraySizeException");
+      "java.lang.NegativeArraySizeException",
+      {{"cproverJvmLength", length}});
 
   source_locationt check_loc;
   check_loc.set_comment("Array size should be >= 0");

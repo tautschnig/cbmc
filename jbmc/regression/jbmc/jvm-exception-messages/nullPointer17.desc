@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.nullPointer17 --throw-runtime-exceptions --java-version 17 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+From Java 15 (14 with a flag), it may have a helpful message.

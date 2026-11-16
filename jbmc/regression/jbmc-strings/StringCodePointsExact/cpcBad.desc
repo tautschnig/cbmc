@@ -4,7 +4,7 @@ Test
 ^EXIT=10$
 ^SIGNAL=0$
 ^VERIFICATION FAILED$
-^string refinement: .* so a counterexample may be spurious$
 --
 --
-As cpc; the count is 3.
+As cpc; the count is 3. (The warning that the counterexample may be
+spurious is gone since the models changed.)

@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.negativeSize17 --throw-runtime-exceptions --java-version 17 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+NegativeArraySizeException of Java 17 has the size.
