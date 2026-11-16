@@ -935,14 +935,19 @@ std::optional<exprt> python_convertert::try_builtin_call(
         // (auto-detect via 0x/0b/0o prefix) and 2..36.
         int parse_base = 10;
         bool have_base = as_array(args).size() >= 2;
+        bool has_base_arg_nonconst = false;
         if(have_base)
         {
           exprt b_arg = convert_expression(*std::next(as_array(args).begin()));
+          has_base_arg_nonconst = true;
           if(b_arg.is_constant() && b_arg.type().id() == ID_signedbv)
           {
             mp_integer bv;
             if(!to_integer(to_constant_expr(b_arg), bv))
+            {
               parse_base = bv.to_long();
+              has_base_arg_nonconst = false;
+            }
           }
         }
         // int("60") — parse constant string to int.
@@ -1042,11 +1047,48 @@ std::optional<exprt> python_convertert::try_builtin_call(
           // valid, so under --python-raising-ops-check model it as
           // may-raise (default off: silently succeeds).
           emit_may_raise("ValueError");
-          exprt parsed = emit_string_int_function(
-            ID_cprover_string_parse_int_func,
-            arg,
-            symbol_table,
-            pending_checks);
+          // PLR 4.1 / builtins int(x, base): the base must reach the
+          // solver. The intrinsic used to be applied to the string alone,
+          // so int(s, 16) parsed s as decimal (int('10', 16) == 10 was
+          // proved). Pass the radix as the intrinsic's second argument,
+          // always (10 by default), so every application of the shared
+          // function symbol has the same arity. A base the solver cannot
+          // take (0 = auto-detect, or non-constant) yields an
+          // unconstrained int: sound, imprecise.
+          if(
+            parse_base != 10 &&
+            (parse_base < 2 || parse_base > 36 || has_base_arg_nonconst))
+            return side_effect_expr_nondett{
+              python_int_type(), get_location(expr)};
+          const typet i64 = signedbv_typet{64};
+          const irep_idt fid{ID_cprover_string_parse_int_func};
+          if(symbol_table.lookup(fid) == nullptr)
+          {
+            symbolt fs{
+              fid,
+              mathematical_function_typet({arg.type(), i64}, i64),
+              "python"};
+            fs.base_name = id2string(fid);
+            symbol_table.add(fs);
+          }
+          function_application_exprt app{
+            symbol_table.lookup_ref(fid).symbol_expr(),
+            {arg, from_integer(parse_base, i64)}};
+          app.type() = i64;
+          static unsigned parse_ctr = 0;
+          const std::string rn = "__str_parse_" + std::to_string(parse_ctr++);
+          const irep_idt rid{"python::" + rn};
+          if(symbol_table.lookup(rid) == nullptr)
+          {
+            symbolt rs{rid, i64, "python"};
+            rs.base_name = rn;
+            rs.is_lvalue = true;
+            rs.is_state_var = true;
+            symbol_table.add(rs);
+          }
+          const symbol_exprt res = symbol_table.lookup_ref(rid).symbol_expr();
+          pending_checks.push_back(code_frontend_assignt{res, std::move(app)});
+          exprt parsed = res;
           if(parsed.type() != python_int_type())
             parsed = safe_typecast(parsed, python_int_type());
           return parsed;

@@ -1,0 +1,11 @@
+CORE
+main.py
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+int(x, base) of a string that is not a literal at conversion time went to
+the solver without the base, so it was parsed as decimal and this false
+property was proved. The base is now the parse intrinsic's second argument.
