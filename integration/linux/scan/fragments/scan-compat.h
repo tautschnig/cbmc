@@ -80,7 +80,7 @@
 #ifdef __cacheline_group_end_aligned
 #  undef __cacheline_group_end_aligned
 #endif
-#define __cacheline_group_end_aligned(GROUP) __cacheline_group_end(GROUP)
+#define __cacheline_group_end_aligned(GROUP, ...) __cacheline_group_end(GROUP)
 
 /* Linux 6.12 introduced a family of compile-time string-buffer
  * checks built around `__builtin_has_attribute(expr, nonstring)`.
