@@ -10,6 +10,7 @@
 #include <util/arith_tools.h>
 #include <util/bitvector_types.h>
 #include <util/c_types.h>
+#include <util/expr_util.h>
 #include <util/floatbv_expr.h>
 #include <util/ieee_float.h>
 #include <util/json.h>
@@ -708,7 +709,11 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     }
   }
   exprt value = convert_expression(json_member(expr, "value"));
+  return convert_subscript_of(expr, std::move(value));
+}
 
+exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
+{
   if(value.is_nil())
     return nil_exprt{};
 
@@ -2496,6 +2501,64 @@ exprt python_convertert::convert_subscript(const jsont &expr)
   // index targets the LIST tag; a string key targets the DICT tag. (Blindly
   // taking the list path for a string key indexed a list array with a string,
   // forcing an unsound smt_string->int cast on the index.)
+  // A runtime-typed receiver that may hold a str (PLR 6.3.2: s[i], s[a:b]):
+  // apply the str subscript to its string field under the STR tag, and
+  // the container/object handling below otherwise. Without this, indexing
+  // or slicing a str that reached here as a python_value (an element of an
+  // untyped container, an unannotated parameter) read the list slot or
+  // returned an unconstrained value. The str conversion's own checks
+  // (IndexError, ...) are guarded by the tag.
+  if(is_python_value_type(value.type()) && pv_subscript_receiver != value)
+  {
+    const exprt is_str = python_value_is(value, python_type_tagt::STR);
+    const exprt saved_receiver = pv_subscript_receiver;
+    const std::size_t pc0 = pending_checks.size();
+    pv_subscript_receiver = value;
+    exprt str_res = convert_subscript_of(expr, python_value_str(value));
+    std::vector<codet> str_checks(
+      pending_checks.begin() + pc0, pending_checks.end());
+    pending_checks.erase(pending_checks.begin() + pc0, pending_checks.end());
+    exprt other_res = convert_subscript_of(expr, value);
+    pv_subscript_receiver = saved_receiver;
+    // The index expression is converted once per arm; a call in it would
+    // be duplicated (and a call inside a conditional arm is not lowered),
+    // so keep the previous single-arm handling then.
+    auto has_call = [](const exprt &e)
+    {
+      return has_subexpr(
+        e,
+        [](const exprt &n)
+        {
+          return n.id() == ID_side_effect &&
+                 n.get(ID_statement) == ID_function_call;
+        });
+    };
+    if(
+      str_res.is_nil() || other_res.is_nil() || has_call(str_res) ||
+      has_call(other_res))
+      return other_res;
+    if(!str_checks.empty())
+    {
+      // Declarations stay outside the guard: a DECL inside the guarded
+      // block would be scoped to it, and the result read after the block
+      // would be dead.
+      code_blockt guarded;
+      for(auto &c : str_checks)
+      {
+        if(c.get_statement() == ID_decl)
+          pending_checks.push_back(std::move(c));
+        else
+          guarded.add(std::move(c));
+      }
+      pending_checks.push_back(code_ifthenelset{is_str, std::move(guarded)});
+    }
+    if(!is_python_value_type(str_res.type()))
+      str_res = wrap_value(str_res);
+    if(!is_python_value_type(other_res.type()))
+      other_res = wrap_value(other_res);
+    return if_exprt{is_str, std::move(str_res), std::move(other_res)};
+  }
+
   if(is_python_value_type(value.type()))
   {
     // PLR §6.3.2: subscripting a value whose runtime tag is NOT a

@@ -322,7 +322,28 @@ bool goto_symext::constant_propagate_assignment_with_side_effects(
 {
   if(rhs.id() == ID_function_application)
   {
-    const function_application_exprt &f_l1 = to_function_application_expr(rhs);
+    // Input operands (all but the leading output length/content pair of
+    // the string-producing intrinsics) are evaluated in the current state:
+    // renamed to L2 and simplified, so a constant reached through a member
+    // or index chain (a string stored in a container) is recognised, not
+    // only a symbol bound to a constant. The output operands stay L1.
+    function_application_exprt f_eval = to_function_application_expr(rhs);
+    if(
+      f_eval.function().id() == ID_symbol &&
+      id2string(to_symbol_expr(f_eval.function()).identifier())
+          .rfind("cprover_string_", 0) == 0 &&
+      f_eval.type().id() != ID_string)
+    {
+      auto &args = f_eval.arguments();
+      for(std::size_t i = 2; i < args.size(); ++i)
+      {
+        exprt a = state.rename(args[i], ns).get();
+        do_simplify(a, state.value_set);
+        if(a.is_constant() || can_cast_expr<refined_string_exprt>(a))
+          args[i] = std::move(a);
+      }
+    }
+    const function_application_exprt &f_l1 = f_eval;
 
     if(f_l1.function().id() == ID_symbol)
     {

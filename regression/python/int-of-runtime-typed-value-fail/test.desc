@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 6
+^EXIT=10$
+^SIGNAL=0$
+^\[.*assertion\.4\] .* line 9 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+--
+Refutation twin: int(2.9) truncates toward zero, it does not round.

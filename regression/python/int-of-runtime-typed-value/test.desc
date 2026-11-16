@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+builtins int() of a runtime-typed value (an element of an untyped container)
+converts according to the runtime type: a str is parsed, an int stays, a
+bool is 0/1, a float truncates. The int field was read regardless of the
+type, so int() of a str element returned garbage.

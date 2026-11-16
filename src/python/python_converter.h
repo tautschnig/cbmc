@@ -2611,6 +2611,20 @@ private:
   /// ancestor defining one) can only return constant falsy values (PLR 8.5:
   /// only a truthy result suppresses the exception).
   bool exit_may_suppress(const std::string &cls_name) const;
+  /// int(\p str, \p base) for a string that is not a conversion-time
+  /// literal: the parse intrinsic with the radix as second argument (an
+  /// unconstrained int when the base is non-constant or outside 2..36).
+  /// Subscript `expr` (an AST Subscript node) applied to an already
+  /// converted receiver \p value.
+  exprt convert_subscript_of(const jsont &expr, exprt value);
+  /// The python_value receiver whose subscript convert_subscript_of is
+  /// currently splitting by tag (its arms must not split again).
+  exprt pv_subscript_receiver = nil_exprt{};
+  exprt emit_int_parse(
+    const exprt &str,
+    int base,
+    bool base_nonconst,
+    const source_locationt &loc);
   /// Depth of enclosing with bodies whose manager may suppress exceptions.
   unsigned with_suppress_depth = 0;
   /// Function bodies are converted (sub-pass 1c) BEFORE the module-level

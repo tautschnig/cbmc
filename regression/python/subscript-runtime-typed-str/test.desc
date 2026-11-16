@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+PLR 6.3.2: indexing or slicing a runtime-typed value that holds a str (an
+element of an untyped container) applies the str operation. The list slot
+was read instead, giving an unconstrained value.

@@ -905,10 +905,6 @@ std::optional<exprt> python_convertert::try_builtin_call(
       exprt arg = convert_expression(*as_array(args).begin());
       if(!arg.is_nil())
       {
-        // Tagged union: dispatch on tag
-        if(is_python_value_type(arg.type()))
-          return unwrap_value(arg, python_int_type());
-
         // PLR §6.10: int(x) of a floating-point infinity raises OverflowError
         // ('cannot convert float infinity to integer'); a NaN raises
         // ValueError ('cannot convert float NaN to integer'). Detect a
@@ -949,6 +945,60 @@ std::optional<exprt> python_convertert::try_builtin_call(
               has_base_arg_nonconst = false;
             }
           }
+        }
+        // A python_value (runtime-typed) argument: convert according to its
+        // runtime type (builtins int()): an int stays, a bool is 0/1, a
+        // float truncates toward zero, a str is parsed; anything else
+        // (None, containers, objects) raises TypeError. With an explicit
+        // base only a str is accepted. Reading __int_val regardless of the
+        // tag made int() of a str-tagged value return garbage.
+        if(is_python_value_type(arg.type()))
+        {
+          const typet it = python_int_type();
+          const exprt is_str = python_value_is(arg, python_type_tagt::STR);
+          exprt str_case = emit_int_parse(
+            python_value_str(arg),
+            parse_base,
+            has_base_arg_nonconst,
+            get_location(expr));
+          if(str_case.type() != it)
+            str_case = typecast_exprt{str_case, it};
+          if(have_base)
+          {
+            emit_conditional_exception(not_exprt{is_str}, "TypeError");
+            return if_exprt{
+              is_str,
+              str_case,
+              side_effect_expr_nondett{it, get_location(expr)}};
+          }
+          const exprt is_int = python_value_is(arg, python_type_tagt::INT);
+          const exprt is_bool = python_value_is(arg, python_type_tagt::BOOL);
+          const exprt is_float = python_value_is(arg, python_type_tagt::FLOAT);
+          emit_conditional_exception(
+            not_exprt{or_exprt{is_int, is_bool, is_float, is_str}},
+            "TypeError");
+          exprt int_case = python_value_int(arg);
+          if(int_case.type() != it)
+            int_case = typecast_exprt{int_case, it};
+          exprt bool_val = python_value_bool(arg);
+          if(bool_val.type() != bool_typet{})
+            bool_val = typecast_exprt{bool_val, bool_typet{}};
+          const exprt bool_case =
+            if_exprt{bool_val, from_integer(1, it), from_integer(0, it)};
+          const exprt float_case = typecast_exprt{python_value_float(arg), it};
+          return if_exprt{
+            is_int,
+            int_case,
+            if_exprt{
+              is_bool,
+              bool_case,
+              if_exprt{
+                is_float,
+                float_case,
+                if_exprt{
+                  is_str,
+                  str_case,
+                  side_effect_expr_nondett{it, get_location(expr)}}}}};
         }
         // int("60") — parse constant string to int.
         if(is_python_string_type(arg.type()))
@@ -1046,52 +1096,8 @@ std::optional<exprt> python_convertert::try_builtin_call(
           // literal; the frontend cannot prove a symbolic string is
           // valid, so under --python-raising-ops-check model it as
           // may-raise (default off: silently succeeds).
-          emit_may_raise("ValueError");
-          // PLR 4.1 / builtins int(x, base): the base must reach the
-          // solver. The intrinsic used to be applied to the string alone,
-          // so int(s, 16) parsed s as decimal (int('10', 16) == 10 was
-          // proved). Pass the radix as the intrinsic's second argument,
-          // always (10 by default), so every application of the shared
-          // function symbol has the same arity. A base the solver cannot
-          // take (0 = auto-detect, or non-constant) yields an
-          // unconstrained int: sound, imprecise.
-          if(
-            parse_base != 10 &&
-            (parse_base < 2 || parse_base > 36 || has_base_arg_nonconst))
-            return side_effect_expr_nondett{
-              python_int_type(), get_location(expr)};
-          const typet i64 = signedbv_typet{64};
-          const irep_idt fid{ID_cprover_string_parse_int_func};
-          if(symbol_table.lookup(fid) == nullptr)
-          {
-            symbolt fs{
-              fid,
-              mathematical_function_typet({arg.type(), i64}, i64),
-              "python"};
-            fs.base_name = id2string(fid);
-            symbol_table.add(fs);
-          }
-          function_application_exprt app{
-            symbol_table.lookup_ref(fid).symbol_expr(),
-            {arg, from_integer(parse_base, i64)}};
-          app.type() = i64;
-          static unsigned parse_ctr = 0;
-          const std::string rn = "__str_parse_" + std::to_string(parse_ctr++);
-          const irep_idt rid{"python::" + rn};
-          if(symbol_table.lookup(rid) == nullptr)
-          {
-            symbolt rs{rid, i64, "python"};
-            rs.base_name = rn;
-            rs.is_lvalue = true;
-            rs.is_state_var = true;
-            symbol_table.add(rs);
-          }
-          const symbol_exprt res = symbol_table.lookup_ref(rid).symbol_expr();
-          pending_checks.push_back(code_frontend_assignt{res, std::move(app)});
-          exprt parsed = res;
-          if(parsed.type() != python_int_type())
-            parsed = safe_typecast(parsed, python_int_type());
-          return parsed;
+          return emit_int_parse(
+            arg, parse_base, has_base_arg_nonconst, get_location(expr));
         }
         return safe_typecast(arg, python_int_type());
       }
@@ -6395,4 +6401,52 @@ std::optional<exprt> python_convertert::try_builtin_call(
   }
 
   return std::nullopt;
+}
+
+exprt python_convertert::emit_int_parse(
+  const exprt &str,
+  int base,
+  bool base_nonconst,
+  const source_locationt &loc)
+{
+  emit_may_raise("ValueError");
+  // PLR 4.1 / builtins int(x, base): the base must reach the
+  // solver. The intrinsic used to be applied to the string alone,
+  // so int(s, 16) parsed s as decimal (int('10', 16) == 10 was
+  // proved). Pass the radix as the intrinsic's second argument,
+  // always (10 by default), so every application of the shared
+  // function symbol has the same arity. A base the solver cannot
+  // take (0 = auto-detect, or non-constant) yields an
+  // unconstrained int: sound, imprecise.
+  if(base != 10 && (base < 2 || base > 36 || base_nonconst))
+    return side_effect_expr_nondett{python_int_type(), loc};
+  const typet i64 = signedbv_typet{64};
+  const irep_idt fid{ID_cprover_string_parse_int_func};
+  if(symbol_table.lookup(fid) == nullptr)
+  {
+    symbolt fs{
+      fid, mathematical_function_typet({str.type(), i64}, i64), "python"};
+    fs.base_name = id2string(fid);
+    symbol_table.add(fs);
+  }
+  function_application_exprt app{
+    symbol_table.lookup_ref(fid).symbol_expr(), {str, from_integer(base, i64)}};
+  app.type() = i64;
+  static unsigned parse_ctr = 0;
+  const std::string rn = "__str_parse_" + std::to_string(parse_ctr++);
+  const irep_idt rid{"python::" + rn};
+  if(symbol_table.lookup(rid) == nullptr)
+  {
+    symbolt rs{rid, i64, "python"};
+    rs.base_name = rn;
+    rs.is_lvalue = true;
+    rs.is_state_var = true;
+    symbol_table.add(rs);
+  }
+  const symbol_exprt res = symbol_table.lookup_ref(rid).symbol_expr();
+  pending_checks.push_back(code_frontend_assignt{res, std::move(app)});
+  exprt parsed = res;
+  if(parsed.type() != python_int_type())
+    parsed = safe_typecast(parsed, python_int_type());
+  return parsed;
 }
