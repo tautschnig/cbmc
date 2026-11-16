@@ -1,0 +1,13 @@
+CORE
+main.py
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+An instance passed to an unannotated parameter (a runtime-typed value):
+len() calls __len__ for CLASS-tagged values, a __getitem__ result is boxed
+by its own type (a list was boxed as CLASS), and the method and the dict
+view are only used on paths with the matching runtime type (their
+reinterpretation of the instance crashed the solver).

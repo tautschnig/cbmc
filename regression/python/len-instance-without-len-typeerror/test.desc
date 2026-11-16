@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 5
+^EXIT=10$
+^SIGNAL=0$
+^\[.*exception\.[0-9]+\] .* line 7 uncaught exception: FAILURE$
+^VERIFICATION FAILED$
+--
+--
+PLR 3.3.7: len() of an instance of a class without __len__ raises
+TypeError, also when the instance arrives as a runtime-typed value.

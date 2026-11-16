@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 5
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+Twin of dunder-untyped-param-instance (the counterexample path aborted
+with "array too large for flattening").

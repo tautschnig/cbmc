@@ -808,6 +808,75 @@ std::optional<exprt> python_convertert::try_builtin_call(
               typecast_exprt{python_value_class_ptr(arg), len_ptr_type},
               signedbv_typet{64}},
             python_int_type()};
+          // CLASS tag: PLR 3.3.7 len() calls the instance's __len__. Each
+          // class defining one is called only for its own instances (the
+          // call is a guarded statement; a call inside the conditional
+          // expression would not be lowered); an instance of a class without
+          // __len__ raises TypeError.
+          exprt class_len =
+            side_effect_expr_nondett{python_int_type(), source_locationt{}};
+          {
+            std::vector<std::string> len_owners;
+            for(const auto &p : class_types)
+              if(
+                symbol_table.lookup(
+                  irep_idt{"python::" + p.first + "::__len__"}) != nullptr)
+                len_owners.push_back(p.first);
+            const exprt is_class =
+              python_value_is(arg, python_type_tagt::CLASS);
+            if(!len_owners.empty())
+            {
+              static unsigned cl_ctr = 0;
+              const std::string cln =
+                "__pv_class_len_" + std::to_string(cl_ctr++);
+              const irep_idt clid{qualify_name(cln)};
+              if(symbol_table.lookup(clid) == nullptr)
+              {
+                symbolt cls{clid, python_int_type(), "python"};
+                cls.base_name = cln;
+                cls.is_lvalue = true;
+                cls.is_state_var = true;
+                cls.is_static_lifetime = current_function.empty();
+                symbol_table.add(cls);
+              }
+              const symbol_exprt clsym =
+                symbol_table.lookup_ref(clid).symbol_expr();
+              pending_checks.push_back(code_frontend_assignt{
+                clsym,
+                side_effect_expr_nondett{
+                  python_int_type(), source_locationt{}}});
+              for(const auto &owner : len_owners)
+              {
+                const symbolt &ls = symbol_table.lookup_ref(
+                  irep_idt{"python::" + owner + "::__len__"});
+                if(ls.type.id() != ID_code)
+                  continue;
+                const code_typet &lt = to_code_type(ls.type);
+                if(lt.parameters().empty())
+                  continue;
+                exprt self = typecast_exprt{
+                  python_value_class_ptr(arg), lt.parameters()[0].type()};
+                exprt rv = side_effect_expr_function_callt{
+                  ls.symbol_expr(),
+                  {self},
+                  lt.return_type(),
+                  get_location(expr)};
+                if(rv.type() != python_int_type())
+                  rv = safe_typecast(rv, python_int_type());
+                pending_checks.push_back(code_ifthenelset{
+                  and_exprt{is_class, python_value_is_class_of(arg, {owner})},
+                  code_frontend_assignt{clsym, std::move(rv)}});
+              }
+              class_len = clsym;
+              emit_conditional_exception(
+                and_exprt{
+                  is_class,
+                  not_exprt{python_value_is_class_of(arg, len_owners)}},
+                "TypeError");
+            }
+            else
+              emit_conditional_exception(is_class, "TypeError");
+          }
           exprt pv_len = if_exprt{
             python_value_is(arg, python_type_tagt::STR),
             str_len,
@@ -817,8 +886,11 @@ std::optional<exprt> python_convertert::try_builtin_call(
               if_exprt{
                 python_value_is(arg, python_type_tagt::DICT),
                 dict_len,
-                side_effect_expr_nondett{
-                  python_int_type(), source_locationt{}}}}};
+                if_exprt{
+                  python_value_is(arg, python_type_tagt::CLASS),
+                  class_len,
+                  side_effect_expr_nondett{
+                    python_int_type(), source_locationt{}}}}}};
           // Representation invariant, reasserted at the boxed READ
           // boundary: len() is NEVER negative (PLR 6.10 -- CPython
           // even raises for a negative __len__), and every
@@ -855,6 +927,10 @@ std::optional<exprt> python_convertert::try_builtin_call(
     if(args.is_array() && !as_array(args).empty())
     {
       exprt arg = convert_expression(*as_array(args).begin());
+      // An instance held by reference (a class-typed parameter, self, a
+      // returned object): __len__ dispatches on the object it points to.
+      if(!arg.is_nil() && is_instance_pointer(arg.type()))
+        arg = dereference_exprt{arg};
       if(!arg.is_nil() && arg.type().id() == ID_struct)
       {
         std::string tag = id2string(to_struct_type(arg.type()).get_tag());

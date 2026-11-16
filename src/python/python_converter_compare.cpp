@@ -296,6 +296,23 @@ exprt python_convertert::convert_compare(const jsont &expr)
     if(current_left.is_nil() || right.is_nil())
       return nil_exprt{};
 
+    // Instances held by reference (class-typed parameters, self, returned
+    // objects) compare through the objects they point to: == / != / < ...
+    // dispatch the class's dunders on the instance. Identity (is / is not)
+    // and comparisons against None keep the pointers (None is NULL there).
+    // On a path where such a pointer is NULL the dereference is
+    // unconstrained, which over-approximates (never hides a failure).
+    if(
+      op != "Is" && op != "IsNot" && op != "In" && op != "NotIn" &&
+      !is_python_none(current_left, symbol_table) &&
+      !is_python_none(right, symbol_table))
+    {
+      if(is_instance_pointer(current_left.type()))
+        current_left = dereference_exprt{current_left};
+      if(is_instance_pointer(right.type()))
+        right = dereference_exprt{right};
+    }
+
     // PLR §6.10.1: ordering (< > <= >=) of two operands whose orderable
     // CATEGORIES differ (numeric / str / list / tuple / set / dict / None) is a
     // TypeError -- e.g. `1 < [1]`, `[1] < 1`, `1 < "a"`, `None < 1`. Placed here
@@ -2779,6 +2796,8 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // PLR §3.3.1: custom __contains__ dunder — if the
       // container is a user-defined class instance with a
       // __contains__ method, dispatch to it.
+      if(is_instance_pointer(container.type()))
+        container = dereference_exprt{container};
       {
         std::string tag;
         if(container.type().id() == ID_struct)

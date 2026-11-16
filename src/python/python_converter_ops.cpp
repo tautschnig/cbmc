@@ -257,6 +257,12 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     }
   }
   exprt right = convert_expression(json_member(expr, "right"));
+  // Instances held by reference dispatch their arithmetic dunders on the
+  // objects they point to (see the compare analogue in convert_compare).
+  if(left.is_not_nil() && is_instance_pointer(left.type()))
+    left = dereference_exprt{left};
+  if(right.is_not_nil() && is_instance_pointer(right.type()))
+    right = dereference_exprt{right};
   std::string op = json_string(json_member(json_member(expr, "op"), "_type"));
 
   if(left.is_nil() || right.is_nil())

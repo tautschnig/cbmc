@@ -754,7 +754,10 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
 
   // PLR §3.3.1: custom __getitem__ dunder on class
   // instances. 'obj[key]' dispatches to
-  // obj.__getitem__(key).
+  // obj.__getitem__(key). An instance held by reference dispatches on the
+  // object it points to.
+  if(is_instance_pointer(value.type()))
+    value = dereference_exprt{value};
   {
     std::string tag;
     if(value.type().id() == ID_struct)
@@ -2514,7 +2517,15 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
     const exprt saved_receiver = pv_subscript_receiver;
     const std::size_t pc0 = pending_checks.size();
     pv_subscript_receiver = value;
-    exprt str_res = convert_subscript_of(expr, python_value_str(value));
+    // On paths where the value is not a str its string field is
+    // unconstrained; the string solver would still reason about it (an
+    // unconstrained length made its lemmas unflattenable). Use the empty
+    // string there: the arm's result is not selected on those paths.
+    const exprt str_view = if_exprt{
+      is_str,
+      python_value_str(value),
+      safe_zero(python_value_str(value).type())};
+    exprt str_res = convert_subscript_of(expr, str_view);
     std::vector<codet> str_checks(
       pending_checks.begin() + pc0, pending_checks.end());
     pending_checks.erase(pending_checks.begin() + pc0, pending_checks.end());
@@ -2664,10 +2675,17 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
         symbol_table.add(ts);
       }
       symbol_exprt gtsym = symbol_table.lookup_ref(gtid).symbol_expr();
-      pending_checks.push_back(code_frontend_assignt{gtsym, gi_call});
-      exprt res = is_python_value_type(gt.return_type())
-                    ? exprt{gtsym}
-                    : exprt{make_python_value(python_type_tagt::CLASS, gtsym)};
+      // Call it only when the value is an instance of the class: on other
+      // runtime types the call would run the method on a reinterpreted
+      // object (its effects and exceptions leaked into every path).
+      pending_checks.push_back(code_ifthenelset{
+        python_value_is_class_of(value, gi_owners),
+        code_frontend_assignt{gtsym, gi_call}});
+      // Box the result by ITS type (a list return is a LIST, an int an
+      // INT, ...): boxing every return as CLASS made `t[k][0]` on a
+      // returned list a TypeError.
+      exprt res = is_python_value_type(gt.return_type()) ? exprt{gtsym}
+                                                         : wrap_value(gtsym);
       return if_exprt{
         python_value_is_class_of(value, gi_owners),
         std::move(res),
@@ -2745,6 +2763,7 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
         symbol_exprt drsym = symbol_table.lookup_ref(drid).symbol_expr();
         pending_checks.push_back(code_frontend_assignt{drsym, result});
         exprt selected{drsym};
+        const std::size_t pc_scan = pending_checks.size();
         for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
         {
           exprt idx = from_integer(i, signedbv_typet{64});
@@ -2763,9 +2782,39 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
             index_exprt{dict_vals, idx},
             std::move(selected)};
         }
+        // Read through the dict view only on paths where the value is a
+        // dict: a guarded statement, so that symbolic execution does not
+        // dereference a class instance (or any other object behind the
+        // shared pointer field) as a dict where the runtime type is
+        // known to differ -- the reinterpretation broke the solver
+        // ("array too large for flattening").
+        static unsigned dsel_ctr = 0;
+        const std::string dsn = "__dict_sel_" + std::to_string(dsel_ctr++);
+        const irep_idt dsid{qualify_name(dsn)};
+        if(symbol_table.lookup(dsid) == nullptr)
+        {
+          symbolt ts{dsid, python_value_type(), "python"};
+          ts.base_name = dsn;
+          ts.is_lvalue = true;
+          ts.is_state_var = true;
+          ts.is_static_lifetime = current_function.empty();
+          symbol_table.add(ts);
+        }
+        const symbol_exprt dssym = symbol_table.lookup_ref(dsid).symbol_expr();
+        // The key comparisons the scan emitted belong under the guard too.
+        code_blockt dict_read;
+        for(std::size_t i = pc_scan; i < pending_checks.size(); ++i)
+          dict_read.add(std::move(pending_checks[i]));
+        pending_checks.erase(
+          pending_checks.begin() + pc_scan, pending_checks.end());
+        dict_read.add(code_frontend_assignt{dssym, std::move(selected)});
+        pending_checks.push_back(code_frontend_assignt{dssym, drsym});
+        pending_checks.push_back(code_ifthenelset{
+          python_value_is(value, python_type_tagt::DICT),
+          std::move(dict_read)});
         return if_exprt{
           python_value_is(value, python_type_tagt::DICT),
-          std::move(selected),
+          dssym,
           class_getitem_or_nondet()};
       }
     }

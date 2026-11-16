@@ -1160,7 +1160,24 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       {
         auto p_it = fn_it->second.find(param_idx_in_args);
         if(p_it != fn_it->second.end())
+        {
           param_type = p_it->second;
+          // A class-instance marker (Pass 0.28): the class's type, exactly
+          // as if the parameter were annotated with the class name.
+          if(
+            param_type.id() == ID_struct &&
+            to_struct_type(param_type).components().empty())
+          {
+            const std::string tag =
+              id2string(to_struct_type(param_type).get_tag());
+            const std::string cn =
+              tag.rfind("python_class_", 0) == 0 ? tag.substr(13) : tag;
+            json_objectt ann;
+            ann["_type"] = json_stringt{"Name"};
+            ann["id"] = json_stringt{cn};
+            param_type = convert_type_annotation(ann);
+          }
+        }
       }
     }
     // Mark Optional[T] / Union[..., None] / T | None parameters

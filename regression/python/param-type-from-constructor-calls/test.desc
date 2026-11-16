@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+An unannotated parameter whose every call site passes a constructor call of
+the same class gets that class as its type (Pass 0.28), like an annotated
+one. A call site with an argument of unknown type keeps it runtime-typed.

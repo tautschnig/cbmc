@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+A second call site passes a list: the parameter stays runtime-typed, and
+len() dispatches on the runtime type (__len__ for the instance).

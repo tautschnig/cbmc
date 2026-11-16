@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+PLR 3.3: len(), subscripts, `in`, comparisons and arithmetic dispatch the
+class's dunders also when the instance is held by reference (a class-typed
+parameter). len/subscript/in returned unconstrained values and ==, <, +
+did not dispatch.

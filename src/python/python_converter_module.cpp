@@ -2211,6 +2211,28 @@ bool python_convertert::convert()
         return python_string_type();
       if(is_node_type(arg, "FormattedValue"))
         return python_string_type();
+      // A direct constructor call of a user class (not a TypedDict, which is
+      // a dict): an instance of that class. Recorded as a marker struct
+      // tagged python_class_<C>; the parameter conversion resolves it to the
+      // class type (convert_function_def).
+      if(
+        is_node_type(arg, "Call") &&
+        is_node_type(json_member(arg, "func"), "Name"))
+      {
+        const std::string cn =
+          json_string(json_member(json_member(arg, "func"), "id"));
+        auto cb = class_bases.find(cn);
+        const bool is_td =
+          cb != class_bases.end() &&
+          std::find(cb->second.begin(), cb->second.end(), "TypedDict") !=
+            cb->second.end();
+        if(class_types.count(cn) > 0 && !is_td)
+        {
+          struct_typet marker;
+          marker.set_tag("python_class_" + cn);
+          return std::move(marker);
+        }
+      }
       // Cannot infer.
       return typet{};
     };
@@ -2222,6 +2244,8 @@ bool python_convertert::convert()
     // and a flag if conflicting types were observed.
     std::map<std::string, std::map<std::size_t, typet>> agreed;
     std::map<std::string, std::set<std::size_t>> conflict;
+    // Positions with at least one call site whose argument type is unknown.
+    std::map<std::string, std::set<std::size_t>> uninferable_sites;
     auto record_call = [&](const jsont &n)
     {
       if(!is_node_type(n, "Call"))
@@ -2251,6 +2275,8 @@ bool python_convertert::convert()
           conflict[callee].count(i) == 0)
         {
           typet inferred = infer_arg_type(a);
+          if(inferred.id().empty())
+            uninferable_sites[callee].insert(i);
           if(!inferred.id().empty())
           {
             auto &m = agreed[callee];
@@ -2460,10 +2486,20 @@ bool python_convertert::convert()
       }
     };
     walk_body(body);
-    // Move agreed inferences into the persistent map.
+    // Move agreed inferences into the persistent map. A class-instance
+    // inference requires EVERY call site to pass an instance of that class
+    // (an unknown argument could be anything; treating it as the class
+    // would pun it).
     for(auto &[fname, params_map] : agreed)
       for(auto &[idx, t] : params_map)
+      {
+        const bool class_marker =
+          t.id() == ID_struct && to_struct_type(t).components().empty() &&
+          id2string(to_struct_type(t).get_tag()).rfind("python_class_", 0) == 0;
+        if(class_marker && uninferable_sites[fname].count(idx) > 0)
+          continue;
         inferred_param_types[fname][idx] = std::move(t);
+      }
   }
 
   // Pass 0: register top-level annotated variable names as global symbols
