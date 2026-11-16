@@ -16,6 +16,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/find_symbols.h>
 #include <util/message.h>
 #include <util/pointer_offset_size.h>
+#include <util/prefix.h>
 #include <util/simplify_expr.h>
 #include <util/symbol_table_base.h>
 
@@ -24,6 +25,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "linking_diagnostics.h"
 
 #include <deque>
+#include <set>
 
 static const typet &follow_tags_symbols(
   const namespacet &ns,
@@ -746,13 +748,20 @@ void linkingt::duplicate_non_type_symbol(
   old_symbol.is_extern=old_symbol.is_extern && new_symbol.is_extern;
 }
 
+/// \return True iff \p identifier is the synthetic identifier the C front end
+///   gives an anonymous struct, union or enum tag.
+static bool is_anonymous_tag(const irep_idt &identifier)
+{
+  return has_prefix(id2string(identifier), "tag-#anon");
+}
+
 // Forward declaration; defined after duplicate_type_symbol.
 static bool structurally_equivalent(
   const typet &t1,
   const typet &t2,
   const namespacet &main_ns,
   const namespacet &src_ns,
-  std::unordered_set<std::string> &visited);
+  std::set<std::pair<irep_idt, irep_idt>> &visited);
 
 void linkingt::duplicate_type_symbol(
   symbolt &old_symbol,
@@ -843,7 +852,7 @@ void linkingt::duplicate_type_symbol(
   // tag references through both namespaces; if they describe the same C
   // type, keep the main-table version.
   {
-    std::unordered_set<std::string> visited;
+    std::set<std::pair<irep_idt, irep_idt>> visited;
     if(structurally_equivalent(
          old_symbol.type, new_symbol.type, ns, src_ns, visited))
     {
@@ -880,7 +889,7 @@ static bool structurally_equivalent(
   const typet &t2,
   const namespacet &main_ns,
   const namespacet &src_ns,
-  std::unordered_set<std::string> &visited)
+  std::set<std::pair<irep_idt, irep_idt>> &visited)
 {
   if(t1 == t2)
     return true;
@@ -896,8 +905,7 @@ static bool structurally_equivalent(
     // Cycle guard: once we have started comparing this pair, treat them as
     // equivalent at any deeper occurrence to avoid infinite recursion on
     // mutually-recursive struct definitions like list_head.
-    std::string key = id2string(id1) + "\x01" + id2string(id2);
-    if(!visited.insert(key).second)
+    if(!visited.emplace(id1, id2).second)
       return true;
 
     return structurally_equivalent(
@@ -1094,10 +1102,26 @@ linkingt::renamingt linkingt::needs_renaming_type(
   // pair, no rename is needed -- linking will keep the main-table version
   // and the new-side reference is recognised as semantically the same type.
   {
-    std::unordered_set<std::string> visited;
+    std::set<std::pair<irep_idt, irep_idt>> visited;
     if(structurally_equivalent(
          old_symbol.type, new_symbol.type, ns, src_ns, visited))
     {
+      // The main-table version is kept, but the new side's code, values and
+      // types still refer to its own anonymous tags. Those tags have
+      // synthetic identifiers that differ from the main side's ones only
+      // because of the completion state of nested types. Map each of them to
+      // its main-side counterpart, or the linked program would mix two
+      // distinct tags for the same C type (e.g., a struct value whose
+      // component type disagrees with the struct type's component).
+      for(const auto &tag_pair : visited)
+      {
+        if(
+          tag_pair.first != tag_pair.second &&
+          is_anonymous_tag(tag_pair.first) && is_anonymous_tag(tag_pair.second))
+        {
+          rename_new_symbol.insert_type(tag_pair.second, tag_pair.first);
+        }
+      }
       return renamingt::NO_RENAMING;
     }
   }

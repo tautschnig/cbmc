@@ -1,0 +1,19 @@
+CORE
+main.c
+module.c --validate-goto-model --validate-ssa-equation
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^.*unexpected difference between type symbols.*$
+^Invariant check failed$
+--
+`struct ring` contains an anonymous union whose synthetic tag identifier
+encodes whether `struct inner` was complete, so main.c and module.c give the
+same C type two different anonymous-union tags.  The linker accepts the two
+`struct ring` definitions as structurally equivalent and keeps main.c's.  It
+must then also map module.c's anonymous-union tag to main.c's one; otherwise
+the struct value built in module.c has a component whose type disagrees with
+the kept `struct ring`, which tripped type invariants during symex
+(simplify_member: "member expression type must match component type").
