@@ -164,7 +164,7 @@ static void utf16_append_code(unsigned int code, std::wstring &result)
   // we do not treat 0xD800 to 0xDFFF, although
   // they are not valid unicode symbols
 
-  if(code < 0xFFFF)
+  if(code <= 0xFFFF)
   {
     // code is encoded as one UTF16 character
     result += static_cast<wchar_t>(code);

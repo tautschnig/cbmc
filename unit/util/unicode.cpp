@@ -93,6 +93,17 @@ TEST_CASE("unicode4", "[core][util][unicode]")
   REQUIRE(compare_utf8_to_utf16(s));
 }
 
+TEST_CASE("unicode U+FFFF is one UTF-16 unit", "[core][util][unicode]")
+{
+  // (it was encoded as a surrogate pair of code - 0x10000)
+  const std::string s = "\xef\xbf\xbf\xef\xbf\xbe";
+  const std::wstring w = utf8_to_utf16_native_endian(s);
+  REQUIRE(w.size() == 2);
+  REQUIRE(w[0] == 0xFFFF);
+  REQUIRE(w[1] == 0xFFFE);
+  REQUIRE(compare_utf8_to_utf16(s));
+}
+
 TEST_CASE("utf16_native_endian_to_java_string", "[core][util][unicode]")
 {
   const std::wstring in = L"abc \" ' \\ub374 \\";
