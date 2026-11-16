@@ -1,0 +1,16 @@
+divS         TIMEOUT/CRASH            120.1s 593MB     unwind-fail=0
+remS         TIMEOUT/CRASH            120.1s 630MB     unwind-fail=0
+strS         TIMEOUT/CRASH            120.0s 214MB     unwind-fail=0
+str2S        TIMEOUT/CRASH            120.0s 335MB     unwind-fail=0
+parseS       TIMEOUT/CRASH            121.6s 4270MB    unwind-fail=0
+hashS        VERIFICATION SUCCESSFUL  0.3s 49MB        unwind-fail=0
+cmpS         VERIFICATION SUCCESSFUL  0.5s 51MB        unwind-fail=0
+shiftS       TIMEOUT/CRASH            121.3s 2559MB    unwind-fail=0
+andS         VERIFICATION SUCCESSFUL  0.6s 52MB        unwind-fail=0
+gcdS         TIMEOUT/CRASH            120.7s 3226MB    unwind-fail=0
+divS2        VERIFICATION SUCCESSFUL  0.5s 53MB        unwind-fail=0
+mulStrS      VERIFICATION FAILED      1.7s 169MB       unwind-fail=0
+addCmpS      VERIFICATION SUCCESSFUL  0.6s 54MB        unwind-fail=0
+wideStrS     VERIFICATION SUCCESSFUL  2.7s 170MB       unwind-fail=0
+strBad       VERIFICATION FAILED      1.3s 58MB        unwind-fail=0
+parseBad     TIMEOUT/CRASH            121.7s 4271MB    unwind-fail=0
