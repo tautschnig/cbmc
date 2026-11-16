@@ -1213,10 +1213,35 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
             {
               const std::size_t pc0 = pending_checks.size();
               exprt ev = convert_expression(elt);
-              if(
-                ev.is_not_nil() && pending_checks.size() == pc0 &&
-                !has_subexpr(ev, ID_side_effect))
+              if(ev.is_not_nil() && !has_subexpr(ev, ID_side_effect))
+              {
+                // The element's checks (e.g. an unbound-local obligation
+                // for a Name) hold only when it is evaluated at all: guard
+                // them by a non-empty range (PLR 6.2.4). Declarations stay
+                // outside the guard.
+                if(pending_checks.size() > pc0)
+                {
+                  std::vector<codet> elt_checks(
+                    pending_checks.begin() + pc0, pending_checks.end());
+                  pending_checks.erase(
+                    pending_checks.begin() + pc0, pending_checks.end());
+                  code_blockt guarded;
+                  for(auto &c : elt_checks)
+                  {
+                    if(c.get_statement() == ID_decl)
+                      pending_checks.push_back(std::move(c));
+                    else
+                      guarded.add(std::move(c));
+                  }
+                  pending_checks.push_back(code_ifthenelset{
+                    binary_relation_exprt{
+                      safe_typecast(single_bound, signedbv_typet{64}),
+                      ID_gt,
+                      from_integer(0, signedbv_typet{64})},
+                    std::move(guarded)});
+                }
                 uniform_elt = std::move(ev);
+              }
               else
                 pending_checks.erase(
                   pending_checks.begin() + pc0, pending_checks.end());

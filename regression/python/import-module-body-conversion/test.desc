@@ -1,0 +1,13 @@
+CORE
+main.py
+--unwind 9
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Function bodies of an imported user module are converted like the main
+module's (convert_function_def), after all signatures are known. They went
+through a statement-only loop that skipped the per-function pre-passes, so
+a list of str queues built in an imported function stored ints, and the
+expected AssertionError was not raised.

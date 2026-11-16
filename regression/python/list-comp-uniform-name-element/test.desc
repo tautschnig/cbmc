@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+`[start for _ in range(N)]` (a bound that is not a conversion-time constant
+inside a function) fills every slot with the local's value. The element's
+own checks (the unbound-local obligation of the Name) made the fill bail out
+to nondet elements; they are now kept, guarded by a non-empty range.
