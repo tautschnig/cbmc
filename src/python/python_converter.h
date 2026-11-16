@@ -2586,6 +2586,17 @@ private:
   /// convert_statement emits a fail-closed python-not-encoded
   /// property for it instead of dropping it silently.
   std::size_t unknown_variable_events = 0;
+  /// Functions (by base name) from which an AssertionError may be
+  /// caught: reachable by calls from the body of a try that catches it
+  /// (AssertionError, Exception, BaseException or bare except) or a
+  /// with statement body (__exit__ may suppress).
+  /// An assert in such a function is lowered per PLR 7.3 to
+  /// `if not e: raise AssertionError`; elsewhere the AssertionError
+  /// terminates the program, so the assert stays a property and the
+  /// path ends after it (assume).
+  std::set<std::string> assert_raise_functions;
+  /// Fill assert_raise_functions from the given module bodies.
+  void collect_assert_raise_functions(const std::vector<const jsont *> &bodies);
   /// Function bodies are converted (sub-pass 1c) BEFORE the module-level
   /// assignments (pass 2), so an unannotated global is only a pass-0
   /// placeholder there (or not registered at all). Each function body's

@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+The verdict of a checker built from asserts is observable: over a symbolic
+input, catching AssertionError yields exactly the conjunction of its checks,
+and the second check runs only when the first held.

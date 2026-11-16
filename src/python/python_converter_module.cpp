@@ -1393,6 +1393,61 @@ bool python_convertert::convert()
     symbol_table.add(exc_type_sym);
   }
 
+  // PLR 7.3: functions whose assert may raise a catchable
+  // AssertionError (see convert_assert). Computed before any body is
+  // converted -- imported modules' bodies are converted in pass 0.1 --
+  // over the main module and every resolvable imported module (an
+  // AssertionError raised in an imported function can be caught by the
+  // importer).
+  if(body.is_array())
+  {
+    std::vector<const jsont *> bodies{&body};
+    std::set<std::string> seen_mods;
+    std::function<void(const jsont &)> add_imports = [&](const jsont &b)
+    {
+      std::function<void(const jsont &)> scan = [&](const jsont &n)
+      {
+        if(n.is_array())
+        {
+          for(const auto &c : as_array(n))
+            scan(c);
+          return;
+        }
+        if(!n.is_object())
+          return;
+        std::vector<std::string> mods;
+        if(is_node_type(n, "ImportFrom"))
+          mods.push_back(json_string(json_member(n, "module")));
+        else if(is_node_type(n, "Import"))
+        {
+          const jsont &names = json_member(n, "names");
+          if(names.is_array())
+            for(const auto &a : as_array(names))
+              mods.push_back(json_string(json_member(a, "name")));
+        }
+        for(const auto &m : mods)
+        {
+          if(m.empty() || !module_resolver || !seen_mods.insert(m).second)
+            continue;
+          const jsont *ast = module_resolver(m);
+          if(ast == nullptr || ast->is_null())
+            continue;
+          const jsont &mb = json_member(*ast, "body");
+          if(!mb.is_array())
+            continue;
+          bodies.push_back(&mb);
+          add_imports(mb);
+        }
+        for(const auto &kv : to_json_object(n))
+          if(kv.first != "_type")
+            scan(kv.second);
+      };
+      scan(b);
+    };
+    add_imports(body);
+    collect_assert_raise_functions(bodies);
+  }
+
   // Pass 0.1: resolve imports so module symbols are available.
   // Note: Python allows import statements inside function bodies
   // (`def f(): import asyncio`). We collect imports from the whole

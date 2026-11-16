@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+PLR 7.3: `assert e` is `if __debug__ and not e: raise AssertionError`. An
+assert in a function called from a try that catches AssertionError raises
+it, so the caller's handler observes the failed check. It used to be a bare
+property, so the handler never ran.

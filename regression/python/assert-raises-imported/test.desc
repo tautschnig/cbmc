@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+An assert in an imported user module raises AssertionError when the
+importer calls it from a try that catches it.

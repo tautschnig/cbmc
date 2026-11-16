@@ -1,8 +1,12 @@
 CORE
 main.py
---unwind 6 --python-smt-containers --python-smt-strings --z3
+--unwind 6 --python-smt-containers --python-smt-strings --z3 --isolate-properties
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
 --
+Run per property: since each assert is also assumed on the path after it
+(PLR 7.3: a failed assert ends the program), the monolithic query carries
+the pop-result equality as a hypothesis of the length check, which z3
+4.8.12 does not decide in minutes (z3 5.4 takes 3 s, cvc5 4 s).

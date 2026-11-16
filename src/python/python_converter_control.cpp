@@ -54,13 +54,187 @@ codet python_convertert::convert_assert(const jsont &stmt)
   if(test.type() != bool_typet{})
     test = safe_typecast(test, bool_typet{});
 
+  // PLR §7.3: `assert e` is `if __debug__ and not e: raise
+  // AssertionError` (__debug__ is True). When the AssertionError can be
+  // caught (the code is inside a try body or a with body, or in a
+  // function reachable from one), lower it exactly so: a caller's
+  // `except AssertionError` observes it and the rest of the path is
+  // skipped by the exception machinery.
+  const std::string fn_root =
+    current_function.substr(0, current_function.find("::"));
+  bool handler_catches = false;
+  for(const auto &caught : active_exception_handlers)
+    for(const char *n : {"", "AssertionError", "Exception", "BaseException"})
+      if(caught.count(n) > 0)
+        handler_catches = true;
+  const bool catchable = handler_catches || with_cleanup_depth > 0 ||
+                         (!current_function.empty() &&
+                          (assert_raise_functions.count(current_function) > 0 ||
+                           assert_raise_functions.count(fn_root) > 0));
+  if(catchable)
+  {
+    json_objectt exc_name;
+    exc_name["_type"] = json_stringt{"Name"};
+    exc_name["id"] = json_stringt{"AssertionError"};
+    json_objectt raise_node;
+    raise_node["_type"] = json_stringt{"Raise"};
+    raise_node["exc"] = exc_name;
+    raise_node["lineno"] = json_member(stmt, "lineno");
+    raise_node["col_offset"] = json_member(stmt, "col_offset");
+    codet raise_code = convert_raise(raise_node);
+    code_ifthenelset ite{not_exprt{test}, std::move(raise_code)};
+    ite.add_source_location() = get_location(stmt);
+    return std::move(ite);
+  }
+
+  // Otherwise an AssertionError ends the program: the assert is a
+  // property, and the path does not continue past a failed assert
+  // (assume), so later code is only checked where the assert held.
+  // The condition is evaluated once into a temporary, so the property
+  // and the assumption share one SSA symbol: later path guards carry
+  // that symbol instead of a copy of the (possibly large) condition.
   source_locationt loc = get_location(stmt);
+  code_blockt block;
+  exprt cond = test;
+  if(!cond.is_constant() && cond.id() != ID_symbol)
+  {
+    static unsigned assert_ctr = 0;
+    const std::string tn = "__assert_cond_" + std::to_string(assert_ctr++);
+    const irep_idt tid{qualify_name(tn)};
+    if(symbol_table.lookup(tid) == nullptr)
+    {
+      symbolt ts{tid, bool_typet{}, "python"};
+      ts.base_name = tn;
+      ts.is_lvalue = true;
+      ts.is_state_var = true;
+      ts.is_static_lifetime = current_function.empty();
+      symbol_table.add(ts);
+    }
+    const symbol_exprt t = symbol_table.lookup_ref(tid).symbol_expr();
+    code_frontend_assignt set{t, std::move(cond)};
+    set.add_source_location() = loc;
+    block.add(std::move(set));
+    cond = t;
+  }
   loc.set_property_class("assertion");
   loc.set_comment("Python assertion");
-
-  code_assertt assertion{test};
+  code_assertt assertion{cond};
   assertion.add_source_location() = loc;
-  return std::move(assertion);
+  code_assumet assume{cond};
+  assume.add_source_location() = loc;
+  block.add(std::move(assertion));
+  block.add(std::move(assume));
+  return std::move(block);
+}
+
+void python_convertert::collect_assert_raise_functions(
+  const std::vector<const jsont *> &bodies)
+{
+  // Call graph over module-level functions and methods (by base name;
+  // over-approximate: any call `f(...)` or `x.f(...)` is an edge to
+  // every definition named f). Seeds are the callees of code whose
+  // AssertionError can be caught.
+  std::map<std::string, std::set<std::string>> calls;
+  std::set<std::string> seeds;
+  auto catches_assertion = [this](const jsont &tr) -> bool
+  {
+    const jsont &hs = json_member(tr, "handlers");
+    if(!hs.is_array())
+      return false;
+    for(const auto &h : as_array(hs))
+    {
+      const jsont &ht = json_member(h, "type");
+      if(ht.is_null())
+        return true;
+      std::vector<const jsont *> names;
+      if(is_node_type(ht, "Tuple"))
+      {
+        const jsont &elts = json_member(ht, "elts");
+        if(elts.is_array())
+          for(const auto &e : as_array(elts))
+            names.push_back(&e);
+      }
+      else
+        names.push_back(&ht);
+      for(const jsont *n : names)
+      {
+        std::string id;
+        if(is_node_type(*n, "Name"))
+          id = json_string(json_member(*n, "id"));
+        else if(is_node_type(*n, "Attribute"))
+          id = json_string(json_member(*n, "attr"));
+        else
+          return true; // unknown handler type: assume it may catch
+        if(id == "AssertionError" || id == "Exception" || id == "BaseException")
+          return true;
+      }
+    }
+    return false;
+  };
+  std::function<void(const jsont &, const std::string &, bool)> walk =
+    [&](const jsont &n, const std::string &fn, bool protected_region)
+  {
+    if(n.is_array())
+    {
+      for(const auto &c : as_array(n))
+        walk(c, fn, protected_region);
+      return;
+    }
+    if(!n.is_object())
+      return;
+    if(is_node_type(n, "FunctionDef") || is_node_type(n, "AsyncFunctionDef"))
+    {
+      const std::string name = json_string(json_member(n, "name"));
+      walk(json_member(n, "body"), name, false);
+      return;
+    }
+    if(is_node_type(n, "Call"))
+    {
+      const jsont &f = json_member(n, "func");
+      std::string callee;
+      if(is_node_type(f, "Name"))
+        callee = json_string(json_member(f, "id"));
+      else if(is_node_type(f, "Attribute"))
+        callee = json_string(json_member(f, "attr"));
+      if(!callee.empty())
+      {
+        calls[fn].insert(callee);
+        if(protected_region)
+          seeds.insert(callee);
+      }
+    }
+    if(is_node_type(n, "Try") || is_node_type(n, "TryStar"))
+    {
+      const bool p = protected_region || catches_assertion(n);
+      walk(json_member(n, "body"), fn, p);
+      for(const char *k : {"handlers", "orelse", "finalbody"})
+        walk(json_member(n, k), fn, protected_region);
+      return;
+    }
+    if(is_node_type(n, "With") || is_node_type(n, "AsyncWith"))
+    {
+      walk(json_member(n, "items"), fn, protected_region);
+      walk(json_member(n, "body"), fn, true);
+      return;
+    }
+    for(const auto &kv : to_json_object(n))
+      if(kv.first != "_type")
+        walk(kv.second, fn, protected_region);
+  };
+  for(const jsont *b : bodies)
+    walk(*b, "", false);
+  std::vector<std::string> work(seeds.begin(), seeds.end());
+  while(!work.empty())
+  {
+    const std::string f = work.back();
+    work.pop_back();
+    if(!assert_raise_functions.insert(f).second)
+      continue;
+    auto it = calls.find(f);
+    if(it != calls.end())
+      for(const auto &g : it->second)
+        work.push_back(g);
+  }
 }
 
 // PLR §8.1: The if statement
