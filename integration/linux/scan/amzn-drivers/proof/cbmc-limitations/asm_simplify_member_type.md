@@ -1,8 +1,10 @@
 # asm-semantics build: simplify_member invariant violation during BMC
 
-Status: crash (invariant violation) in CBMC's expression simplifier,
-`src/util/simplify_expr_struct.cpp:122` (`simplify_member`). Independent of the
-inline-assembly representation and widening fixes; see below.
+Status: fixed (linker, `src/linking/linking.cpp`). The crash surfaced in
+CBMC's expression simplifier, `src/util/simplify_expr_struct.cpp:122`
+(`simplify_member`), but the cause is in linking; it is independent of the
+inline-assembly fixes. See "Root cause" and "Resolution" below; the earlier
+sections record the investigation as it stood.
 
 ## Observation
 
@@ -63,3 +65,35 @@ the invariant.
 
 None yet. The harness reaches BMC (the asm-goto blocker is gone) but cannot
 complete until this simplifier invariant is addressed.
+
+## Root cause
+
+The `member` expression reads `$anon0` of a constant `struct ena_ring` value
+built by the harness (`harness_lx_channels.c` line 79). The member's type and
+the stored operand's type are two *different* union tags, both naming the same
+anonymous union of `ena_netdev.h` line 337.
+
+The C front end names an anonymous struct/union after its structure,
+including the definitions of all types reachable through its pointers
+(`tag-#anon#UN[...]`). Deep in that chain is `struct uts_namespace`, complete
+in one translation unit and only declared in the other, so the two units give
+the anonymous union different identifiers (they first differ some 38,600
+characters in). `linkingt::needs_renaming_type` accepts the two `struct
+ena_ring` definitions as structurally equivalent (commit `0414b43bf21`) and
+keeps the main-table one, whose `$anon0` has the first unit's tag. But the
+second unit's code and values kept referring to *its* tag, so the linked
+program mixed two tags for one C type.
+
+Minimal reproducer: `regression/cbmc/Linking13` (a nested struct complete in
+`main.c`, only declared in `module.c`, a struct value built in `module.c`).
+Without the fix it fails `member_exprt` validation; in the harness, the same
+mismatch reaches `simplify_member` first.
+
+## Resolution
+
+When structural equivalence is accepted, the linker now records every
+anonymous-tag pair the check matched up in `rename_new_symbol`, so the new
+unit's references are rewritten to the kept tags like any other renamed type
+(commit "Linking: map equivalent anonymous tags of the new unit to the kept
+ones"). `Linking13` passes with `--validate-goto-model
+--validate-ssa-equation`, and the harness no longer aborts.
