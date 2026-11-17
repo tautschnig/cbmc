@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.shorts -cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+The parse of one argument throws for malformed and out-of-range strings, with the JDK's messages (it returned any value).
