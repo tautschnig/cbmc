@@ -3810,6 +3810,14 @@ bool python_convertert::convert()
   // qualified as `python::<name>`.
   collect_escaped_mutables(body);
   collect_empty_list_inferred_types(body);
+  // The same pre-scans over imported user modules: their globals (e.g. a
+  // list of empty lists filled by a function of that module) are module
+  // variables too, and the scans see the module's own function bodies.
+  for(const auto &[mod_name, mod_body] : user_module_inits)
+  {
+    collect_escaped_mutables(*mod_body);
+    collect_empty_list_inferred_types(*mod_body);
+  }
   // State the function bodies were converted in (sub-pass 1c), for
   // re-conversion after pass 2 (below).
   const tracking_snapshott pre_module_tracking = snapshot_tracking();

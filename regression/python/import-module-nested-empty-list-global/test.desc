@@ -1,0 +1,13 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+uncaught exception: FAILURE
+--
+A list of empty lists that is a global of an imported module and is filled
+by that module's functions. The pre-scans that infer the inner element
+type ran over the main module only, so the inner lists were list[int] and
+a popped str reached int(_, 16) tagged as an int (a spurious exception).

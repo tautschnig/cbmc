@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 6
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+uncaught exception: FAILURE
+--
+Twin of import-module-nested-empty-list-global.
