@@ -26,6 +26,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/prefix.h>
 #include <util/prefix_filter.h> // IWYU pragma: keep
 #include <util/std_expr.h>
+#include <util/string_utils.h>
 #include <util/symbol_table_base.h>
 #include <util/threeval.h>
 
@@ -39,6 +40,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "java_static_initializers.h"
 #include "java_string_library_preprocess.h"
 #include "java_string_literal_expr.h"
+#include "java_string_literals.h"
 #include "java_types.h"
 #include "java_utils.h"
 #include "lambda_synthesis.h"
@@ -3095,6 +3097,168 @@ code_blockt java_bytecode_convert_methodt::convert_astore(
   return block;
 }
 
+/// The descriptor of StringBuilder.append for an argument of \p type, as
+/// StringConcatFactory converts it: String.valueOf of the value, with
+/// append(Object) for references other than String.
+static std::string string_builder_append_descriptor(const typet &type)
+{
+  if(type == java_char_type())
+    return "(C)";
+  if(type == java_boolean_type())
+    return "(Z)";
+  if(type == java_long_type())
+    return "(J)";
+  if(type == java_float_type())
+    return "(F)";
+  if(type == java_double_type())
+    return "(D)";
+  if(type.id() == ID_pointer)
+  {
+    const typet &target = to_pointer_type(type).base_type();
+    if(
+      target.id() == ID_struct_tag &&
+      to_struct_tag_type(target).get_identifier() == "java::java.lang.String")
+    {
+      return "(Ljava/lang/String;)";
+    }
+    return "(Ljava/lang/Object;)";
+  }
+  // (byte, short and int)
+  return "(I)";
+}
+
+/// Code for the string concatenation of an invokedynamic of
+/// StringConcatFactory.makeConcatWithConstants or makeConcat (javac for
+/// Java 9 and later): a StringBuilder that appends the pieces of the
+/// recipe, then its toString.
+/// \param location: of the invokedynamic
+/// \param recipe: the recipe (see java_bytecode_convert_class)
+/// \param arguments: the arguments of the invokedynamic
+/// \param method_type: the type of the invokedynamic
+/// \param [out] result_code: the code
+/// \return the string, or nothing where the recipe is not supported
+std::optional<exprt> java_bytecode_convert_methodt::convert_string_concat(
+  const source_locationt &location,
+  const irept &recipe,
+  const code_function_callt::argumentst &arguments,
+  const java_method_typet &method_type,
+  codet &result_code)
+{
+  if(!recipe.get_bool(ID_java_concat_supported))
+    return {};
+  java_bytecode_parse_treet::classt::string_concat_recipet parsed;
+  parsed.recipe = id2string(recipe.get(ID_value));
+  parsed.all_arguments = recipe.get_bool(ID_java_concat_all_arguments);
+  for(const irept &constant : recipe.find(ID_java_concat_constants).get_sub())
+    parsed.constants.push_back(id2string(constant.id()));
+  const auto pieces = parsed.pieces(arguments.size());
+  const std::size_t uses =
+    std::count(pieces.begin(), pieces.end(), std::nullopt);
+  if(
+    uses != arguments.size() ||
+    method_type.parameters().size() != arguments.size())
+  {
+    return {};
+  }
+
+  const irep_idt builder_class = "java::java.lang.StringBuilder";
+  const java_reference_typet builder_type =
+    java_reference_type(struct_tag_typet{builder_class});
+  const auto method = [&](
+                        const std::string &name,
+                        const std::string &descriptor,
+                        const typet &return_type,
+                        const java_method_typet::parameterst &parameters)
+  {
+    java_method_typet type{
+      java_method_typet::parameterst{parameters}, return_type};
+    return class_method_descriptor_exprt{
+      type, name + ":" + descriptor, builder_class, name};
+  };
+
+  code_blockt block;
+  exprt::operandst results;
+  codet call{ID_skip};
+
+  // builder = new StringBuilder(); builder.<init>();
+  const exprt builder = tmp_variable("concat_builder", builder_type);
+  block.add(code_assignt{
+    builder, side_effect_exprt{ID_java_new, builder_type, location}});
+  if(needed_lazy_methods)
+    needed_lazy_methods->add_needed_class(builder_class);
+  {
+    push({builder});
+    auto init = method("<init>", "()V", java_void_type(), {});
+    convert_invoke(location, "invokespecial", init, call, results);
+    block.add(call);
+  }
+
+  std::size_t next_argument = 0;
+  for(const auto &piece : pieces)
+  {
+    exprt value;
+    // (the type of the descriptor: the stack holds chars and booleans as
+    // ints)
+    std::optional<typet> declared_type;
+    if(piece.has_value())
+    {
+      // (generate_constant_global_variables made the literal, so that the
+      // flag of string refinement does not matter here)
+      const irep_idt text{*piece};
+      INVARIANT(
+        symbol_table.has_symbol(
+          JAVA_STRING_LITERAL_PREFIX "." + escape_non_alnum(id2string(text))),
+        "the literals of a string concatenation are made in advance");
+      value = address_of_exprt{
+        get_or_create_string_literal_symbol(text, symbol_table, false)};
+    }
+    else
+    {
+      declared_type = method_type.parameters()[next_argument].type();
+      value = arguments[next_argument++];
+    }
+    const typet &type = declared_type ? *declared_type : value.type();
+    const std::string descriptor = string_builder_append_descriptor(type);
+    typet parameter_type =
+      descriptor == "(I)"   ? java_int_type()
+      : descriptor == "(C)" ? java_char_type()
+      : descriptor == "(Z)" ? java_boolean_type()
+      : descriptor == "(J)" ? java_long_type()
+      : descriptor == "(F)" ? java_float_type()
+      : descriptor == "(D)" ? java_double_type()
+      : descriptor == "(Ljava/lang/String;)"
+        ? typet{java_reference_type(struct_tag_typet{"java::java.lang.String"})}
+        : typet{
+            java_reference_type(struct_tag_typet{"java::java.lang.Object"})};
+    if(value.type() != parameter_type)
+      value = typecast_exprt::conditional_cast(value, parameter_type);
+    push({builder, value});
+    auto append = method(
+      "append",
+      descriptor + "Ljava/lang/StringBuilder;",
+      builder_type,
+      {java_method_typet::parametert{parameter_type}});
+    results.clear();
+    convert_invoke(location, "invokevirtual", append, call, results);
+    block.add(call);
+  }
+
+  // result = builder.toString();
+  push({builder});
+  const java_reference_typet string_type =
+    java_reference_type(struct_tag_typet{"java::java.lang.String"});
+  auto to_string = method("toString", "()Ljava/lang/String;", string_type, {});
+  results.clear();
+  convert_invoke(location, "invokevirtual", to_string, call, results);
+  block.add(call);
+  INVARIANT(results.size() == 1, "toString returns the string");
+  const exprt result = tmp_variable("concat_result", string_type);
+  block.add(code_assignt{
+    result, typecast_exprt::conditional_cast(results[0], string_type)});
+  result_code = std::move(block);
+  return result;
+}
+
 std::optional<exprt> java_bytecode_convert_methodt::convert_invoke_dynamic(
   const source_locationt &location,
   std::size_t instruction_address,
@@ -3108,6 +3272,24 @@ std::optional<exprt> java_bytecode_convert_methodt::convert_invoke_dynamic(
   // Note these must be popped regardless of whether we understand the lambda
   // method or not
   code_function_callt::argumentst arguments = pop(parameters.size());
+
+  // A string concatenation of Java 9 and later (StringConcatFactory)?
+  if(const auto declaring = declaring_class(symbol_table.lookup_ref(method_id)))
+  {
+    const irept &recipes = to_java_class_type(ns.lookup(*declaring).type)
+                             .find(ID_java_string_concat_recipes);
+    const irept &recipe = recipes.find(
+      std::to_string(method_type.get_int(ID_java_lambda_method_handle_index)));
+    if(recipe.is_not_nil())
+    {
+      if(
+        const auto result = convert_string_concat(
+          location, recipe, arguments, method_type, result_code))
+      {
+        return result;
+      }
+    }
+  }
 
   irep_idt synthetic_class_name =
     lambda_synthetic_class_name(method_id, instruction_address);

@@ -601,6 +601,22 @@ static void generate_constant_global_variables(
   symbol_table_baset &symbol_table,
   bool string_refinement_enabled)
 {
+  // the texts of the string concatenations of Java 9 and later (see
+  // java_bytecode_convert_methodt::convert_string_concat)
+  for(const auto &entry : parse_tree.parsed_class.string_concat_recipes)
+  {
+    if(!entry.second.supported || entry.second.all_arguments)
+      continue;
+    for(const auto &piece : entry.second.pieces(0))
+    {
+      if(piece.has_value())
+      {
+        get_or_create_string_literal_symbol(
+          irep_idt{*piece}, symbol_table, string_refinement_enabled);
+      }
+    }
+  }
+
   for(auto &method : parse_tree.parsed_class.methods)
   {
     for(java_bytecode_parse_treet::instructiont &instruction :

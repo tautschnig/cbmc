@@ -116,6 +116,10 @@ private:
   std::optional<lambda_method_handlet>
   parse_method_handle(const class method_handle_infot &entry);
   void read_bootstrapmethods_entry();
+  bool read_string_concat_recipe(
+    const class method_handle_infot &method_handle,
+    size_t bootstrap_method_index,
+    const std::vector<u2> &arguments);
 
   void skip_bytes(std::size_t bytes)
   {
@@ -2020,6 +2024,14 @@ void java_bytecode_parsert::read_bootstrapmethods_entry()
     for(size_t i = 0; i < num_bootstrap_arguments; i++)
       u2_values[i] = read<u2>();
 
+    if(read_string_concat_recipe(
+         method_handle, bootstrap_method_index, u2_values))
+    {
+      // (an unknown handle keeps the indices of the lambda handles)
+      store_unknown_method_handle(bootstrap_method_index);
+      continue;
+    }
+
     // try parsing bootstrap method handle
     // each entry contains a MethodHandle structure
     // u2 tag
@@ -2128,6 +2140,70 @@ void java_bytecode_parsert::read_bootstrapmethods_entry()
     parse_tree.parsed_class.add_method_handle(
       bootstrap_method_index, *lambda_method_handle);
   }
+}
+
+/// Read the recipe of a bootstrap method of StringConcatFactory
+/// (makeConcatWithConstants and makeConcat, which javac uses for the string
+/// concatenations of Java 9 and later) into the parsed class.
+/// \param method_handle: the bootstrap method
+/// \param bootstrap_method_index: its index in the BootstrapMethods table
+/// \param arguments: the constant pool indices of its static arguments
+/// \return whether the bootstrap method is one of StringConcatFactory
+bool java_bytecode_parsert::read_string_concat_recipe(
+  const method_handle_infot &method_handle,
+  size_t bootstrap_method_index,
+  const std::vector<u2> &arguments)
+{
+  if(
+    method_handle.get_handle_kind() !=
+    method_handle_infot::method_handle_kindt::REF_invokeStatic)
+  {
+    return false;
+  }
+  const std::function<pool_entryt &(u2)> pool_entry_lambda =
+    [this](u2 index) -> pool_entryt & { return pool_entry(index); };
+  const base_ref_infot &ref_entry =
+    method_handle.get_reference(pool_entry_lambda);
+  if(
+    ref_entry.get_class(pool_entry_lambda).get_name(pool_entry_lambda) !=
+    "java/lang/invoke/StringConcatFactory")
+  {
+    return false;
+  }
+  const std::string name =
+    ref_entry.get_name_and_type(pool_entry_lambda).get_name(pool_entry_lambda);
+  if(name != "makeConcatWithConstants" && name != "makeConcat")
+    return false;
+
+  classt::string_concat_recipet recipe;
+  if(name == "makeConcat")
+    recipe.all_arguments = true;
+  else
+  {
+    // the recipe, then the constants of \2
+    for(std::size_t i = 0; i < arguments.size(); i++)
+    {
+      const pool_entryt &argument = pool_entry(arguments[i]);
+      if(argument.tag != CONSTANT_String)
+      {
+        recipe.supported = false;
+        break;
+      }
+      const std::string text = id2string(pool_entry(argument.ref1).s);
+      if(i == 0)
+        recipe.recipe = text;
+      else
+        recipe.constants.push_back(text);
+    }
+    if(arguments.empty())
+      recipe.supported = false;
+  }
+  parse_tree.parsed_class.string_concat_recipes[bootstrap_method_index] =
+    recipe;
+  // the concatenation appends to a StringBuilder (see
+  // java_bytecode_convert_methodt::convert_string_concat)
+  parse_tree.class_refs.insert("java.lang.StringBuilder");
+  return true;
 }
 
 /// Creates an unknown method handle and puts it into the parsed_class

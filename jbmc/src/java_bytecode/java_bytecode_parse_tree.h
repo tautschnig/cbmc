@@ -17,6 +17,7 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <list>
 #include <map>
+#include <optional>
 #include <set>
 
 struct java_bytecode_parse_treet
@@ -263,6 +264,54 @@ struct java_bytecode_parse_treet
         return *method_descriptor;
       }
     };
+
+    /// The recipe of a bootstrap method of StringConcatFactory (the string
+    /// concatenations of javac for Java 9 and later): \1 stands for the
+    /// next argument, \2 for the next of the constants, any other char for
+    /// itself. For makeConcat, which concatenates all its arguments, the
+    /// recipe is empty and all_arguments is set. Recipes with constants
+    /// other than strings are not supported.
+    struct string_concat_recipet
+    {
+      std::string recipe;
+      std::vector<std::string> constants;
+      bool all_arguments = false;
+      bool supported = true;
+
+      /// The pieces of the concatenation of \p number_of_arguments
+      /// arguments, in order: an argument (no value) or a text (the
+      /// constants and other chars between arguments, not empty).
+      std::vector<std::optional<std::string>>
+      pieces(std::size_t number_of_arguments) const
+      {
+        std::vector<std::optional<std::string>> result;
+        if(all_arguments)
+          return std::vector<std::optional<std::string>>(number_of_arguments);
+        std::string text;
+        std::size_t next_constant = 0;
+        const auto flush = [&]()
+        {
+          if(!text.empty())
+            result.emplace_back(text);
+          text.clear();
+        };
+        for(const char c : recipe)
+        {
+          if(c == '\1')
+          {
+            flush();
+            result.emplace_back();
+          }
+          else if(c == '\2' && next_constant < constants.size())
+            text += constants[next_constant++];
+          else
+            text += c;
+        }
+        flush();
+        return result;
+      }
+    };
+    std::map<size_t, string_concat_recipet> string_concat_recipes;
 
     // TODO(tkiley): This map shouldn't be interacted with directly (instead
     // TODO(tkiley): using add_method_handle and get_method_handle and instead

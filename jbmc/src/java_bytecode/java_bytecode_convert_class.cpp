@@ -436,6 +436,24 @@ void java_bytecode_convert_classt::convert(
           lambda_entry.second.handle_type);
   }
 
+  // the recipes of the string concatenations of Java 9 and later, by the
+  // index of their bootstrap method (see convert_string_concat)
+  if(!c.string_concat_recipes.empty())
+  {
+    irept &recipes = class_type.add(ID_java_string_concat_recipes);
+    for(const auto &entry : c.string_concat_recipes)
+    {
+      irept recipe;
+      recipe.set(ID_value, entry.second.recipe);
+      recipe.set(ID_java_concat_all_arguments, entry.second.all_arguments);
+      recipe.set(ID_java_concat_supported, entry.second.supported);
+      irept &constants = recipe.add(ID_java_concat_constants);
+      for(const std::string &constant : entry.second.constants)
+        constants.get_sub().emplace_back(irept{constant});
+      recipes.add(std::to_string(entry.first)) = std::move(recipe);
+    }
+  }
+
   // Load annotations
   if(!c.annotations.empty())
     convert_annotations(c.annotations, class_type.get_annotations());

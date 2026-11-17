@@ -368,6 +368,13 @@ protected:
       std::vector<java_bytecode_parse_treet::instructiont>::const_iterator>
       &ret_instructions) const;
 
+  std::optional<exprt> convert_string_concat(
+    const source_locationt &location,
+    const irept &recipe,
+    const code_function_callt::argumentst &arguments,
+    const java_method_typet &method_type,
+    codet &result_code);
+
   std::optional<exprt> convert_invoke_dynamic(
     const source_locationt &location,
     std::size_t instruction_address,
