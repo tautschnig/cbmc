@@ -8,8 +8,9 @@ assert format(10, "#b") == "0b1010"
 assert format("ab", "*^6") == "**ab**"
 assert format(77) == "77"
 
-v = nondet_int()
-__CPROVER_assume(v >= 0)
-h = format(v, "016x")
-assert len(h) == 16
-assert int(h, 16) == v
+code = nondet_int()
+__CPROVER_assume(0 <= code < (1 << 36))
+word = format(code, "09X")
+assert len(word) == 9
+assert int(word, 16) == code
+assert format(code, "#X").startswith("0X")

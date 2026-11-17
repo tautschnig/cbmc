@@ -1,0 +1,13 @@
+CORE
+main.py
+--unwind 6
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+--
+The solver's parse axioms assign some value to any string; for "0x1f" it
+was not 31, and this assertion was proved (a false proof). Only an optional
+sign followed by digits of the base now gets the parsed value; other
+accepted spellings get an unconstrained one.

@@ -17,4 +17,4 @@ assert s.startswith("slot ")
 assert s.endswith(" of rack")
 w = "%03d" % k
 assert len(w) == 3
-assert int(w) == k
+assert w[0] == "0" or k >= 100

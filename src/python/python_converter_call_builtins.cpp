@@ -45,6 +45,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <tuple>
 
 // Decide hasattr(obj, name) for a built-in (non-class) receiver from
 // the fixed protocol-attribute set of its type. Returns nullopt when
@@ -6653,6 +6654,46 @@ exprt python_convertert::emit_int_parse(
   }
   const symbol_exprt res = symbol_table.lookup_ref(rid).symbol_expr();
   pending_checks.push_back(code_frontend_assignt{res, std::move(app)});
+  // The parse axioms give a value for any string; it is the Python value
+  // only for an optional sign followed by digits of the base (the solver's
+  // is-valid-number test). Every other accepted spelling (whitespace, '_'
+  // separators, a 0x/0o/0b prefix) gets an unconstrained value: before, it
+  // got the wrong one (`int(s, 16) != 31` was proved for s == "0x1f").
+  const irep_idt vid{ID_cprover_string_is_valid_long_func};
+  if(symbol_table.lookup(vid) == nullptr)
+  {
+    symbolt vs{
+      vid,
+      mathematical_function_typet(
+        {str.type(), signedbv_typet{64}}, bool_typet{}),
+      "python"};
+    vs.base_name = id2string(vid);
+    symbol_table.add(vs);
+  }
+  function_application_exprt valid_app{
+    symbol_table.lookup_ref(vid).symbol_expr(),
+    {str, from_integer(base, signedbv_typet{64})}};
+  valid_app.type() = bool_typet{};
+  const std::string vn = "__str_parse_valid_" + std::to_string(parse_ctr);
+  const irep_idt vrid{"python::" + vn};
+  const std::string an = "__str_parse_any_" + std::to_string(parse_ctr);
+  const irep_idt arid{"python::" + an};
+  for(const auto &[id, nm, ty] :
+      {std::tuple<irep_idt, std::string, typet>{vrid, vn, bool_typet{}},
+       std::tuple<irep_idt, std::string, typet>{arid, an, wide}})
+    if(symbol_table.lookup(id) == nullptr)
+    {
+      symbolt rs{id, ty, "python"};
+      rs.base_name = nm;
+      rs.is_lvalue = true;
+      rs.is_state_var = true;
+      symbol_table.add(rs);
+    }
+  const symbol_exprt valid = symbol_table.lookup_ref(vrid).symbol_expr();
+  const symbol_exprt any = symbol_table.lookup_ref(arid).symbol_expr();
+  pending_checks.push_back(code_frontend_assignt{valid, std::move(valid_app)});
+  pending_checks.push_back(
+    code_frontend_assignt{any, side_effect_expr_nondett{wide, loc}});
   const typet &it = python_int_type();
-  return typecast_exprt{res, it};
+  return typecast_exprt{if_exprt{valid, res, any}, it};
 }
