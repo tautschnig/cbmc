@@ -6605,24 +6605,32 @@ exprt python_convertert::emit_int_parse(
   // unconstrained int: sound, imprecise.
   if(base != 10 && (base < 2 || base > 36 || base_nonconst))
     return side_effect_expr_nondett{python_int_type(), loc};
-  const typet i64 = signedbv_typet{64};
+  // Parse into 128 bits. The solver's parse axioms exclude every input
+  // whose value overflows the result type, so parsing straight into the
+  // 64-bit model dropped those inputs (a vacuous proof of e.g.
+  // `s[0] != 'f'` after `int(s, 16)` of 16 digits). The wide result is
+  // converted to the int model like other symbolic arithmetic: exact under
+  // --python-unbounded-ints, wrapping in the default 64-bit model. Only
+  // numerals beyond 128 bits stay excluded.
+  const signedbv_typet wide{128};
   const irep_idt fid{ID_cprover_string_parse_int_func};
   if(symbol_table.lookup(fid) == nullptr)
   {
     symbolt fs{
-      fid, mathematical_function_typet({str.type(), i64}, i64), "python"};
+      fid, mathematical_function_typet({str.type(), wide}, wide), "python"};
     fs.base_name = id2string(fid);
     symbol_table.add(fs);
   }
   function_application_exprt app{
-    symbol_table.lookup_ref(fid).symbol_expr(), {str, from_integer(base, i64)}};
-  app.type() = i64;
+    symbol_table.lookup_ref(fid).symbol_expr(),
+    {str, from_integer(base, wide)}};
+  app.type() = wide;
   static unsigned parse_ctr = 0;
   const std::string rn = "__str_parse_" + std::to_string(parse_ctr++);
   const irep_idt rid{"python::" + rn};
   if(symbol_table.lookup(rid) == nullptr)
   {
-    symbolt rs{rid, i64, "python"};
+    symbolt rs{rid, wide, "python"};
     rs.base_name = rn;
     rs.is_lvalue = true;
     rs.is_state_var = true;
@@ -6630,8 +6638,6 @@ exprt python_convertert::emit_int_parse(
   }
   const symbol_exprt res = symbol_table.lookup_ref(rid).symbol_expr();
   pending_checks.push_back(code_frontend_assignt{res, std::move(app)});
-  exprt parsed = res;
-  if(parsed.type() != python_int_type())
-    parsed = safe_typecast(parsed, python_int_type());
-  return parsed;
+  const typet &it = python_int_type();
+  return typecast_exprt{res, it};
 }

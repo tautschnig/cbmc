@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 17
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Membership of a symbolic character in a constant string is a disjunction of
+byte compares, and int(_, 16) of the word is exact. With 16 digits and a
+failing property this ran out of memory before (the quantified contains
+axioms); see int-parse-beyond-model-bound for 16 digits.

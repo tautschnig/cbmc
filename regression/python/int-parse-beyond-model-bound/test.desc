@@ -1,0 +1,14 @@
+CORE
+main.py
+--unwind 18
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.\d+\] .* Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+--
+The solver's parse axioms exclude inputs whose value overflows the result
+type, so parsing straight into 64 bits dropped every word starting with a
+digit >= 8 and proved `w[0] != 'f'` (a false proof). The parse is now 128
+bits wide; the value then wraps into the default 64-bit int model like
+other symbolic arithmetic.
