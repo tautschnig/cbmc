@@ -516,6 +516,27 @@ python_convertert::infer_return_type_from_body(
               else if(return_type != this_type)
                 return_type = python_value_type();
             }
+            // `return self.<attr>` -> the field's type. Fields of different
+            // types on different paths widen to python_value (a __getitem__
+            // returning one column or another).
+            if(
+              !enclosing_class.empty() && is_node_type(rv, "Attribute") &&
+              is_node_type(json_member(rv, "value"), "Name") &&
+              !parameters.empty() &&
+              json_string(json_member(json_member(rv, "value"), "id")) ==
+                id2string(parameters[0].get_base_name()))
+            {
+              auto ct = class_types.find(enclosing_class);
+              const std::string attr = json_string(json_member(rv, "attr"));
+              if(ct != class_types.end() && ct->second.has_component(attr))
+              {
+                const typet &ft = ct->second.get_component(attr).type();
+                if(return_type.id() == ID_empty)
+                  return_type = ft;
+                else if(return_type != ft)
+                  return_type = python_value_type();
+              }
+            }
             if(is_node_type(rv, "Name"))
             {
               std::string rname = json_string(json_member(rv, "id"));

@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 12
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+An unannotated method returning `self.a` (list[str]) on one path and
+`self.b` (list[int]) on another. `return self.<attr>` was not used to infer
+the return type, so the int default applied and the str list was cast to
+ints: the comparison with 'B' was a spurious failure.
