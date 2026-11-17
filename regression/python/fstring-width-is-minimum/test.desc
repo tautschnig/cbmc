@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 5
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+--
+f"{n:03}" with n = 1234 is "1234". Before, the result was given exactly the
+width as its length, and this assertion was proved (a false proof).

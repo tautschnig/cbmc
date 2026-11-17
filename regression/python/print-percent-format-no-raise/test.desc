@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+uncaught exception: FAILURE
+--
+`str % value` and `str % tuple` are defined for every right operand; the
+operand-type check raised TypeError for them.

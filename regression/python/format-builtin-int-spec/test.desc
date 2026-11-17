@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+no body for callee format
+--
+The format() builtin, exact for int values (presentation types d x X o b or
+none, sign, '#', fill, alignment, '0' and width) and str values. Before, it
+had no body.

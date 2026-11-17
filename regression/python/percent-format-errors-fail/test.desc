@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 7
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+--
+Twin of percent-format-errors: `"no conversions" % 9` raises TypeError.

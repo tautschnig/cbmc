@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 5
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+uncaught exception: FAILURE
+--
+Twin of print-percent-format-no-raise.

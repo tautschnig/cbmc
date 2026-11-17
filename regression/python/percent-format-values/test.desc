@@ -1,0 +1,13 @@
+CORE
+main.py
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+uncaught exception: FAILURE
+--
+printf-style `str % values` is formatted exactly for int and str values
+(d i u o x X s with flags, width and precision), for constants at conversion
+time and for symbolic values through the string solver. Before, the result
+was unconstrained and `str % tuple` raised a spurious TypeError.

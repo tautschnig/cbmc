@@ -2657,6 +2657,24 @@ private:
   /// True when \p funcdef's body has a nested def, lambda, class or
   /// generator construct (its locals may outlive a call).
   bool function_has_nested_scopes(const jsont &funcdef) const;
+  /// format(\p v, \p spec) as a str expression (format-spec
+  /// mini-language): a literal when v is known at conversion time, else
+  /// composed from string-solver primitives for ints and strs. Nil when the
+  /// value type or the spec is not modelled.
+  /// printf-style `fmt % args` with a constant \p fmt (library reference,
+  /// "printf-style String Formatting"). Raises TypeError for a definite
+  /// argument-count or conversion/type mismatch; formats int and str
+  /// arguments exactly; other conversions give an unconstrained str part.
+  exprt convert_percent_format(
+    const std::string &fmt,
+    const exprt &args,
+    const source_locationt &loc);
+  /// Concatenate str parts, folding adjacent literals.
+  exprt concat_string_parts(const std::vector<exprt> &parts);
+  exprt format_value_spec(
+    const exprt &v,
+    const std::string &spec,
+    const source_locationt &loc);
   /// Typed-key dunder variants (model-class convention): candidates for
   /// dunder \p base of class \p cls for a key expression \p key, the
   /// variant for the key's static type first (`<base minus trailing __>

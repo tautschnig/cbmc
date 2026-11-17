@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 5
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+--
+Twin of percent-format-values: k = 1000 gives "1000", of length 4.

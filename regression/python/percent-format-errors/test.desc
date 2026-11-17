@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 7
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+TypeError for "not enough arguments", "not all arguments converted" and a
+str given to %d/%x; ValueError for an unsupported conversion character. A
+list operand has __getitem__, so an unused one is not an error.

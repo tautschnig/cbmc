@@ -32,6 +32,7 @@
 #include <cstdio>
 #include <cstring>
 #include <functional>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -50,6 +51,218 @@
 /// "1e+16", 1e-4 -> "0.0001", 1e-5 -> "1e-05"). Folding str(float) with
 /// the previous 6-digit ostream path produced WRONG constants -- a
 /// false-proof channel (ESBMC str_float_* / str_format_* _fail).
+/// A value with a statically known Python value, for exact formatting.
+struct py_format_valuet
+{
+  enum class kindt
+  {
+    INT,
+    STR
+  } kind;
+  mp_integer i;
+  std::string s;
+};
+
+/// A parsed format spec (Python library reference, "Format Specification
+/// Mini-Language"), with the defaults Python applies resolved where they do
+/// not depend on the value's type.
+struct py_format_spect
+{
+  char fill = ' ';
+  bool explicit_fill = false;
+  char align = 0; // 0: type default
+  char sign = '-';
+  bool alt = false;
+  bool zero = false;
+  std::size_t width = 0;
+  std::optional<std::size_t> precision;
+  char type = 0;
+};
+
+/// Parse \p spec; nullopt for forms not modelled (grouping, 'z') or invalid.
+[[maybe_unused]] static inline std::optional<py_format_spect>
+parse_py_format_spec(const std::string &spec)
+{
+  py_format_spect r;
+  std::size_t p = 0;
+  auto is_align = [](char c)
+  { return c == '<' || c == '>' || c == '^' || c == '='; };
+  if(spec.size() >= 2 && is_align(spec[1]))
+  {
+    r.fill = spec[0];
+    r.explicit_fill = true;
+    r.align = spec[1];
+    p = 2;
+  }
+  else if(!spec.empty() && is_align(spec[0]))
+  {
+    r.align = spec[0];
+    p = 1;
+  }
+  if(p < spec.size() && (spec[p] == '+' || spec[p] == '-' || spec[p] == ' '))
+    r.sign = spec[p++];
+  if(p < spec.size() && spec[p] == 'z')
+    return std::nullopt;
+  if(p < spec.size() && spec[p] == '#')
+  {
+    r.alt = true;
+    ++p;
+  }
+  if(p < spec.size() && spec[p] == '0')
+  {
+    r.zero = true;
+    ++p;
+  }
+  while(p < spec.size() && std::isdigit(static_cast<unsigned char>(spec[p])))
+  {
+    r.width = r.width * 10 + static_cast<std::size_t>(spec[p] - '0');
+    if(r.width > 4096)
+      return std::nullopt;
+    ++p;
+  }
+  if(p < spec.size() && (spec[p] == ',' || spec[p] == '_'))
+    return std::nullopt; // grouping: not modelled
+  if(p < spec.size() && spec[p] == '.')
+  {
+    ++p;
+    std::size_t pr = 0;
+    bool any = false;
+    while(p < spec.size() && std::isdigit(static_cast<unsigned char>(spec[p])))
+    {
+      pr = pr * 10 + static_cast<std::size_t>(spec[p] - '0');
+      any = true;
+      if(pr > 4096)
+        return std::nullopt;
+      ++p;
+    }
+    if(!any)
+      return std::nullopt;
+    r.precision = pr;
+  }
+  if(p < spec.size())
+    r.type = spec[p++];
+  if(p != spec.size())
+    return std::nullopt;
+  return r;
+}
+
+/// The integer presentation of \p s, resolved: base, upper case, prefix,
+/// fill and alignment. nullopt when \p s is not an integer presentation.
+struct py_int_presentationt
+{
+  unsigned base;
+  bool upper;
+  std::string prefix;
+  char fill;
+  char align;
+};
+[[maybe_unused]] static inline std::optional<py_int_presentationt>
+py_int_presentation(const py_format_spect &s)
+{
+  if(s.precision.has_value())
+    return std::nullopt; // ValueError in Python
+  py_int_presentationt r{10, false, "", s.fill, s.align};
+  switch(s.type)
+  {
+  case 0:
+  case 'd':
+    break;
+  case 'x':
+    r.base = 16;
+    break;
+  case 'X':
+    r.base = 16;
+    r.upper = true;
+    break;
+  case 'o':
+    r.base = 8;
+    break;
+  case 'b':
+    r.base = 2;
+    break;
+  default:
+    return std::nullopt;
+  }
+  if(s.alt && r.base != 10)
+    r.prefix = r.base == 16  ? (r.upper ? "0X" : "0x")
+               : r.base == 8 ? "0o"
+                             : "0b";
+  // The '0' flag: zero fill unless a fill is given, '=' alignment unless an
+  // alignment is given.
+  if(s.zero && !s.explicit_fill)
+    r.fill = '0';
+  if(r.align == 0)
+    r.align = s.zero ? '=' : '>';
+  return r;
+}
+
+/// format(str, spec): nullopt unless a plain string presentation (types s or
+/// none, no sign/#/0/'=').
+[[maybe_unused]] static inline bool
+py_str_presentation_ok(const py_format_spect &s)
+{
+  return (s.type == 0 || s.type == 's') && s.sign == '-' && !s.alt && !s.zero &&
+         s.align != '=';
+}
+
+/// format(value, spec) for a value known at conversion time: an int with an
+/// integer presentation, or an ASCII str with a string presentation.
+[[maybe_unused]] static inline std::optional<std::string>
+py_format_exact(const py_format_valuet &v, const std::string &spec)
+{
+  const auto s = parse_py_format_spec(spec);
+  if(!s.has_value())
+    return std::nullopt;
+  std::string head, body;
+  char fill;
+  char align;
+  if(v.kind == py_format_valuet::kindt::INT)
+  {
+    const auto ip = py_int_presentation(*s);
+    if(!ip.has_value())
+      return std::nullopt;
+    const bool neg = v.i < 0;
+    body = integer2string(neg ? -v.i : v.i, ip->base);
+    for(auto &c : body)
+      c = static_cast<char>(
+        ip->upper ? std::toupper(static_cast<unsigned char>(c))
+                  : std::tolower(static_cast<unsigned char>(c)));
+    head = neg ? "-" : s->sign == '+' ? "+" : s->sign == ' ' ? " " : "";
+    head += ip->prefix;
+    fill = ip->fill;
+    align = ip->align;
+  }
+  else
+  {
+    if(!py_str_presentation_ok(*s))
+      return std::nullopt;
+    for(unsigned char c : v.s)
+      if(c >= 0x80)
+        return std::nullopt; // code points, not bytes: ASCII only
+    body = v.s;
+    if(s->precision.has_value() && body.size() > *s->precision)
+      body = body.substr(0, *s->precision);
+    fill = s->fill;
+    align = s->align == 0 ? '<' : s->align;
+  }
+  const std::size_t len = head.size() + body.size();
+  if(s->width <= len)
+    return head + body;
+  const std::size_t pad = s->width - len;
+  switch(align)
+  {
+  case '<':
+    return head + body + std::string(pad, fill);
+  case '>':
+    return std::string(pad, fill) + head + body;
+  case '^':
+    return std::string(pad / 2, fill) + head + body +
+           std::string(pad - pad / 2, fill);
+  default: // '='
+    return head + std::string(pad, fill) + body;
+  }
+}
+
 [[maybe_unused]] static inline std::string py_float_repr(double d)
 {
   if(std::isnan(d))

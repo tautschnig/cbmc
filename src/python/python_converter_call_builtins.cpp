@@ -1469,6 +1469,38 @@ std::optional<exprt> python_convertert::try_builtin_call(
     }
     return side_effect_expr_nondett{python_string_type(), get_location(expr)};
   }
+  else if(func_name == "format" && args.is_array() && !as_array(args).empty())
+  {
+    // format(value, format_spec='') (library reference, built-in
+    // functions): type(value).__format__(value, format_spec). Exact for int
+    // and str values with a constant spec (format_value_spec); otherwise an
+    // unconstrained str.
+    const std::vector<jsont> av{as_array(args).begin(), as_array(args).end()};
+    exprt value = convert_expression(av[0]);
+    std::optional<std::string> spec{std::string{}};
+    if(av.size() >= 2)
+    {
+      const jsont &sp = av[1];
+      spec.reset();
+      if(is_node_type(sp, "Constant") && json_member(sp, "value").is_string())
+        spec = json_member(sp, "value").value;
+      else
+        convert_expression(sp);
+    }
+    if(!value.is_nil() && spec.has_value())
+    {
+      // format(v) / format(v, '') is str(v); handled for int and str.
+      if(
+        !spec->empty() || is_python_string_type(value.type()) ||
+        value.type().id() == ID_signedbv || value.type().id() == ID_integer)
+      {
+        exprt out = format_value_spec(value, *spec, get_location(expr));
+        if(out.is_not_nil())
+          return out;
+      }
+    }
+    return side_effect_expr_nondett{python_string_type(), get_location(expr)};
+  }
   else if(func_name == "repr" || func_name == "ascii")
   {
     if(args.is_array() && !as_array(args).empty())

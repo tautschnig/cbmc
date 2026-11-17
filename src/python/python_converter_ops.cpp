@@ -134,6 +134,9 @@ binop_verdict compute_binop_verdict(
     incompatible = true;
   if(l_is_none || r_is_none) // None supports no arithmetic/bitwise operator
     incompatible = true;
+  // str % values is str.__mod__: defined for every right operand.
+  if(l_is_str && op == "Mod")
+    incompatible = false;
   if(!incompatible)
     return binop_verdict::ok;
   const bool arith = op == "Add" || op == "Sub" || op == "Mult" ||
@@ -996,45 +999,20 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
 
   // PLib stdtypes: "str" type, §6.7: binary arithmetic
   // String concatenation: s1 + s2 produces a new string containing the
-  // PLR §6.5: printf-style `"fmt" % arg` -- validate each conversion against
-  // the corresponding arg's concrete type (%d/%f on a str -> TypeError). Gated
-  // on a constant format string; %s/%r/%a accept anything; symbolic args never
-  // flagged. Single-arg form only (a tuple RHS is left unchecked -- conservative).
-  // Emit-only: the formatted-string result is produced by the existing path.
+  // printf-style formatting (library reference): `str % values` is
+  // str.__mod__, defined for every right operand type.
   if(is_python_string_type(left.type()) && op == "Mod")
   {
-    if(auto fmt = extract_string_value(left))
+    std::optional<std::string> fmt = extract_string_value(left);
+    if(!fmt.has_value() && left.id() == ID_symbol)
     {
-      std::vector<char> codes;
-      const std::string &f = *fmt;
-      for(std::size_t i = 0; i < f.size(); ++i)
-      {
-        if(f[i] != '%')
-          continue;
-        if(i + 1 < f.size() && f[i + 1] == '%')
-        {
-          ++i;
-          continue;
-        }
-        std::size_t j = i + 1;
-        while(j < f.size() && !std::isalpha(static_cast<unsigned char>(f[j])))
-          ++j;
-        if(j < f.size())
-        {
-          codes.push_back(
-            static_cast<char>(std::tolower(static_cast<unsigned char>(f[j]))));
-          i = j;
-        }
-      }
-      // Single (non-tuple) arg maps to a single conversion.
-      if(codes.size() == 1 && !is_python_tuple_type(right.type()))
-      {
-        const char *exc = format_code_violation(
-          codes[0], value_format_category(right.type()), /*percent=*/true);
-        if(exc != nullptr)
-          emit_conditional_exception(true_exprt{}, exc);
-      }
+      auto it = string_constants.find(to_symbol_expr(left).get_identifier());
+      if(it != string_constants.end())
+        fmt = it->second;
     }
+    if(fmt.has_value())
+      return convert_percent_format(*fmt, right, get_location(expr));
+    return side_effect_expr_nondett{python_string_type(), get_location(expr)};
   }
 
   // characters of s1 followed by s2. We track content by copying data

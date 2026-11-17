@@ -57,6 +57,7 @@
 #include <functional>
 #include <iomanip>
 #include <sstream>
+#include <variant>
 
 python_convertert::python_convertert(
   symbol_table_baset &_symbol_table,
@@ -7083,6 +7084,33 @@ exprt python_convertert::convert_expression(const jsont &expr)
             }
           }
         }
+        // Exact formatting (format_value_spec): literals and tracked
+        // constants at conversion time, other ints and strs composed from
+        // string-solver primitives. `!s` on a str is the identity.
+        {
+          const bool conv_s =
+            conversion.is_number() && conversion.value == "115";
+          if((no_conv || conv_s) && (no_spec || spec_constant))
+          {
+            exprt fv = convert_expression(json_member(v, "value"));
+            if(
+              !fv.is_nil() && (!conv_s || is_python_string_type(fv.type())) &&
+              !(no_spec && !is_python_string_type(fv.type())))
+            {
+              exprt out = format_value_spec(
+                fv, no_spec ? std::string{} : spec_str, get_location(v));
+              if(out.is_not_nil())
+              {
+                auto lit = extract_string_value(out);
+                parts.push_back(out);
+                part_len.push_back(
+                  lit.has_value() ? std::optional<mp_integer>{cp_count(*lit)}
+                                  : std::nullopt);
+                continue;
+              }
+            }
+          }
+        }
         // Treat ':0N' (zero-pad to width N) for int args as a
         // precision win: emit a nondet string whose length is
         // exactly N. The content won't match Python's exact
@@ -7152,10 +7180,12 @@ exprt python_convertert::convert_expression(const jsont &expr)
                 python_string_type(), get_location(expr)}});
             exprt len_intr = emit_string_int_function(
               ID_cprover_string_length_func, tv, symbol_table, pending_checks);
-            pending_checks.push_back(code_assumet{
-              equal_exprt{len_intr, from_integer(width, signedbv_typet{64})}});
+            // The width is a MINIMUM (a value wider than it is not
+            // truncated: f"{123:02}" is "123"); the content is unconstrained.
+            pending_checks.push_back(code_assumet{binary_relation_exprt{
+              len_intr, ID_ge, from_integer(width, signedbv_typet{64})}});
             parts.push_back(std::move(tv));
-            part_len.push_back(mp_integer{width});
+            part_len.push_back(std::nullopt);
             handled_by_pad_spec = true;
           }
         }
@@ -7307,6 +7337,13 @@ exprt python_convertert::convert_expression(const jsont &expr)
         // int / float / str interpolations have a runtime-variable length.
         part_len.push_back(std::nullopt);
       }
+      if(
+        parts_ok && !parts.empty() &&
+        std::all_of(
+          parts.begin(),
+          parts.end(),
+          [&](const exprt &p) { return extract_string_value(p).has_value(); }))
+        return concat_string_parts(parts);
       if(parts_ok && !parts.empty())
       {
         // Native fast path: if every part has a statically-known length, the
@@ -7793,4 +7830,381 @@ bool python_convertert::fold_covers_call_shape(
     }
   }
   return true;
+}
+
+exprt python_convertert::format_value_spec(
+  const exprt &v,
+  const std::string &spec,
+  const source_locationt &loc)
+{
+  const auto parsed = parse_py_format_spec(spec);
+  if(!parsed.has_value())
+    return nil_exprt{};
+  const bool is_int = v.type().id() == ID_signedbv ||
+                      v.type().id() == ID_integer || v.type().id() == ID_bool;
+  const bool is_str = is_python_string_type(v.type());
+  // Known at conversion time: exact literal.
+  if(is_str)
+  {
+    if(auto sv = extract_string_value(v))
+      if(
+        auto out = py_format_exact(
+          py_format_valuet{py_format_valuet::kindt::STR, mp_integer{0}, *sv},
+          spec))
+        return python_string_literal(*out);
+  }
+  else if(is_int && v.type().id() != ID_bool)
+  {
+    const exprt c = simplify_expr(v, namespacet{symbol_table});
+    if(c.is_constant())
+      if(auto iv = numeric_cast<mp_integer>(c))
+        if(
+          auto out = py_format_exact(
+            py_format_valuet{py_format_valuet::kindt::INT, *iv, ""}, spec))
+          return python_string_literal(*out);
+  }
+  // Otherwise compose from string-solver primitives: int-to-string with
+  // radix, substring, upper case, concatenation. The padding is a prefix of
+  // a literal of `width` fill characters.
+  const signedbv_typet i64{64};
+  auto str_len = [&](const exprt &x)
+  {
+    const exprt l = native_or_member_string_length(x);
+    return l.type() == i64 ? l : safe_typecast(l, i64);
+  };
+  auto pad_of = [&](char fill, const exprt &k)
+  {
+    return string_substr(
+      python_string_literal(std::string(parsed->width, fill)),
+      from_integer(0, i64),
+      k);
+  };
+  // max(0, width - used)
+  auto pad_len = [&](const exprt &used)
+  {
+    const exprt d = minus_exprt{from_integer(parsed->width, i64), used};
+    return exprt{if_exprt{
+      binary_relation_exprt{d, ID_gt, from_integer(0, i64)},
+      d,
+      from_integer(0, i64)}};
+  };
+  auto aligned =
+    [&](char align, char fill, const exprt &head, const exprt &body) -> exprt
+  {
+    if(parsed->width == 0)
+      return string_concat(head, body);
+    const exprt used = plus_exprt{str_len(head), str_len(body)};
+    const exprt k = pad_len(used);
+    switch(align)
+    {
+    case '<':
+      return string_concat(string_concat(head, body), pad_of(fill, k));
+    case '=':
+      return string_concat(string_concat(head, pad_of(fill, k)), body);
+    case '^':
+    {
+      const exprt kl = div_exprt{k, from_integer(2, i64)};
+      return string_concat(
+        string_concat(pad_of(fill, kl), string_concat(head, body)),
+        pad_of(fill, minus_exprt{k, kl}));
+    }
+    default: // '>'
+      return string_concat(pad_of(fill, k), string_concat(head, body));
+    }
+  };
+  if(is_int)
+  {
+    const auto ip = py_int_presentation(*parsed);
+    if(!ip.has_value())
+      return nil_exprt{};
+    // A bool presents as 0/1 under an integer presentation type; with no
+    // type it presents as True/False (str(bool)) -- not modelled here.
+    if(v.type().id() == ID_bool && parsed->type == 0)
+      return nil_exprt{};
+    // Unbounded ints have no fixed-width digit model here.
+    if(v.type().id() == ID_integer)
+      return nil_exprt{};
+    const exprt iv =
+      v.type().id() == ID_bool
+        ? exprt{if_exprt{v, from_integer(1, i64), from_integer(0, i64)}}
+        : typecast_exprt::conditional_cast(v, i64);
+    const exprt neg = binary_relation_exprt{iv, ID_lt, from_integer(0, i64)};
+    exprt with_sign = nil_exprt{};
+    if(use_smt_string_native)
+    {
+      if(ip->base != 10)
+        return nil_exprt{};
+      with_sign = native_string_of_int(iv);
+    }
+    else
+      with_sign = emit_string_function(
+        ID_cprover_string_of_int_func,
+        {iv, from_integer(ip->base, i64)},
+        symbol_table,
+        pending_checks,
+        loop_depth > 0,
+        current_function);
+    // The digits without the '-' that int-to-string puts on a negative.
+    const exprt off = if_exprt{neg, from_integer(1, i64), from_integer(0, i64)};
+    exprt body =
+      string_substr(with_sign, off, minus_exprt{str_len(with_sign), off});
+    if(ip->upper)
+      body = emit_string_function(
+        ID_cprover_string_to_upper_case_func,
+        {string_struct_view(body)},
+        symbol_table,
+        pending_checks,
+        loop_depth > 0,
+        current_function);
+    const std::string pos_sign = parsed->sign == '+'   ? "+"
+                                 : parsed->sign == ' ' ? " "
+                                                       : "";
+    const exprt head = if_exprt{
+      neg,
+      python_string_literal("-" + ip->prefix),
+      python_string_literal(pos_sign + ip->prefix)};
+    return aligned(ip->align, ip->fill, head, body);
+  }
+  if(is_str)
+  {
+    if(!py_str_presentation_ok(*parsed))
+      return nil_exprt{};
+    exprt body = v;
+    if(parsed->precision.has_value())
+    {
+      const exprt p = from_integer(
+        mp_integer{static_cast<long long>(*parsed->precision)}, i64);
+      const exprt l = str_len(v);
+      body = string_substr(
+        v,
+        from_integer(0, i64),
+        if_exprt{binary_relation_exprt{l, ID_lt, p}, l, p});
+    }
+    return aligned(
+      parsed->align == 0 ? '<' : parsed->align,
+      parsed->fill,
+      python_string_literal(""),
+      body);
+  }
+  return nil_exprt{};
+}
+
+exprt python_convertert::concat_string_parts(const std::vector<exprt> &parts)
+{
+  std::vector<exprt> folded;
+  for(const exprt &p : parts)
+  {
+    if(!folded.empty())
+    {
+      auto a = extract_string_value(folded.back());
+      auto b = extract_string_value(p);
+      if(a.has_value() && b.has_value())
+      {
+        folded.back() = python_string_literal(*a + *b);
+        continue;
+      }
+    }
+    folded.push_back(p);
+  }
+  if(folded.empty())
+    return python_string_literal("");
+  exprt acc = folded[0];
+  for(std::size_t i = 1; i < folded.size(); ++i)
+    acc = string_concat(acc, folded[i]);
+  return acc;
+}
+
+exprt python_convertert::convert_percent_format(
+  const std::string &fmt,
+  const exprt &args,
+  const source_locationt &loc)
+{
+  auto nondet_str = [&]() {
+    return exprt{side_effect_expr_nondett{python_string_type(), loc}};
+  };
+  // Parse: literal text and conversion specifiers
+  // %[(key)][flags][width][.precision][length]type.
+  struct convt
+  {
+    std::string flags;
+    std::optional<std::size_t> width;
+    std::optional<std::size_t> precision;
+    char type;
+  };
+  std::vector<std::variant<std::string, convt>> items;
+  std::string lit;
+  for(std::size_t i = 0; i < fmt.size(); ++i)
+  {
+    if(fmt[i] != '%')
+    {
+      lit += fmt[i];
+      continue;
+    }
+    std::size_t j = i + 1;
+    if(j < fmt.size() && fmt[j] == '(')
+      return nondet_str(); // mapping keys: not modelled
+    convt c;
+    while(j < fmt.size() && std::strchr("#0- +", fmt[j]) != nullptr)
+      c.flags += fmt[j++];
+    auto digits = [&](std::optional<std::size_t> &out) -> bool
+    {
+      if(j < fmt.size() && fmt[j] == '*')
+        return false; // width/precision from the arguments: not modelled
+      std::size_t n = 0;
+      bool any = false;
+      while(j < fmt.size() && std::isdigit(static_cast<unsigned char>(fmt[j])))
+      {
+        n = n * 10 + static_cast<std::size_t>(fmt[j++] - '0');
+        any = true;
+        if(n > 4096)
+          return false;
+      }
+      if(any)
+        out = n;
+      return true;
+    };
+    if(!digits(c.width))
+      return nondet_str();
+    if(j < fmt.size() && fmt[j] == '.')
+    {
+      ++j;
+      c.precision = 0;
+      if(!digits(c.precision))
+        return nondet_str();
+    }
+    while(j < fmt.size() && std::strchr("hlL", fmt[j]) != nullptr)
+      ++j;
+    if(j >= fmt.size())
+    {
+      // "incomplete format": ValueError.
+      emit_conditional_exception(true_exprt{}, "ValueError");
+      return nondet_str();
+    }
+    c.type = fmt[j];
+    i = j;
+    if(c.type == '%')
+    {
+      lit += '%';
+      continue;
+    }
+    if(std::strchr("diouxXeEfFgGcrsa", c.type) == nullptr)
+    {
+      // "unsupported format character": ValueError.
+      emit_conditional_exception(true_exprt{}, "ValueError");
+      return nondet_str();
+    }
+    if(!lit.empty())
+      items.emplace_back(lit);
+    lit.clear();
+    items.emplace_back(c);
+  }
+  if(!lit.empty())
+    items.emplace_back(lit);
+
+  std::size_t nconv = 0;
+  for(const auto &it : items)
+    nconv += std::holds_alternative<convt>(it) ? 1 : 0;
+
+  // The values: a tuple supplies one value per conversion; any other object
+  // is a single value.
+  std::vector<exprt> values;
+  if(is_python_tuple_type(args.type()))
+  {
+    for(const auto &comp : to_struct_type(args.type()).components())
+      values.push_back(member_exprt{args, comp.get_name(), comp.type()});
+  }
+  else
+    values.push_back(args);
+  const int single_cat =
+    is_python_tuple_type(args.type()) ? 1 : value_format_category(args.type());
+  if(values.size() < nconv)
+  {
+    // "not enough arguments for format string".
+    emit_conditional_exception(true_exprt{}, "TypeError");
+    return nondet_str();
+  }
+  if(values.size() > nconv)
+  {
+    // "not all arguments converted": only for a tuple, or a single value
+    // that is not a mapping/sequence (CPython leaves objects with
+    // __getitem__ unused without error, e.g. "x" % []). A str value is
+    // not exempt.
+    if(single_cat != 0)
+    {
+      emit_conditional_exception(true_exprt{}, "TypeError");
+      return nondet_str();
+    }
+    // A list or dict has __getitem__: no error, the value is unused.
+    if(
+      nconv == 0 &&
+      (is_python_list_type(args.type()) || is_python_dict_type(args.type())))
+      values.clear();
+    else
+      return nondet_str();
+  }
+
+  std::vector<exprt> parts;
+  std::size_t k = 0;
+  for(const auto &it : items)
+  {
+    if(std::holds_alternative<std::string>(it))
+    {
+      parts.push_back(python_string_literal(std::get<std::string>(it)));
+      continue;
+    }
+    const convt &c = std::get<convt>(it);
+    const exprt &v = values[k++];
+    const char lower =
+      static_cast<char>(std::tolower(static_cast<unsigned char>(c.type)));
+    if(
+      const char *exc = format_code_violation(
+        lower == 'u' ? 'd' : lower, value_format_category(v.type()), true))
+    {
+      emit_conditional_exception(true_exprt{}, exc);
+      return nondet_str();
+    }
+    // Map to a format spec: '-' left-aligns (overrides '0'); '0' zero-fills
+    // numbers; default is right alignment for every conversion.
+    const bool left = c.flags.find('-') != std::string::npos;
+    std::string spec;
+    const bool is_int_v = v.type().id() == ID_signedbv ||
+                          v.type().id() == ID_integer ||
+                          v.type().id() == ID_bool;
+    const bool is_str_v = is_python_string_type(v.type());
+    exprt part = nil_exprt{};
+    if(std::strchr("diuoxX", c.type) != nullptr && is_int_v && !c.precision)
+    {
+      spec += left ? "<" : c.flags.find('0') != std::string::npos ? "0=" : ">";
+      if(c.flags.find('+') != std::string::npos)
+        spec += '+';
+      else if(c.flags.find(' ') != std::string::npos)
+        spec += ' ';
+      if(
+        c.flags.find('#') != std::string::npos && c.type != 'd' &&
+        c.type != 'i' && c.type != 'u')
+        spec += '#';
+      if(c.width)
+        spec += std::to_string(*c.width);
+      spec += (c.type == 'i' || c.type == 'u') ? 'd' : c.type;
+      part = format_value_spec(v, spec, loc);
+    }
+    else if(
+      (c.type == 's' && is_str_v) ||
+      ((c.type == 's' || c.type == 'r' || c.type == 'a') && is_int_v &&
+       v.type().id() != ID_bool && !c.precision))
+    {
+      // str(v): the str itself, or the decimal digits of an int.
+      spec += left ? "<" : ">";
+      if(c.width)
+        spec += std::to_string(*c.width);
+      if(c.precision)
+        spec += "." + std::to_string(*c.precision);
+      spec += is_str_v ? 's' : 'd';
+      part = format_value_spec(v, spec, loc);
+    }
+    if(part.is_nil())
+      part = nondet_str();
+    parts.push_back(part);
+  }
+  return concat_string_parts(parts);
 }
