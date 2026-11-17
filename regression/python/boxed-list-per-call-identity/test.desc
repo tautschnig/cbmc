@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 12
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+A list boxed as a runtime-typed value at one return site, on two calls.
+The boxed list was a per-site static snapshot, so the second call
+overwrote the first result: `a[0] == 'C'` was proved (a false proof).
+Each boxing now has its own heap record.

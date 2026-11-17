@@ -4041,23 +4041,39 @@ exprt python_convertert::wrap_value(const exprt &e)
       {src_len, array_exprt{std::move(wrapped_elems), pv_data_type}},
       pv_list_type};
 
+    // A fresh heap record per boxing, as for class instances below: a
+    // per-site static snapshot was overwritten by the next execution of
+    // the same site, so two boxed lists from one return statement (e.g. a
+    // __getitem__ called on two objects) aliased the later one.
     static unsigned list_wrap_counter = 0;
     std::string tmp_name = "__list_val_" + std::to_string(list_wrap_counter++);
     std::string tmp_qname = qualify_name(tmp_name);
     irep_idt tmp_id{tmp_qname};
+    const pointer_typet list_ptr_type{pv_list_type, 64};
     if(symbol_table.lookup(tmp_id) == nullptr)
     {
-      symbolt tmp_sym{tmp_id, pv_list_type, "python"};
+      symbolt tmp_sym{tmp_id, list_ptr_type, "python"};
       tmp_sym.base_name = tmp_name;
       tmp_sym.is_lvalue = true;
       tmp_sym.is_state_var = true;
       symbol_table.add(tmp_sym);
     }
-    const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
+    const symbol_exprt tmp_ptr = symbol_table.lookup_ref(tmp_id).symbol_expr();
+    {
+      namespacet ns{symbol_table};
+      exprt size = from_integer(
+        pointer_offset_size(pv_list_type, ns).value_or(bytest{8}), size_type());
+      pending_checks.push_back(code_frontend_assignt{
+        tmp_ptr,
+        side_effect_exprt{
+          ID_allocate,
+          {size, false_exprt{}},
+          list_ptr_type,
+          source_locationt{}}});
+    }
     pending_checks.push_back(
-      code_frontend_assignt{tmp_sym.symbol_expr(), new_list});
-    return make_python_value(
-      python_type_tagt::LIST, address_of_exprt{tmp_sym.symbol_expr()});
+      code_frontend_assignt{dereference_exprt{tmp_ptr}, new_list});
+    return make_python_value(python_type_tagt::LIST, tmp_ptr);
   }
 
   // For struct types (class instances, dicts, etc.) that don't
