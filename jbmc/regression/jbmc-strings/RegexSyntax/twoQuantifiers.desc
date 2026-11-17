@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.twoQuantifiers --throw-runtime-exceptions --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+Two quantifiers in a row may throw (the translator, following Python, accepted them).

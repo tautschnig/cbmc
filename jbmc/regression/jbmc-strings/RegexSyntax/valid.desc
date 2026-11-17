@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.valid --throw-runtime-exceptions --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+A regex that the translation supports does not throw.
