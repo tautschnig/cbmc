@@ -1,0 +1,10 @@
+CORE
+main.py
+
+^EXIT=10$
+^SIGNAL=0$
+^\[.*assertion\.[0-9]+\] file main.py line 4 Python assertion: FAILURE$
+^\[.*assertion\.[0-9]+\] file main.py line 5 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring

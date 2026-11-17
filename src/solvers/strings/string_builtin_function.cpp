@@ -477,7 +477,8 @@ static exprt case_keeps_length(
 
 /// Constraints ensuring that \p result is \p input with its case converted.
 /// The conversion of a character whose conversion keeps the length (see
-/// case_keeps_length) is a single character, of another one is longer. So
+/// case_keeps_length) is a single character, of another one is longer (for
+/// UTF-8 bytes, of any length from a quarter: see below). So
 /// with first the position of the first of the others (|input| if there is
 /// none):
 ///   1. return_code = 0
@@ -604,7 +605,18 @@ static string_constraintst case_conversion_constraints(
        // (shorter or as long where a dot above may be dropped, see
        // case_keeps_length, which is only dropped after a letter that is
        // kept: at least half of the characters remain)
-       families.other()
+       // UTF-8 bytes: a character of up to four bytes converts to one
+       // or more characters, of one byte or more (é keeps its two bytes,
+       // the Kelvin sign's three become k), so the result may be shorter.
+       is_utf8(width)
+         ? exprt{and_exprt{
+             binary_relation_exprt{
+               result_length, ID_ge, from_integer(1, index_type)},
+             binary_relation_exprt{
+               mult_exprt{result_length, from_integer(4, index_type)},
+               ID_ge,
+               input_length}}}
+       : families.other()
          ? exprt{binary_relation_exprt{
              mult_exprt{result_length, from_integer(2, index_type)},
              ID_ge,
