@@ -146,6 +146,11 @@ def harness_method(name, key, kind, ret, jexprs, results):
     args = parts[1:]
     if len(args) != len(params) or any("?" == a for a in args + [recv_expr or ""]):
         return None
+    # (Probe wrote the arrays of references as Object[], which a cast to
+    # CharSequence[] or String[] rejects)
+    args = [f"new {p[:-2]}[] {{" + a[len("new Object[] {"):]
+            if p.endswith("[]") and a.startswith("new Object[] {") else a
+            for p, a in zip(params, args)]
     cargs = ", ".join(f"({p}) {a}" for p, a in zip(params, args))
     lines = [f"  public static void {name}() {{"]
     lines.append("    boolean threw = false; String cls = null; String msg = null;")
@@ -171,7 +176,8 @@ def harness_method(name, key, kind, ret, jexprs, results):
                  "cls = org.cprover.CProver.classIdentifier(e); "
                  "msg = e.getMessage(); }")
     checks = []
-    throwable = kind == "ctor" and re.search(r"(Exception|Error)$", cls)
+    throwable = kind == "ctor" and re.search(r"(Exception|Error|Throwable)$",
+                                             cls)
     for res, versions in results.items():
         c = condition(res, ret, bool(throwable))
         if c is None:

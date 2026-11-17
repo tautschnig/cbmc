@@ -500,7 +500,8 @@ public class Probe {
       return b.append('}').toString();
     }
     if (o instanceof Object[]) {
-      StringBuilder b = new StringBuilder("new Object[] {");
+      StringBuilder b = new StringBuilder("new "
+          + o.getClass().getComponentType().getCanonicalName() + "[] {");
       for (Object c : (Object[]) o) b.append(lit(c)).append(',');
       return b.append('}').toString();
     }
