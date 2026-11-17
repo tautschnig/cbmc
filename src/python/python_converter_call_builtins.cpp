@@ -2649,6 +2649,21 @@ std::optional<exprt> python_convertert::try_builtin_call(
   // list() / reversed() — return copy or nondet
   else if(func_name == "list" || func_name == "reversed")
   {
+    // list() is a new empty list, the same as [].
+    if(
+      func_name == "list" && (!args.is_array() || as_array(args).empty()) &&
+      (!json_member(expr, "keywords").is_array() ||
+       as_array(json_member(expr, "keywords")).empty()))
+    {
+      json_objectt empty;
+      empty["_type"] = json_stringt("List");
+      empty["elts"] = json_arrayt{};
+      for(const char *k :
+          {"lineno", "col_offset", "end_lineno", "end_col_offset"})
+        if(!json_member(expr, k).is_null())
+          empty[k] = json_member(expr, k);
+      return convert_expression(empty);
+    }
     if(args.is_array() && !as_array(args).empty())
     {
       const jsont &list_arg_ast = *as_array(args).begin();
