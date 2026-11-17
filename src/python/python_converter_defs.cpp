@@ -4382,6 +4382,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         {
           std::vector<std::string> ordered;
           std::set<std::string> defaulted;
+          std::map<std::string, dataclass_field_initt> inits;
           if(body.is_array())
             for(const auto &item : as_array(body))
               if(
@@ -4390,12 +4391,21 @@ codet python_convertert::convert_class_def(const jsont &stmt)
               {
                 std::string fn =
                   json_string(json_member(json_member(item, "target"), "id"));
-                ordered.push_back(fn);
-                if(!json_member(item, "value").is_null())
+                const jsont &value = json_member(item, "value");
+                dataclass_field_initt fi;
+                if(auto f = parse_dataclass_field_call(value))
+                  fi = *f;
+                else if(!value.is_null())
+                  fi.default_value = value;
+                if(fi.in_init)
+                  ordered.push_back(fn);
+                if(fi.default_value.has_value() || fi.default_factory)
                   defaulted.insert(fn);
+                inits[fn] = std::move(fi);
               }
           dataclass_init_fields[class_name] = ordered;
           dataclass_defaulted_fields[class_name] = defaulted;
+          dataclass_field_inits[class_name] = std::move(inits);
         }
       }
     }
@@ -4811,7 +4821,15 @@ codet python_convertert::convert_class_def(const jsont &stmt)
               json_string(json_member(tgt, "id")) == id2string(comp.get_name()))
             {
               const jsont &v = json_member(item, "value");
-              if(!v.is_null())
+              // dataclasses.field(...): the class attribute is the default,
+              // if any (a default_factory leaves no class attribute).
+              if(auto f = parse_dataclass_field_call(v))
+              {
+                if(f->default_value.has_value())
+                  val = safe_typecast(
+                    convert_expression(*f->default_value), comp.type());
+              }
+              else if(!v.is_null())
                 val = safe_typecast(convert_expression(v), comp.type());
             }
           }
@@ -7255,4 +7273,37 @@ std::optional<exprt> python_convertert::try_dispatcher_fold(
   // ecs_utils (the fold must be a pure PERF transform, invisible to
   // semantics).
   return exprt{make_python_value(python_type_tagt::CLASS, tsym.symbol_expr())};
+}
+
+std::optional<python_convertert::dataclass_field_initt>
+python_convertert::parse_dataclass_field_call(const jsont &value) const
+{
+  if(!is_node_type(value, "Call"))
+    return std::nullopt;
+  const jsont &func = json_member(value, "func");
+  const bool is_field =
+    (is_node_type(func, "Name") &&
+     json_string(json_member(func, "id")) == "field") ||
+    (is_node_type(func, "Attribute") &&
+     json_string(json_member(func, "attr")) == "field" &&
+     is_node_type(json_member(func, "value"), "Name") &&
+     json_string(json_member(json_member(func, "value"), "id")) ==
+       "dataclasses");
+  if(!is_field)
+    return std::nullopt;
+  dataclass_field_initt r;
+  const jsont &kws = json_member(value, "keywords");
+  if(kws.is_array())
+    for(const auto &k : as_array(kws))
+    {
+      const std::string name = json_string(json_member(k, "arg"));
+      const jsont &v = json_member(k, "value");
+      if(name == "default")
+        r.default_value = v;
+      else if(name == "default_factory")
+        r.default_factory = v;
+      else if(name == "init" && is_node_type(v, "Constant"))
+        r.in_init = !json_member(v, "value").is_false();
+    }
+  return r;
 }

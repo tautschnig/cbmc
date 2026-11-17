@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 5
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+Invariant check failed
+--
+Twin of dataclass-field-default-factory: each instance gets a new list.

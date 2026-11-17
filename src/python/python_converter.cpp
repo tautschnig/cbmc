@@ -5619,7 +5619,7 @@ std::optional<code_blockt> python_convertert::build_dataclass_init_block(
       if(kit != kw.end())
         val = kit->second; // keyword arg
       else
-        continue; // omitted -> leave the class-level default in place
+        val = dataclass_field_default(class_name, fn);
     }
     if(val.is_nil())
       continue;
@@ -5642,9 +5642,84 @@ std::optional<code_blockt> python_convertert::build_dataclass_init_block(
       block.add(std::move(*present));
     }
   }
+  // field(init=False): not a parameter, set from its default.
+  auto iit = dataclass_field_inits.find(class_name);
+  if(iit != dataclass_field_inits.end())
+    for(const auto &[fn, fi] : iit->second)
+    {
+      if(fi.in_init || !st.has_component(fn))
+        continue;
+      exprt val = dataclass_field_default(class_name, fn);
+      if(val.is_nil())
+        continue;
+      const typet &ft = st.get_component(fn).type();
+      if(val.type() != ft)
+        val = safe_typecast(val, ft);
+      code_frontend_assignt a{member_exprt{self_lvalue, fn, ft}, val};
+      a.add_source_location() = loc;
+      block.add(std::move(a));
+      if(auto shadow = maybe_shadow_assign(self_lvalue, fn))
+        block.add(std::move(*shadow));
+      if(auto present = maybe_present_assign(self_lvalue, fn))
+        block.add(std::move(*present));
+    }
   if(block.statements().empty())
     return std::nullopt;
   return block;
+}
+
+exprt python_convertert::dataclass_field_default(
+  const std::string &class_name,
+  const std::string &field)
+{
+  auto cit = dataclass_field_inits.find(class_name);
+  if(cit == dataclass_field_inits.end())
+    return nil_exprt{};
+  auto fit = cit->second.find(field);
+  if(fit == cit->second.end())
+    return nil_exprt{};
+  const dataclass_field_initt &fi = fit->second;
+  if(fi.default_value.has_value())
+    return convert_expression(*fi.default_value);
+  if(fi.default_factory.has_value())
+  {
+    // list / dict / set (not rebound): a new empty container of the field's
+    // type, as for an annotated `x: T = []`.
+    const jsont &fac = *fi.default_factory;
+    if(is_node_type(fac, "Name"))
+    {
+      const std::string fname = json_string(json_member(fac, "id"));
+      auto cit2 = class_types.find(class_name);
+      if(
+        (fname == "list" || fname == "dict" || fname == "set") &&
+        symbol_table.lookup(irep_idt{"python::" + fname}) == nullptr &&
+        cit2 != class_types.end() && cit2->second.has_component(field))
+      {
+        const typet &ft = cit2->second.get_component(field).type();
+        if(
+          (fname == "list" && is_python_list_type(ft)) ||
+          (fname == "dict" && is_python_dict_type(ft)) ||
+          (fname == "set" &&
+           (is_python_set_type(ft) || is_python_list_type(ft))))
+          return safe_zero(ft);
+      }
+    }
+    // The factory is called with no arguments, once per instance.
+    json_objectt call;
+    call["_type"] = json_stringt("Call");
+    call["func"] = *fi.default_factory;
+    call["args"] = json_arrayt{};
+    call["keywords"] = json_arrayt{};
+    for(const char *k :
+        {"lineno", "col_offset", "end_lineno", "end_col_offset"})
+    {
+      const jsont &v = json_member(*fi.default_factory, k);
+      if(!v.is_null())
+        call[k] = v;
+    }
+    return convert_expression(call);
+  }
+  return nil_exprt{};
 }
 
 std::vector<codet> python_convertert::build_class_construction(

@@ -36,15 +36,15 @@ def dataclass(cls=None, *, init=True, repr=True, eq=True, order=False,
     return cls
 
 
-def field(*, default=MISSING, default_factory=MISSING, repr=True,
+def field(*, default=None, default_factory=None, repr=True,
           hash=None, init=True, compare=True, metadata=None,
-          kw_only=MISSING):
-    """``field(default=...)`` — returns a sentinel object. The
-    front-end does not enforce field-level defaulting; class
-    attribute initialisers are the authoritative source."""
-    if default is not MISSING:
-        return default
-    return None
+          kw_only=None):
+    """``field(...)`` in a dataclass body is read by the front-end
+    itself: ``default``, ``default_factory`` (called once per
+    instance) and ``init=False``. This body is not used for that.
+    (The defaults are not ``MISSING``: an instance as a parameter
+    default is not modelled.)"""
+    return default
 
 
 def fields(class_or_instance):

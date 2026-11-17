@@ -1,0 +1,13 @@
+CORE
+main.py
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Unknown variable
+Invariant check failed
+--
+A field with default_factory=list failed a value-set type invariant; field
+defaults were not applied to omitted constructor arguments, and the
+library's MISSING sentinel was an unknown variable.

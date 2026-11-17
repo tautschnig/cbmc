@@ -674,6 +674,27 @@ private:
   /// positional arg is left at the class-level default, not nondet-bound).
   std::map<std::string, std::vector<std::string>> dataclass_init_fields;
   std::map<std::string, std::set<std::string>> dataclass_defaulted_fields;
+  /// How a dataclass field gets its value when __init__ is not given one
+  /// (dataclasses.field): a default expression, or a zero-argument
+  /// default_factory called once per instance. `in_init` is false for
+  /// field(init=False), which is not an __init__ parameter.
+  struct dataclass_field_initt
+  {
+    std::optional<jsont> default_value;
+    std::optional<jsont> default_factory;
+    bool in_init = true;
+  };
+  std::map<std::string, std::map<std::string, dataclass_field_initt>>
+    dataclass_field_inits;
+  /// If \p value is a `field(...)` / `dataclasses.field(...)` call, its
+  /// default, default_factory and init arguments.
+  std::optional<dataclass_field_initt>
+  parse_dataclass_field_call(const jsont &value) const;
+  /// The value a dataclass field gets when __init__ is not given one: its
+  /// default, or a call of its default_factory. Nil if it has neither.
+  exprt dataclass_field_default(
+    const std::string &class_name,
+    const std::string &field);
   /// Classes whose __len__ PROVABLY returns a negative integer constant
   /// (body is a single `return <neg const>`). `len()` on such an instance
   /// raises ValueError ('__len__() should return >= 0'). Constant-only, so no
