@@ -511,7 +511,7 @@ exprt python_convertert::convert_name(const jsont &expr)
       return side_effect_expr_nondett{python_int_type(), get_location(expr)};
     }
 
-    log.error() << "Unknown variable: " << id << messaget::eom;
+    body_diagnostic(true, "Unknown variable: " + id2string(id));
     ++unknown_variable_events;
     return nil_exprt{};
   }

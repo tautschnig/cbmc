@@ -1093,8 +1093,10 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
       }
       if(gi.values.empty() && gi.const_values.empty())
       {
-        log.warning() << "List comprehension iterable '" << iter_name
-                      << "' is not a known literal list" << messaget::eom;
+        body_diagnostic(
+          false,
+          "List comprehension iterable '" + iter_name +
+            "' is not a known literal list");
         return nil_exprt{};
       }
     }

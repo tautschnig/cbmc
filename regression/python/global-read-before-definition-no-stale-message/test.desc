@@ -1,0 +1,13 @@
+CORE
+main.py
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Unknown variable
+--
+The body is converted before the module's assignments run and again after
+them. The first conversion's "Unknown variable" messages were printed even
+though the second resolves the names; they are now held back and dropped
+when the body is re-converted.

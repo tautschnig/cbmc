@@ -94,6 +94,17 @@ private:
   const python_parse_treet &parse_tree;
   messaget log;
   std::string filename;
+  /// Diagnostics about a function body ("Unknown variable", an unknown
+  /// comprehension iterable) held back until conversion ends, keyed by the
+  /// root function: the module driver re-converts a body against the final
+  /// global types (and drops its earlier diagnostics) when a read global was
+  /// unresolved, so a message from the first conversion may be stale.
+  std::map<std::string, std::vector<std::pair<bool, std::string>>>
+    deferred_body_diagnostics;
+  /// Report \p msg (an error if \p is_error, else a warning): now outside
+  /// function bodies, deferred inside them (deferred_body_diagnostics).
+  void body_diagnostic(bool is_error, const std::string &msg);
+  void flush_body_diagnostics();
 
   /// Current function name (empty for top-level code)
   std::string current_function;

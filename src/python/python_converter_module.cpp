@@ -3907,6 +3907,7 @@ bool python_convertert::convert()
         const std::string nm = json_string(json_member(stmt, "name"));
         if(stale_roots.erase(nm) == 0)
           continue;
+        deferred_body_diagnostics.erase(nm);
         if(is_fn)
           convert_function_def(stmt);
         else
@@ -3918,6 +3919,7 @@ bool python_convertert::convert()
         auto it = imported_user_defs.find(nm);
         if(it == imported_user_defs.end())
           continue;
+        deferred_body_diagnostics.erase(nm);
         const jsont &stmt = *it->second.first;
         const std::string saved_filename = filename;
         filename = it->second.second;
@@ -4015,6 +4017,7 @@ bool python_convertert::convert()
     exc_seq_function.clear();
   }
 
+  flush_body_diagnostics();
   return false;
 }
 
@@ -4055,4 +4058,32 @@ void python_convertert::finalise_slot_types()
     };
     walk(fsym.value);
   }
+}
+
+void python_convertert::body_diagnostic(bool is_error, const std::string &msg)
+{
+  if(current_function.empty())
+  {
+    if(is_error)
+      log.error() << msg << messaget::eom;
+    else
+      log.warning() << msg << messaget::eom;
+    return;
+  }
+  const std::string root =
+    current_function.substr(0, current_function.find("::"));
+  deferred_body_diagnostics[root].emplace_back(is_error, msg);
+}
+
+void python_convertert::flush_body_diagnostics()
+{
+  for(const auto &[root, msgs] : deferred_body_diagnostics)
+    for(const auto &[is_error, msg] : msgs)
+    {
+      if(is_error)
+        log.error() << msg << messaget::eom;
+      else
+        log.warning() << msg << messaget::eom;
+    }
+  deferred_body_diagnostics.clear();
 }
