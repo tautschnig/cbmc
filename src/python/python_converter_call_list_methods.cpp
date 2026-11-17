@@ -51,7 +51,18 @@ std::optional<exprt> python_convertert::try_list_method(
       {"sort", {0, 0}},
       {"reverse", {0, 0}},
       {"copy", {0, 0}}};
-  check_method_arity(arity, method_name, expr, args);
+  // bytes and bytearray (lists of bytes): count and index take a start and
+  // an end.
+  static const std::map<std::string, std::pair<std::size_t, std::size_t>>
+    bytes_arity = {{"count", {1, 3}}, {"index", {1, 3}}};
+  const bool bytes =
+    to_array_type(to_struct_type(obj_base_type).components()[1].type())
+      .element_type() == unsignedbv_typet{8};
+  check_method_arity(
+    bytes && bytes_arity.count(method_name) ? bytes_arity : arity,
+    method_name,
+    expr,
+    args);
   // Extraction-then-mutate soundness: if `obj` aliases a container element
   // (`r = c[i]`) and this is an in-place mutator, havoc the source container.
   invalidate_extracted_source_on_mutation(obj, method_name);
@@ -621,6 +632,145 @@ std::optional<exprt> python_convertert::try_list_method(
   }
 
   // PLib stdtypes: list.index(value) — return index of first occurrence
+  // bytes.count / bytes.index search a subsequence (an int is one byte),
+  // from a start to an end; list.count / list.index search an element. The
+  // arguments are converted here and again below for an element: evaluate
+  // their calls once.
+  std::vector<const jsont *> search_calls;
+  if(
+    bytes && (method_name == "count" || method_name == "index") &&
+    args.is_array())
+    for(const auto &a : as_array(args))
+      if(json_has_call(a))
+        search_calls.push_back(&a);
+  const evaluate_argumentst evaluate_search{evaluated_arguments, search_calls};
+  if(
+    bytes && (method_name == "count" || method_name == "index") &&
+    args.is_array() && !as_array(args).empty())
+  {
+    std::vector<exprt> values;
+    for(const auto &a : as_array(args))
+      values.push_back(convert_expression(a));
+    const bool element =
+      values.size() == 1 && !is_python_list_type(values[0].type());
+    if(!element)
+    {
+      // The bytes of a constant: a display or a variable holding one.
+      auto constant_bytes = [this](const exprt &e) -> std::optional<std::string>
+      {
+        const exprt *src = &e;
+        if(e.id() == ID_symbol)
+        {
+          const auto it =
+            list_literals.find(to_symbol_expr(e).get_identifier());
+          if(it == list_literals.end())
+            return std::nullopt;
+          src = &it->second;
+        }
+        mp_integer n;
+        if(
+          src->id() != ID_struct || src->operands().size() < 2 ||
+          !src->operands()[0].is_constant() ||
+          to_integer(to_constant_expr(src->operands()[0]), n) ||
+          src->operands()[1].id() != ID_array ||
+          src->operands()[1].operands().size() < n)
+          return std::nullopt;
+        std::string result;
+        for(std::size_t i = 0; i < n; ++i)
+        {
+          mp_integer b;
+          const exprt &op = src->operands()[1].operands()[i];
+          if(!op.is_constant() || to_integer(to_constant_expr(op), b))
+            return std::nullopt;
+          result.push_back(static_cast<char>(b.to_ulong()));
+        }
+        return result;
+      };
+      auto constant_int = [](const exprt &e) -> std::optional<long>
+      {
+        mp_integer v;
+        if(!e.is_constant() || to_integer(to_constant_expr(e), v))
+          return std::nullopt;
+        return v.to_long();
+      };
+      const auto hay = constant_bytes(obj);
+      std::optional<std::string> needle;
+      if(is_python_list_type(values[0].type()))
+        needle = constant_bytes(values[0]);
+      else if(const auto b = constant_int(values[0]))
+        needle = std::string(1, static_cast<char>(*b));
+      std::optional<long> start = 0, end;
+      if(values.size() > 1)
+        start = constant_int(values[1]);
+      if(values.size() > 2)
+        end = constant_int(values[2]);
+      if(
+        hay.has_value() && needle.has_value() && start.has_value() &&
+        (values.size() < 3 || end.has_value()))
+      {
+        // Python slice bounds.
+        const long n = static_cast<long>(hay->size());
+        auto clamp = [n](long i)
+        {
+          if(i < 0)
+            i += n;
+          return std::max(0L, std::min(i, n));
+        };
+        const long from = clamp(*start);
+        const long to = values.size() > 2 ? clamp(*end) : n;
+        const std::string range =
+          from < to ? hay->substr(from, to - from) : std::string{};
+        if(method_name == "count")
+        {
+          long count = 0;
+          if(needle->empty())
+            count = from <= to ? static_cast<long>(range.size()) + 1 : 0;
+          else
+            for(std::size_t at = range.find(*needle); at != std::string::npos;
+                at = range.find(*needle, at + needle->size()))
+              ++count;
+          return from_integer(count, python_int_type());
+        }
+        const std::size_t at =
+          from <= to ? range.find(*needle) : std::string::npos;
+        if(at == std::string::npos)
+        {
+          emit_conditional_exception(true_exprt{}, "ValueError");
+          return from_integer(-1, python_int_type());
+        }
+        return from_integer(from + static_cast<long>(at), python_int_type());
+      }
+      log_overapprox(
+        "bytes." + method_name + " of a subsequence or range: nondet result");
+      static unsigned bytes_search_ctr = 0;
+      const std::string rn =
+        "__bytes_search_" + std::to_string(bytes_search_ctr++);
+      const irep_idt rid{qualify_name(rn)};
+      if(symbol_table.lookup(rid) == nullptr)
+      {
+        symbolt rs{rid, python_int_type(), "python"};
+        rs.base_name = rn;
+        rs.is_lvalue = true;
+        rs.is_state_var = true;
+        symbol_table.add(rs);
+      }
+      const symbol_exprt r = symbol_table.lookup_ref(rid).symbol_expr();
+      pending_checks.push_back(code_frontend_assignt{
+        r, side_effect_expr_nondett{python_int_type(), get_location(expr)}});
+      const exprt len =
+        typecast_exprt::conditional_cast(length, python_int_type());
+      pending_checks.push_back(code_assumet{and_exprt{
+        binary_relation_exprt{r, ID_ge, from_integer(0, python_int_type())},
+        binary_relation_exprt{
+          r, ID_le, plus_exprt{len, from_integer(1, python_int_type())}}}});
+      if(method_name == "index")
+        emit_conditional_exception(
+          side_effect_expr_nondett{bool_typet{}, get_location(expr)},
+          "ValueError");
+      return r;
+    }
+  }
+
   if(method_name == "index")
   {
     // Fold-soundness rule: index(x, start[, end]) searches a SUBRANGE;

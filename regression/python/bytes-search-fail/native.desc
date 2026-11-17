@@ -1,0 +1,10 @@
+CORE
+main.py
+--cvc5 --python-smt-strings
+^EXIT=10$
+^SIGNAL=0$
+^\[.*assertion\.[0-9]+\] file main.py line 3 Python assertion: FAILURE$
+^\[.*assertion\.[0-9]+\] file main.py line 9 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
