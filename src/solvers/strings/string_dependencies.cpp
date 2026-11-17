@@ -469,11 +469,17 @@ string_constraintst string_dependenciest::add_constraints(
     {
       const auto &builtin = builtin_function_nodes[node.index];
       const std::size_t conversions = generator.float_conversions.size();
+      const std::size_t integers = generator.strings_of_integers.size();
       node_constraints = builtin.data->constraints(generator, message_handler);
       for(std::size_t i = conversions; i < generator.float_conversions.size();
           ++i)
       {
         generator.float_conversions[i].guard = node.guard;
+      }
+      for(std::size_t i = integers; i < generator.strings_of_integers.size();
+          ++i)
+      {
+        generator.strings_of_integers[i].guard = node.guard;
       }
     }
     else

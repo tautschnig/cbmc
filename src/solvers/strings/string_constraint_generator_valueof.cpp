@@ -173,6 +173,49 @@ string_constraint_generatort::add_axioms_for_string_of_int_with_radix(
     radix_input_type,
     radix_ul);
   result2.existential.push_back(conjunction(std::move(result1)));
+
+  // The string of an integer determines the integer: where the strings of
+  // two integers of the same radix have the same characters, the integers
+  // are equal. The axioms imply it, but through the sums of the digits of
+  // each string, which the SAT solver struggles to relate: proving that
+  // String.valueOf(x).equals(String.valueOf(y)) implies x == y did not
+  // finish in 300 s for ints, and took 1 s with these lemmas. There is one
+  // lemma for each pair of conversions whose characters the constraints
+  // need (see string_dependenciest::add_constraints).
+  if(radix_ul != 0)
+  {
+    for(const string_of_integert &other : strings_of_integers)
+    {
+      if(other.radix != radix_ul)
+        continue;
+      const typet &wide =
+        to_bitvector_type(type).get_width() >=
+            to_bitvector_type(other.integer.type()).get_width()
+          ? type
+          : other.integer.type();
+      const exprt length = array_pool.get_or_create_length(res);
+      const exprt other_length = array_pool.get_or_create_length(other.string);
+      exprt::operandst same{equal_exprt{length, other_length}};
+      const std::size_t positions = std::min(max_size, other.max_size);
+      for(std::size_t j = 0; j < positions; ++j)
+      {
+        const exprt index = from_integer(j, length.type());
+        same.push_back(implies_exprt{
+          binary_relation_exprt{index, ID_lt, length},
+          equal_exprt{res[index], other.string[index]}});
+      }
+      // The axioms of the other conversion hold under its guard (and those
+      // of this one under the guard that string_dependenciest adds).
+      same.push_back(other.guard);
+      result2.existential.push_back(implies_exprt{
+        conjunction(same),
+        equal_exprt{
+          typecast_exprt::conditional_cast(input_int, wide),
+          typecast_exprt::conditional_cast(other.integer, wide)}});
+    }
+    strings_of_integers.push_back(
+      {res, input_int, radix_ul, max_size, true_exprt{}});
+  }
   return {from_integer(0, get_return_code_type()), std::move(result2)};
 }
 

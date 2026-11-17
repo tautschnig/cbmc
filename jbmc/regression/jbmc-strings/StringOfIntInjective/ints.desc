@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.ints --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Equal strings of two ints imply equal ints (no result in 600 s without the lemmas, under 1 s with them).

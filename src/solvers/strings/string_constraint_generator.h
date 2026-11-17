@@ -273,6 +273,20 @@ public:
   };
   std::vector<float_conversiont> float_conversions;
 
+  /// A conversion of an integer to a string with a known radix
+  /// (add_axioms_for_string_of_int_with_radix): two of them of the same
+  /// radix with equal strings have equal integers (see there).
+  struct string_of_integert
+  {
+    array_string_exprt string;
+    exprt integer;
+    unsigned long radix;
+    std::size_t max_size;
+    /// Where the conversion happens (see string_dependenciest).
+    exprt guard = true_exprt{};
+  };
+  std::vector<string_of_integert> strings_of_integers;
+
   /// What java.util.Formatter prints for the double \p value with the
   /// conversion \p conversion and the precision \p precision (see
   /// java_format_float): exact for a constant value, and otherwise recorded
