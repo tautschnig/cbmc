@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 12
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+A subscript of the result of __getitem__ on an untyped object: the str arm
+and the container arm each converted the receiver, so __getitem__ ran
+twice (and its result was not constant during symbolic execution).

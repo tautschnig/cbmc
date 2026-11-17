@@ -2498,6 +2498,28 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
   // untyped container, an unannotated parameter) read the list slot or
   // returned an unconstrained value. The str conversion's own checks
   // (IndexError, ...) are guarded by the tag.
+  if(
+    is_python_value_type(value.type()) && pv_subscript_receiver != value &&
+    has_subexpr(value, ID_side_effect))
+  {
+    // Both arms below read the receiver: evaluate it once (a call in it,
+    // e.g. a __getitem__ on an untyped object, ran twice).
+    static unsigned rcv_ctr = 0;
+    const std::string rn = "__pv_rcv_" + std::to_string(rcv_ctr++);
+    const irep_idt rid{qualify_name(rn)};
+    if(symbol_table.lookup(rid) == nullptr)
+    {
+      symbolt rs{rid, value.type(), "python"};
+      rs.base_name = rn;
+      rs.is_lvalue = true;
+      rs.is_state_var = true;
+      rs.is_static_lifetime = current_function.empty();
+      symbol_table.add(rs);
+    }
+    const symbol_exprt rv = symbol_table.lookup_ref(rid).symbol_expr();
+    pending_checks.push_back(code_frontend_assignt{rv, value});
+    value = rv;
+  }
   if(is_python_value_type(value.type()) && pv_subscript_receiver != value)
   {
     const exprt is_str = python_value_is(value, python_type_tagt::STR);
