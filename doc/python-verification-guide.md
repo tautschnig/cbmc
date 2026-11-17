@@ -158,7 +158,8 @@ files — listed here for visibility:
 - `float` (IEEE 754 double)
 - `bool`
 - `str` (bounded length, up to 256 characters)
-- `list[T]` (bounded length, up to 64 elements)
+- `list[T]` (bounded capacity, 16 elements by default; see
+  `--python-max-list-length`)
 - `tuple` (fixed-size, heterogeneous)
 - `dict` (string-keyed, modeled as structs)
 - Classes with instance attributes and methods
@@ -412,7 +413,7 @@ added regression coverage and fixes for several PLR
 | `--function NAME` | Verify a specific function with nondet inputs |
 | `--python-unbounded-ints` | Use mathematical integers (requires an SMT solver, e.g. `--cvc5`/`--z3`) |
 | `--python-max-string-length N` | Bound string length (default 256) |
-| `--python-max-list-length N` | Bound list length (default 64) |
+| `--python-max-list-length N` | Bound list (and dict) capacity (default 16) |
 | `--python-no-body-check` | Suppress the missing-function-body check |
 | `--python-strict-warnings` | Raise over-approximation log messages to warning level |
 | `--python-use-stdlib-source` | Skip CBMC's bundled stubs; resolve via system CPython |

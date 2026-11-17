@@ -15,11 +15,14 @@ positives for safety properties).
 - **PLR:** PLib stdtypes — "Strings are immutable sequences of Unicode code points"
 - **Mitigation:** `--python-max-string-length` flag (not yet implemented)
 
-### 1.2 Lists bounded to 64 elements
-- **What:** `python_list_type()` uses `data[64]` array
-- **Impact:** Lists longer than 64 elements overflow silently
+### 1.2 Lists bounded to 16 elements (default)
+- **What:** `python_list_type()` uses a fixed-capacity array, 16 elements
+  unless set with `--python-max-list-length N`
+- **Impact:** Growing a list beyond the capacity is reported as a
+  `python-model-bound` property ("container capacity exceeded") and the path
+  is cut
 - **PLR:** PLib stdtypes — "Lists are mutable sequences"
-- **Mitigation:** `--python-max-list-length` flag (not yet implemented)
+- **Mitigation:** `--python-max-list-length N`
 
 ### 1.3 Integers bounded to 64 bits
 - **What:** `python_int_type()` = `signedbv[64]`
