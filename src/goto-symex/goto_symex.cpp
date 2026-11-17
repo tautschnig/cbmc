@@ -755,12 +755,11 @@ goto_symext::try_evaluate_constant(const statet &state, const exprt &expr)
     to_constant_expr(constant_expr_opt->get()));
 }
 
-/// The Java string of the constant characters \p data (UTF-16 code units),
-/// as the string solver reads a format string.
-/// The Java string of the UTF-16 characters of \p data.
+/// The constant characters \p data (UTF-16 code units) as UTF-8, as the
+/// string solver reads a format string (utf16_constant_array_to_utf8).
 static std::string java_string_of(const array_exprt &data)
 {
-  return utf16_constant_array_to_java(data, data.operands().size());
+  return utf16_constant_array_to_utf8(data, data.operands().size());
 }
 
 bool goto_symext::constant_propagate_format_numbers(

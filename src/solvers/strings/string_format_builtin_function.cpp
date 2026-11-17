@@ -67,7 +67,7 @@ string_format_builtin_functiont::string_format_builtin_functiont(
   {
     const auto length = numeric_cast_v<std::size_t>(
       to_constant_expr(array_pool.get_or_create_length(format_string_expr)));
-    format_string = utf16_constant_array_to_java(
+    format_string = utf16_constant_array_to_utf8(
       to_array_expr(format_string_expr.content()), length);
   }
 }
@@ -258,14 +258,14 @@ static exprt string_is_constant_if(
 {
   const typet &index_type = res.length_type();
   const typet &char_type = to_type_with_subtype(res.content().type()).subtype();
+  const std::vector<unsigned> units = utf8_to_utf16_units(text);
   exprt::operandst conjuncts{equal_exprt{
     array_pool.get_or_create_length(res),
-    from_integer(text.size(), index_type)}};
-  for(std::size_t i = 0; i < text.size(); ++i)
+    from_integer(units.size(), index_type)}};
+  for(std::size_t i = 0; i < units.size(); ++i)
   {
     conjuncts.push_back(equal_exprt{
-      res[from_integer(i, index_type)],
-      from_integer(static_cast<unsigned char>(text[i]), char_type)});
+      res[from_integer(i, index_type)], from_integer(units[i], char_type)});
   }
   return implies_exprt{condition, conjunction(conjuncts)};
 }
@@ -1584,11 +1584,8 @@ static bool eval_is_called_object(const std::vector<mp_integer> &arg)
 static std::vector<mp_integer> characters(const std::string &text, bool lower)
 {
   std::vector<mp_integer> result;
-  for(const char c : text)
-  {
-    result.emplace_back(
-      lower && 'A' <= c && c <= 'Z' ? c + 0x20 : static_cast<unsigned char>(c));
-  }
+  for(const unsigned c : utf8_to_utf16_units(text))
+    result.emplace_back(lower && 'A' <= c && c <= 'Z' ? c + 0x20 : c);
   return result;
 }
 
@@ -1924,7 +1921,8 @@ std::optional<exprt> string_format_builtin_functiont::eval(
     }
     else
     {
-      for(char c : fe.get_format_text().get_content())
+      for(const unsigned c :
+          utf8_to_utf16_units(fe.get_format_text().get_content()))
         result_vector.emplace_back(c);
     }
   }
@@ -2234,7 +2232,8 @@ exprt string_format_builtin_functiont::length_constraint() const
     else
     {
       intermediary_string_lengths.push_back(from_integer(
-        fe.get_format_text().get_content().size(), result.length_type()));
+        utf8_to_utf16_units(fe.get_format_text().get_content()).size(),
+        result.length_type()));
     }
   }
 
@@ -2275,8 +2274,8 @@ static void append_int(format_error_textt &text, int value)
 /// Append the characters of \p s to \p text.
 static void append_string(format_error_textt &text, const std::string &s)
 {
-  for(const char c : s)
-    text.emplace_back(static_cast<unsigned char>(c));
+  for(const unsigned c : utf8_to_utf16_units(s))
+    text.emplace_back(c);
 }
 
 /// The error text of an error of the parse (see java_format_parse).
@@ -2596,7 +2595,7 @@ string_constraint_generatort::add_axioms_for_format_error(
   }
   const auto size = numeric_cast_v<std::size_t>(to_constant_expr(length));
   const std::string format =
-    utf16_constant_array_to_java(to_array_expr(str.content()), size);
+    utf16_constant_array_to_utf8(to_array_expr(str.content()), size);
 
   const typet &index_type = res.length_type();
   const typet &char_type = to_type_with_subtype(res.content().type()).subtype();
@@ -2706,7 +2705,7 @@ string_constraint_generatort::add_axioms_for_format_calls(
   }
   const auto size = numeric_cast_v<std::size_t>(to_constant_expr(length));
   const std::string format =
-    utf16_constant_array_to_java(to_array_expr(str.content()), size);
+    utf16_constant_array_to_utf8(to_array_expr(str.content()), size);
   const typet &index_type = res.length_type();
   const typet &char_type = to_type_with_subtype(res.content().type()).subtype();
   const exprt res_length = array_pool.get_or_create_length(res);
@@ -2796,7 +2795,7 @@ string_constraint_generatort::add_axioms_for_format_numbers(
   }
   const auto size = numeric_cast_v<std::size_t>(to_constant_expr(length));
   const std::string format =
-    utf16_constant_array_to_java(to_array_expr(str.content()), size);
+    utf16_constant_array_to_utf8(to_array_expr(str.content()), size);
   const typet &index_type = res.length_type();
   const typet &char_type = to_type_with_subtype(res.content().type()).subtype();
   const std::vector<unsigned> codes = java_format_number_codes(format);
@@ -2855,7 +2854,7 @@ string_constraint_generatort::add_axioms_for_format_uses(
     return {fresh_symbol("format_uses", f.type()), {}};
   const auto size = numeric_cast_v<std::size_t>(to_constant_expr(length));
   const std::string format =
-    utf16_constant_array_to_java(to_array_expr(str.content()), size);
+    utf16_constant_array_to_utf8(to_array_expr(str.content()), size);
   return {from_integer(java_format_uses(format), f.type()), {}};
 }
 

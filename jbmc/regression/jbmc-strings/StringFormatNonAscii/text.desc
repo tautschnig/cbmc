@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.text  --max-nondet-string-length 20 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+The text of a format string beyond ASCII is kept (the solver read the escaped text \u00e9 instead).

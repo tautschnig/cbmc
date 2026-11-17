@@ -64,6 +64,47 @@ utf16_constant_array_to_java(const array_exprt &arr, std::size_t length)
   return utf16_native_endian_to_java_string(out);
 }
 
+std::string
+utf16_constant_array_to_utf8(const array_exprt &arr, std::size_t length)
+{
+  PRECONDITION(std::all_of(
+    arr.operands().begin(),
+    arr.operands().end(),
+    can_cast_expr<constant_exprt>));
+
+  std::string out;
+  for(std::size_t i = 0; i < length; i++)
+  {
+    const unsigned unit =
+      i < arr.operands().size()
+        ? numeric_cast_v<unsigned>(to_constant_expr(arr.operands()[i]))
+        : '?';
+    // (by hand: the conversions of the standard library reject surrogates)
+    if(unit <= 0x7f)
+      out += static_cast<char>(unit);
+    else if(unit <= 0x7ff)
+    {
+      out += static_cast<char>(0xc0 | (unit >> 6));
+      out += static_cast<char>(0x80 | (unit & 0x3f));
+    }
+    else
+    {
+      out += static_cast<char>(0xe0 | (unit >> 12));
+      out += static_cast<char>(0x80 | ((unit >> 6) & 0x3f));
+      out += static_cast<char>(0x80 | (unit & 0x3f));
+    }
+  }
+  return out;
+}
+
+std::vector<unsigned> utf8_to_utf16_units(const std::string &utf8)
+{
+  std::vector<unsigned> result;
+  for(const char32_t code_point : utf8_to_utf32(utf8))
+    result.push_back(static_cast<unsigned>(code_point));
+  return result;
+}
+
 sparse_arrayt::sparse_arrayt(const with_exprt &expr)
 {
   auto ref = std::ref(static_cast<const exprt &>(expr));

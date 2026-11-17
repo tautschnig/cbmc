@@ -256,7 +256,11 @@ java_format_parse(const std::string &s, java_formatter_versiont version)
       if(!std::regex_search(
            rest, m, specifier, std::regex_constants::match_continuous))
       {
-        return fail(error::unknown_conversion, std::string(1, first));
+        // (the whole character: the format string is UTF-8, see
+        // utf16_constant_array_to_utf8)
+        const auto lead = static_cast<unsigned char>(first);
+        const std::size_t bytes = lead < 0x80 ? 1 : lead < 0xe0 ? 2 : 3;
+        return fail(error::unknown_conversion, s.substr(i, bytes));
       }
       i = n + m.length(0);
       if(m[1].matched)

@@ -13,6 +13,7 @@ Author: Diffblue Ltd.
 
 #include <map>
 #include <set>
+#include <vector>
 
 /// For now, any unsigned bitvector type of width smaller or equal to 16 is
 /// considered a character.
@@ -55,6 +56,18 @@ bool has_char_array_subexpr(const exprt &expr, const namespacet &ns);
 ///   field in `arr` represents a character.
 std::string
 utf16_constant_array_to_java(const array_exprt &arr, std::size_t length);
+
+/// The UTF-16 code units of a constant array as UTF-8, each unit on its own
+/// (a surrogate is the three bytes of its code point), so that
+/// utf8_to_utf16_units gives back the units.
+/// \param arr: an array expression containing only constants
+/// \param length: the number of units
+/// \return the units as UTF-8
+std::string
+utf16_constant_array_to_utf8(const array_exprt &arr, std::size_t length);
+
+/// The UTF-16 code units of \p utf8 (see utf16_constant_array_to_utf8).
+std::vector<unsigned> utf8_to_utf16_units(const std::string &utf8);
 
 struct index_set_pairt
 {
