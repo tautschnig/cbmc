@@ -508,7 +508,11 @@ try_get_string_data_array(const exprt &content, const namespacet &ns)
     array_start.array().id() == ID_array &&
     array_start.array().type().id() == ID_array &&
     array_start.index().is_constant() &&
-    numeric_cast<mp_integer>(array_start.index()) == mp_integer{0})
+    numeric_cast<mp_integer>(array_start.index()) == mp_integer{0} &&
+    std::all_of(
+      array_start.array().operands().begin(),
+      array_start.array().operands().end(),
+      [](const exprt &e) { return e.is_constant(); }))
   {
     return std::optional<std::reference_wrapper<const array_exprt>>(
       to_array_expr(array_start.array()));

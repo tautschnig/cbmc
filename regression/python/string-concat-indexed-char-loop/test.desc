@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Invariant check failed
+--
+Symex string constant propagation took the address of an array literal with
+a non-constant element as a constant string and failed an invariant.
