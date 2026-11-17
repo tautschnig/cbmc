@@ -1916,10 +1916,14 @@ bool string_refinementt::check_java_format_float(
     return true;
   log.debug() << "string refinement: a float of String.format is another "
               << "string than in the model" << messaget::eom;
-  // This value gives these strings.
+  // This value gives these strings (any NaN, whose bits to_expr would not
+  // keep).
   add_lemma(implies_exprt{
     and_exprt{
-      conversion.guard, equal_exprt{conversion.value, constant.to_expr()}},
+      conversion.guard,
+      constant.is_NaN()
+        ? exprt{isnan_exprt{conversion.value}}
+        : exprt{equal_exprt{conversion.value, constant.to_expr()}}},
     disjunction(expected)});
   if(
     !actual.has_value() ||
