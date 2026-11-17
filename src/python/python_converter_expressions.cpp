@@ -2693,10 +2693,26 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
         // its data elsewhere (class_ptr), so reading the list slot would be
         // unsound -- return a sound nondet element for the non-LIST case
         // (precise boxed-tuple element extraction is a follow-up).
+        // PLR 6.3.2: a negative index counts from the end; an index out
+        // of range raises IndexError (on the LIST tag only).
+        const signedbv_typet i64{64};
+        const exprt idx =
+          slice.type() == i64 ? slice : safe_typecast(slice, i64);
+        const member_exprt len{list_val, "length", i64};
+        const exprt norm = if_exprt{
+          binary_relation_exprt{idx, ID_lt, from_integer(0, i64)},
+          plus_exprt{idx, len},
+          idx};
+        const exprt is_list = python_value_is(value, python_type_tagt::LIST);
+        emit_conditional_exception(
+          and_exprt{
+            is_list,
+            or_exprt{
+              binary_relation_exprt{norm, ID_lt, from_integer(0, i64)},
+              binary_relation_exprt{norm, ID_ge, len}}},
+          "IndexError");
         return if_exprt{
-          python_value_is(value, python_type_tagt::LIST),
-          index_exprt{data, slice},
-          class_getitem_or_nondet()};
+          is_list, index_exprt{data, norm}, class_getitem_or_nondet()};
       }
     }
     // PLR §6.3.2: string key on a python_value with the DICT tag — read
@@ -2707,8 +2723,7 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
     // (`def f(params): params["Bucket"]` — the boto3 stub shape) lost
     // the value: every downstream comparison became vacuous. Scan the
     // keys under the length guard and select the matching value; a
-    // missing key stays the sound nondet (KeyError modelling of boxed
-    // dicts is a follow-up).
+    // missing key raises KeyError.
     {
       exprt key_item = slice;
       if(!is_python_string_type(key_item.type()))
@@ -2750,6 +2765,7 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
         symbol_exprt drsym = symbol_table.lookup_ref(drid).symbol_expr();
         pending_checks.push_back(code_frontend_assignt{drsym, result});
         exprt selected{drsym};
+        exprt::operandst found_any;
         const std::size_t pc_scan = pending_checks.size();
         for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
         {
@@ -2764,6 +2780,7 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
             pending_checks);
           if(key_eq.type() != bool_typet{})
             key_eq = typecast_exprt{std::move(key_eq), bool_typet{}};
+          found_any.push_back(and_exprt{in_range, key_eq});
           selected = if_exprt{
             and_exprt{in_range, key_eq},
             index_exprt{dict_vals, idx},
@@ -2795,10 +2812,29 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
         pending_checks.erase(
           pending_checks.begin() + pc_scan, pending_checks.end());
         dict_read.add(code_frontend_assignt{dssym, std::move(selected)});
+        // PLR 6.3.2 / dict.__getitem__: a missing key raises KeyError.
+        const std::string dfn = "__dict_found_" + std::to_string(dsel_ctr);
+        const irep_idt dfid{qualify_name(dfn)};
+        if(symbol_table.lookup(dfid) == nullptr)
+        {
+          symbolt fs{dfid, bool_typet{}, "python"};
+          fs.base_name = dfn;
+          fs.is_lvalue = true;
+          fs.is_state_var = true;
+          fs.is_static_lifetime = current_function.empty();
+          symbol_table.add(fs);
+        }
+        const symbol_exprt found = symbol_table.lookup_ref(dfid).symbol_expr();
+        dict_read.add(code_frontend_assignt{found, disjunction(found_any)});
         pending_checks.push_back(code_frontend_assignt{dssym, drsym});
+        pending_checks.push_back(code_frontend_assignt{found, true_exprt{}});
         pending_checks.push_back(code_ifthenelset{
           python_value_is(value, python_type_tagt::DICT),
           std::move(dict_read)});
+        emit_conditional_exception(
+          and_exprt{
+            python_value_is(value, python_type_tagt::DICT), not_exprt{found}},
+          "KeyError");
         return if_exprt{
           python_value_is(value, python_type_tagt::DICT),
           dssym,

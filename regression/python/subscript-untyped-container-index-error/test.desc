@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 6
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* uncaught exception: FAILURE$
+^VERIFICATION FAILED$
+--
+--
+`t['k'][j]` on an untyped parameter: the list is a runtime-typed value, and
+its LIST arm read the element without a range check, so the IndexError of
+j = 2 was missed and this verified (a false proof).

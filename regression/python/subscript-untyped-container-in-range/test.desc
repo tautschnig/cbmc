@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Companion of subscript-untyped-container-index-error and -key-error: valid
+reads are exact, a negative index counts from the end, and the exceptions
+are catchable.

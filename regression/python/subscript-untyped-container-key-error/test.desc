@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 6
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* uncaught exception: FAILURE$
+^VERIFICATION FAILED$
+--
+--
+The DICT arm of a subscript on a runtime-typed value returned an
+unconstrained value for a missing key instead of raising KeyError (a false
+proof).
