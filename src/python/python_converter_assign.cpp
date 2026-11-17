@@ -5473,6 +5473,17 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
   // valid, unlike `[1] + "ab"`), so it is a TypeError only for a provably
   // NON-iterable rhs (int/float/bool/complex/None). Other ops (scalar lhs,
   // `list *=`, str +=, …) use the shared binary rule.
+  // s |= t, s &= t, s -= t, s ^= t on a set held in a list.
+  if(is_python_list_type(lhs.type()) && may_be_list_backed_set(lhs))
+  {
+    const exprt result = list_set_binary_operation(stmt, op, lhs, rhs);
+    if(result.is_not_nil())
+    {
+      code_frontend_assignt assign{lhs, result};
+      assign.add_source_location() = get_location(stmt);
+      return std::move(assign);
+    }
+  }
   bool aug_error;
   if(op == "Add" && is_python_list_type(lhs.type()))
   {

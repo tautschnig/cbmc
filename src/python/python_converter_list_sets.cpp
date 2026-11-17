@@ -237,7 +237,8 @@ std::optional<exprt> python_convertert::try_list_backed_set_method(
   const jsont &expr,
   const exprt &obj,
   const std::string &method_name,
-  const jsont &args)
+  const jsont &args,
+  const std::vector<exprt> *converted)
 {
   PRECONDITION(is_python_list_type(obj.type()));
   // Methods that only sets (and frozensets) have; the others apply to a list
@@ -264,7 +265,7 @@ std::optional<exprt> python_convertert::try_list_backed_set_method(
     return std::nullopt;
   // A list that is not known to be a set may be a list, which does not have
   // the method (unknown when its value comes from elsewhere).
-  if(!known_set && set_only.count(method_name) != 0)
+  if(!known_set && set_only.count(method_name) != 0 && converted == nullptr)
     emit_may_raise("AttributeError");
 
   static const std::map<std::string, std::pair<std::size_t, std::size_t>>
@@ -279,7 +280,8 @@ std::optional<exprt> python_convertert::try_list_backed_set_method(
       {"issubset", {1, 1}},
       {"issuperset", {1, 1}},
       {"isdisjoint", {1, 1}}};
-  check_method_arity(arity, method_name, expr, args);
+  if(converted == nullptr)
+    check_method_arity(arity, method_name, expr, args);
 
   const source_locationt loc = get_location(expr);
   const typet &set_type = obj.type();
@@ -332,11 +334,18 @@ std::optional<exprt> python_convertert::try_list_backed_set_method(
   {
     std::vector<exprt> result;
     bool all_lists = true;
-    for(const jsont *a : argument_nodes(args))
+    std::vector<exprt> values;
+    if(converted != nullptr)
+      values = *converted;
+    else
+      for(const jsont *a : argument_nodes(args))
+      {
+        if(is_node_type(*a, "Starred"))
+          return std::nullopt;
+        values.push_back(convert_expression(*a));
+      }
+    for(exprt value : values)
     {
-      if(is_node_type(*a, "Starred"))
-        return std::nullopt;
-      exprt value = convert_expression(*a);
       if(!is_python_list_type(value.type()))
       {
         all_lists = false;
@@ -655,4 +664,119 @@ std::optional<exprt> python_convertert::try_list_backed_set_method(
     return none;
   }
   return result;
+}
+
+exprt python_convertert::list_set_binary_operation(
+  const jsont &expr,
+  const std::string &op,
+  const exprt &left,
+  const exprt &right)
+{
+  static const std::map<std::string, std::string> methods = {
+    {"BitOr", "union"},
+    {"BitAnd", "intersection"},
+    {"Sub", "difference"},
+    {"BitXor", "symmetric_difference"}};
+  const auto method = methods.find(op);
+  if(method == methods.end())
+    return nil_exprt{};
+  const bool l_list = is_python_list_type(left.type());
+  const bool r_list = is_python_list_type(right.type());
+  const bool l_bitmap = is_python_set_type(left.type());
+  const bool r_bitmap = is_python_set_type(right.type());
+  if(
+    !(l_list && may_be_list_backed_set(left) && (r_list || r_bitmap)) &&
+    !(r_list && may_be_list_backed_set(right) && (l_list || l_bitmap)))
+    return nil_exprt{};
+  // A list display is a list, for which these operators raise TypeError.
+  auto list_display = [this](const exprt &e)
+  {
+    if(e.get_bool("#python_list_display"))
+      return true;
+    if(e.id() != ID_symbol)
+      return false;
+    const auto it = list_literals.find(to_symbol_expr(e).get_identifier());
+    return it != list_literals.end() &&
+           it->second.get_bool("#python_list_display");
+  };
+  if(list_display(left) || list_display(right))
+  {
+    emit_conditional_exception(true_exprt{}, "TypeError");
+    return side_effect_expr_nondett{left.type(), get_location(expr)};
+  }
+  const source_locationt loc = get_location(expr);
+  if(l_list && r_list)
+  {
+    const std::vector<exprt> others{right};
+    const auto result = try_list_backed_set_method(
+      expr, left, method->second, json_arrayt{}, &others);
+    return result.has_value() ? *result : exprt{nil_exprt{}};
+  }
+  // A set held in a list and a set of small ints (a bitmap; `set()` is
+  // one). Strings are no ints: the difference and the intersection are
+  // exact; a union with ints (or a set whose elements may be ints) is not
+  // modelled, and is reported.
+  const exprt &list = l_list ? left : right;
+  const exprt &bitmap = l_list ? right : left;
+  const member_exprt bits{bitmap, "bitmap", unsignedbv_typet{64}};
+  const exprt empty = equal_exprt{bits, from_integer(0, bits.type())};
+  const auto &data_type =
+    to_array_type(to_struct_type(list.type()).components()[1].type());
+  const bool strings = is_python_string_type(data_type.element_type()) ||
+                       is_python_string_handle_type(data_type.element_type());
+  auto empty_list_set = [&]()
+  {
+    const symbol_exprt r = fresh_list_set_symbol("__set_", list.type());
+    pending_checks.push_back(
+      code_frontend_assignt{r, side_effect_expr_nondett{list.type(), loc}});
+    pending_checks.push_back(code_frontend_assignt{
+      member_exprt{r, "length", signedbv_typet{64}},
+      from_integer(0, signedbv_typet{64})});
+    set_semantic_symbols.insert(r.get_identifier());
+    set_list_bound(r, 0);
+    return r;
+  };
+  auto copy = [&](const exprt &s)
+  {
+    const symbol_exprt r = fresh_list_set_symbol("__set_", s.type());
+    pending_checks.push_back(code_frontend_assignt{r, s});
+    if(is_python_list_type(s.type()))
+    {
+      set_semantic_symbols.insert(r.get_identifier());
+      set_list_bound(r, list_bound(s));
+    }
+    return exprt{r};
+  };
+  auto not_modelled = [&]()
+  {
+    source_locationt aloc = loc;
+    aloc.set_property_class("python-model-bound");
+    aloc.set_comment(
+      "a set of strings and small ints is not modelled (verifier model "
+      "bound)");
+    code_assertt check{empty};
+    check.add_source_location() = aloc;
+    pending_checks.push_back(std::move(check));
+    pending_checks.push_back(code_assumet{empty});
+  };
+  if(op == "Sub")
+  {
+    // list - ints: the list; ints - list: the ints.
+    if(!strings)
+      not_modelled();
+    return copy(l_list ? list : bitmap);
+  }
+  if(op == "BitAnd")
+  {
+    if(!strings)
+      not_modelled();
+    return l_list ? exprt{empty_list_set()}
+                  : struct_exprt{
+                      {from_integer(0, unsignedbv_typet{64}),
+                       from_integer(0, signedbv_typet{64})},
+                      python_set_type()};
+  }
+  // | and ^ with an empty set of ints: the list.
+  not_modelled();
+  return copy(list);
 }

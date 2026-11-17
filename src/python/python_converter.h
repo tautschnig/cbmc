@@ -2173,7 +2173,16 @@ private:
     const jsont &expr,
     const exprt &obj,
     const std::string &method_name,
-    const jsont &args);
+    const jsont &args,
+    const std::vector<exprt> *converted = nullptr);
+  /// \p left op \p right for the set operators | & - ^ when one operand
+  /// holds a set in a list (and the other is a list or a set of small ints);
+  /// nil otherwise.
+  exprt list_set_binary_operation(
+    const jsont &expr,
+    const std::string &op,
+    const exprt &left,
+    const exprt &right);
   /// Whether the list \p e holds a set: a set display, or a symbol in
   /// set_semantic_symbols.
   bool may_be_list_backed_set(const exprt &e) const;

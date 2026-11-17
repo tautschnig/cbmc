@@ -256,6 +256,9 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         if(sci != string_constants.end())
           string_constants[tid] = sci->second;
       }
+      // A copy of a set is a set.
+      if(may_hold_set(left))
+        set_semantic_symbols.insert(tid);
       pending_checks.push_back(code_frontend_assignt{lsym, left});
       left = lsym;
     }
@@ -271,6 +274,13 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
 
   if(left.is_nil() || right.is_nil())
     return nil_exprt{};
+
+  // Set operators on a set held in a list (sets of strings).
+  {
+    const exprt set_result = list_set_binary_operation(expr, op, left, right);
+    if(set_result.is_not_nil())
+      return set_result;
+  }
 
   // PLR §6.3.2: tuple + tuple concatenation. The arithmetic paths below do not
   // handle it -- falling through builds a plus_exprt on tuple STRUCTS, which
