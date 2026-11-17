@@ -1047,6 +1047,31 @@ std::optional<exprt> python_convertert::try_method_call(
               python_int_type(), get_location(expr)};
           }
 
+          // Each step below reads the bytes and the value so far twice: hold
+          // them in temporaries, as trees they double with each byte (a
+          // 22 MB assertion for int.from_bytes(b"\xff", "big", signed=True)).
+          static unsigned from_bytes_ctr = 0;
+          auto temporary = [&](const exprt &value) -> exprt
+          {
+            const std::string tn =
+              "__from_bytes_" + std::to_string(from_bytes_ctr++);
+            const irep_idt tid{qualify_name(tn)};
+            if(symbol_table.lookup(tid) == nullptr)
+            {
+              symbolt ts{tid, value.type(), "python"};
+              ts.base_name = tn;
+              ts.is_lvalue = true;
+              ts.is_state_var = true;
+              ts.is_static_lifetime = current_function.empty();
+              symbol_table.add(ts);
+            }
+            const symbol_exprt t = symbol_table.lookup_ref(tid).symbol_expr();
+            pending_checks.push_back(code_frontend_assignt{t, value});
+            return t;
+          };
+          if(b.id() != ID_symbol)
+            b = temporary(b);
+
           const typet i64 = python_int_type();
           // The length MEMBER is the representation's signedbv[64]
           // regardless of --python-unbounded-ints (reading it as
@@ -1079,7 +1104,7 @@ std::optional<exprt> python_convertert::try_method_call(
               exprt new_result = plus_exprt{result, mult_exprt{byte, power}};
               exprt cond =
                 binary_relation_exprt{b_length, ID_gt, from_integer(i, len_t)};
-              result = if_exprt{cond, new_result, result};
+              result = temporary(if_exprt{cond, new_result, result});
               power = mult_exprt{power, from_integer(256, i64)};
             }
           }
@@ -1095,7 +1120,7 @@ std::optional<exprt> python_convertert::try_method_call(
                 plus_exprt{mult_exprt{result, from_integer(256, i64)}, byte};
               exprt cond =
                 binary_relation_exprt{b_length, ID_gt, from_integer(i, len_t)};
-              result = if_exprt{cond, new_result, result};
+              result = temporary(if_exprt{cond, new_result, result});
             }
           }
           // PLR §4.4.2: signed=True — interpret high bit of the
@@ -1116,7 +1141,7 @@ std::optional<exprt> python_convertert::try_method_call(
             for(std::size_t k = 0; k <= max_bytes; k++)
             {
               exprt match = equal_exprt{b_length, from_integer(k, len_t)};
-              sub_amount = if_exprt{match, power, sub_amount};
+              sub_amount = temporary(if_exprt{match, power, sub_amount});
               power = mult_exprt{power, from_integer(256, i64)};
             }
             // Determine sign bit: high bit of MSB.
