@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 8
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+PLR 6.10.1: int, bool and float compare by value (True == 1, 2.0 == 2),
+also as runtime-typed list elements.

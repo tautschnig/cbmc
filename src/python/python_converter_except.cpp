@@ -1943,3 +1943,66 @@ void python_convertert::compute_raising_functions(
   }
   raising_functions_known = true;
 }
+
+std::vector<std::string> python_convertert::keyed_dunder_candidates(
+  const std::string &tag,
+  const std::string &base,
+  const typet &key_type)
+{
+  const std::string bare =
+    tag.rfind("python_class_", 0) == 0 ? tag.substr(13) : tag;
+  std::string suffix;
+  if(is_python_string_type(key_type))
+    suffix = "_str__";
+  else if(
+    key_type.id() == ID_signedbv || key_type.id() == ID_integer ||
+    key_type.id() == ID_bool)
+    suffix = "_int__";
+  std::vector<std::string> out;
+  if(!suffix.empty() && base.size() > 2)
+  {
+    const std::string variant = base.substr(0, base.size() - 2) + suffix;
+    out.push_back("python::" + tag + "::" + variant);
+    out.push_back("python::" + bare + "::" + variant);
+  }
+  out.push_back("python::" + tag + "::" + base);
+  out.push_back("python::" + bare + "::" + base);
+  return out;
+}
+
+std::vector<std::string> python_convertert::keyed_dunder_candidates(
+  const std::string &tag,
+  const std::string &base,
+  const jsont &key)
+{
+  // Static key type without converting (no checks emitted): literals, and
+  // names whose symbol has a scalar type.
+  typet kt;
+  if(is_node_type(key, "Constant"))
+  {
+    const jsont &v = json_member(key, "value");
+    if(v.is_string())
+      kt = python_string_type();
+    else if(v.is_number() && v.value.find_first_of(".eE") == std::string::npos)
+      kt = python_int_type();
+    else if(v.is_true() || v.is_false())
+      kt = bool_typet{};
+  }
+  else if(is_node_type(key, "Name"))
+  {
+    const std::string nm = json_string(json_member(key, "id"));
+    const symbolt *s = symbol_table.lookup(irep_idt{qualify_name(nm)});
+    if(s == nullptr && !current_function.empty())
+      s = symbol_table.lookup(
+        irep_idt{"python::" + current_function + "::" + nm});
+    if(s == nullptr)
+      s = symbol_table.lookup(irep_idt{"python::" + nm});
+    if(s != nullptr)
+      kt = s->type;
+  }
+  else if(
+    is_node_type(key, "UnaryOp") &&
+    is_node_type(json_member(key, "operand"), "Constant"))
+    return keyed_dunder_candidates(tag, base, json_member(key, "operand"));
+  return keyed_dunder_candidates(tag, base, kt);
+}

@@ -4313,6 +4313,12 @@ exprt python_convertert::value_equal(const exprt &a, const exprt &b)
 {
   PRECONDITION(
     is_python_value_type(a.type()) && is_python_value_type(b.type()));
+  return if_exprt{
+    pv_both_numeric(a, b), pv_numeric_equal(a, b), value_equal_same_kind(a, b)};
+}
+
+exprt python_convertert::value_equal_same_kind(const exprt &a, const exprt &b)
+{
   const signedbv_typet i32{32};
   member_exprt at{a, "__tag", i32};
   exprt tags_eq = equal_exprt{at, member_exprt{b, "__tag", i32}};

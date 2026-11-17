@@ -1,0 +1,9 @@
+CORE
+main.py
+--unwind 8
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+Twin of counter-str-keys-and-methods.

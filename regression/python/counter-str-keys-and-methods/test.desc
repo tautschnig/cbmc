@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 8
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Counter over str and int keys: subscripts, `in`, augmented assignment,
+update(), total(), elements(). Subscripts and `in` dispatch to the model's
+typed-key variant by the key's static type (keyed_dunder_candidates).

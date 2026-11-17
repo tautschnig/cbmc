@@ -772,21 +772,8 @@ exprt python_convertert::convert_subscript_of(const jsont &expr, exprt value)
       // __getitem__ would box other key types through the Any
       // channel, which tuples do not round-trip -- the Counter
       // dual-storage model).
-      std::vector<std::string> gi_prefixes;
-      {
-        const jsont &sl_probe = json_member(expr, "slice");
-        const bool str_key = is_node_type(sl_probe, "Constant") &&
-                             json_member(sl_probe, "value").is_string();
-        if(str_key)
-        {
-          gi_prefixes.push_back(
-            std::string{"python::"} + tag + "::__getitem_str__");
-          gi_prefixes.push_back(
-            std::string{"python::"} + bare + "::__getitem_str__");
-        }
-        gi_prefixes.push_back(std::string{"python::"} + tag + "::__getitem__");
-        gi_prefixes.push_back(std::string{"python::"} + bare + "::__getitem__");
-      }
+      const std::vector<std::string> gi_prefixes =
+        keyed_dunder_candidates(tag, "__getitem__", json_member(expr, "slice"));
       for(const std::string &prefix : gi_prefixes)
       {
         const symbolt *gs = symbol_table.lookup(irep_idt{prefix});

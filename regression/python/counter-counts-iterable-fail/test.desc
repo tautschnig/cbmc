@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 8
+^EXIT=10$
+^SIGNAL=0$
+^\[.*assertion\.1\] .* line 4 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+--
+Twin of counter-counts-iterable.

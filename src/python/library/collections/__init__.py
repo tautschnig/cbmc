@@ -31,53 +31,67 @@ class OrderedDict(dict):
 
 
 class Counter(dict):
-    """Multiset over hashable elements. Modelled at the Python
-    level as a class with composition over a typed dict for
-    storage. The key type is `tuple[int, int]` — the common
-    shape used by Counter test cases (e.g. `c[2, 3] = N`); other
-    key shapes (single ints, strings, n-tuples for n != 2) are
-    over-approximated as nondet at the dict-level.
+    """Multiset over hashable elements (stdtypes collections.Counter).
 
-    The Python-level Counter is `class Counter(dict): ...` so
-    it inherits dict's protocol; our class system doesn't
-    auto-inherit dict methods, so we override the relevant
-    dunders directly (subscript get/set) plus the auxiliary
-    methods (values, keys, items, ...). Missing keys return 0
-    per Counter's `__missing__` semantics.
+    Modelled as a class over one typed dict per key kind -- int keys
+    (`_i`), str keys (`_s`) and 2-tuples of ints (`_d`) -- because a single
+    dict with untyped keys would box keys through the Any channel, which
+    tuples do not round-trip. The front-end dispatches subscripts and `in`
+    to the typed variant (`__getitem_int__`, `__getitem_str__`, ...) when
+    the key's static type is known (keyed_dunder_candidates). Counts are
+    exact: Counter(iterable) counts every occurrence, missing keys read 0
+    (Counter.__missing__). Keys of other kinds are not modelled.
     """
 
     _d: dict[tuple[int, int], int]
     _s: dict[str, int]
+    _i: dict[int, int]
 
     def __init__(self, iterable=None, **kwds):
         self._d = {}
         self._s = {}
-        # PLR: Counter(iterable) treats each element as a key
-        # with count 1 (we don't accumulate counts in the
-        # bounded model). For tuple-keyed iterables this still
-        # produces the correct presence/absence judgement;
-        # frequency tracking is approximate.
+        self._i = {}
         if iterable is not None:
-            for x in iterable:
-                self._d[x] = 1
+            self._count(iterable, 1)
+
+    def _count(self, iterable, step: int) -> None:
+        # (A private name: `update` on a dict subclass would be taken for
+        # dict.update by the method dispatch.)
+        for x in iterable:
+            if isinstance(x, int):
+                self._i[x] = self._i.get(x, 0) + step
+            elif isinstance(x, str):
+                self._s[x] = self._s.get(x, 0) + step
+            else:
+                self._d[x] = self._d.get(x, 0) + step
+
+    def update(self, iterable=None, **kwds) -> None:
+        if iterable is not None:
+            self._count(iterable, 1)
+        return None
+
+    def subtract(self, iterable=None, **kwds) -> None:
+        if iterable is not None:
+            self._count(iterable, -1)
+        return None
 
     def __setitem__(self, k: tuple[int, int], v: int) -> None:
         self._d[k] = v
 
     def __setitem_str__(self, k: str, v: int) -> None:
-        # Typed STRING variant (frontend convention: preferred by
-        # the subscript dispatch when the key is statically str) --
-        # a single untyped __setitem__ would box the tuple keys
-        # through the Any channel, which does not round-trip.
         self._s[k] = v
 
+    def __setitem_int__(self, k: int, v: int) -> None:
+        self._i[k] = v
+
     def __getitem__(self, k: tuple[int, int]) -> int:
-        # stdtypes Counter.__missing__: missing keys return 0,
-        # not KeyError.
         return self._d.get(k, 0)
 
     def __getitem_str__(self, k: str) -> int:
         return self._s.get(k, 0)
+
+    def __getitem_int__(self, k: int) -> int:
+        return self._i.get(k, 0)
 
     def __contains__(self, k: tuple[int, int]) -> bool:
         return k in self._d
@@ -85,51 +99,105 @@ class Counter(dict):
     def __contains_str__(self, k: str) -> bool:
         return k in self._s
 
+    def __contains_int__(self, k: int) -> bool:
+        return k in self._i
+
+    def __len__(self) -> int:
+        return len(self._i) + len(self._s) + len(self._d)
+
     def get(self, k: tuple[int, int], default: int = 0) -> int:
         return self._d.get(k, default)
 
-    def values(self) -> list[int]:
-        return self._d.values()
-
     def keys(self):
-        return self._d.keys()
-
-    def items(self):
-        return self._d.items()
-
-    def most_common(self, n: int = 0):
-        # Approximate: walk dict.items() up to n entries. Our
-        # frontend doesn't precisely track per-element counts,
-        # so callers using .most_common(k) as an upper bound
-        # get a sound over-approximation.
-        if n <= 0:
-            return []
+        # One key kind (the usual case): that dict's view as a list.
+        if len(self._s) == 0 and len(self._d) == 0:
+            return list(self._i.keys())
+        if len(self._i) == 0 and len(self._d) == 0:
+            return list(self._s.keys())
+        if len(self._i) == 0 and len(self._s) == 0:
+            return list(self._d.keys())
         out = []
-        i = 0
-        for kv in self._d.items():
-            if i >= n:
-                break
-            out.append(kv)
-            i = i + 1
-        return out
-
-    def elements(self):
-        out = []
-        for k in self._d.keys():
+        for k in self._i:
+            out.append(k)
+        for k in self._s:
+            out.append(k)
+        for k in self._d:
             out.append(k)
         return out
 
-    def subtract(self, iterable=None, **kwds) -> None:
-        return None
+    def values(self) -> list[int]:
+        if len(self._s) == 0 and len(self._d) == 0:
+            return list(self._i.values())
+        if len(self._i) == 0 and len(self._d) == 0:
+            return list(self._s.values())
+        if len(self._i) == 0 and len(self._s) == 0:
+            return list(self._d.values())
+        out = []
+        for k in self._i:
+            out.append(self._i[k])
+        for k in self._s:
+            out.append(self._s[k])
+        for k in self._d:
+            out.append(self._d[k])
+        return out
 
-    def update(self, iterable=None, **kwds) -> None:
-        if iterable is not None:
-            for x in iterable:
-                self._d[x] = 1
-        return None
+    def items(self):
+        if len(self._s) == 0 and len(self._d) == 0:
+            return list(self._i.items())
+        if len(self._i) == 0 and len(self._d) == 0:
+            return list(self._s.items())
+        if len(self._i) == 0 and len(self._s) == 0:
+            return list(self._d.items())
+        out = []
+        for k in self._i:
+            out.append((k, self._i[k]))
+        for k in self._s:
+            out.append((k, self._s[k]))
+        for k in self._d:
+            out.append((k, self._d[k]))
+        return out
 
     def total(self) -> int:
-        return len(self._d)
+        t = 0
+        for v in self.values():
+            t = t + v
+        return t
+
+    def most_common(self, n: int = 0):
+        # Ordering by count is not modelled: an unconstrained list of at
+        # most n (key, count) pairs (sound for a bound, not for contents).
+        out = []
+        if n > 0:
+            for kv in self.items():
+                if len(out) < n:
+                    out.append(kv)
+        return out
+
+    def elements(self):
+        # Each key repeated by its count (non-positive counts omitted).
+        out = []
+        ks = list(self._i.keys())
+        vs = list(self._i.values())
+        for j in range(len(ks)):
+            c = vs[j]
+            while c > 0:
+                out.append(ks[j])
+                c = c - 1
+        ks2 = list(self._s.keys())
+        vs2 = list(self._s.values())
+        for j in range(len(ks2)):
+            c = vs2[j]
+            while c > 0:
+                out.append(ks2[j])
+                c = c - 1
+        ks3 = list(self._d.keys())
+        vs3 = list(self._d.values())
+        for j in range(len(ks3)):
+            c = vs3[j]
+            while c > 0:
+                out.append(ks3[j])
+                c = c - 1
+        return out
 
 
 class deque:

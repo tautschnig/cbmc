@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 8
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+A runtime-typed list compared with an int list: the elements compare by
+runtime value. The int payload field was read regardless of the runtime type,
+so `["a", 0] == [0, 0]` was proved.

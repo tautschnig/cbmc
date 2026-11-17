@@ -2323,6 +2323,14 @@ private:
   /// for dead branches). Symbolic tags fall back to a bounded full dispatch;
   /// at depth 0 a sound nondet bool is used. PLR §6.10.1.
   exprt python_value_structural_eq(const exprt &l, const exprt &r, int depth);
+  exprt python_value_structural_eq_same_kind(
+    const exprt &l,
+    const exprt &r,
+    int depth);
+  /// PLR 6.10.1 numeric equality of two runtime-typed numbers (int, bool,
+  /// float compare by value), and the predicate that both are numbers.
+  exprt pv_numeric_equal(const exprt &l, const exprt &r);
+  exprt pv_both_numeric(const exprt &l, const exprt &r);
 
   /// Wrap a concrete typed value into a tagged-union value.
   exprt wrap_value(const exprt &e);
@@ -2515,6 +2523,7 @@ private:
   /// (heterogeneous) dict keys, where declared-type-gated string
   /// equality does not apply.
   exprt value_equal(const exprt &a, const exprt &b);
+  exprt value_equal_same_kind(const exprt &a, const exprt &b);
 
   /// P0 vocabulary of the unbounded-containers plan
   /// (doc/python-frontend-unbounded-containers-plan.md): the
@@ -2648,6 +2657,21 @@ private:
   /// True when \p funcdef's body has a nested def, lambda, class or
   /// generator construct (its locals may outlive a call).
   bool function_has_nested_scopes(const jsont &funcdef) const;
+  /// Typed-key dunder variants (model-class convention): candidates for
+  /// dunder \p base of class \p cls for a key expression \p key, the
+  /// variant for the key's static type first (`<base minus trailing __>
+  /// _str__` for a str key, `_int__` for an int key), then \p base. A
+  /// model class keeps one storage per key type, since one untyped dunder
+  /// would box keys through the Any channel.
+  std::vector<std::string> keyed_dunder_candidates(
+    const std::string &tag,
+    const std::string &base,
+    const jsont &key);
+  /// Same for an already converted key.
+  std::vector<std::string> keyed_dunder_candidates(
+    const std::string &tag,
+    const std::string &base,
+    const typet &key_type);
   /// PLR 8.4 / 7.8: while an exception is active, no statement runs except
   /// the ones that observe it (handler dispatch, finally, __exit__, the
   /// uncaught-exception properties). Rewrites a converted body so that in

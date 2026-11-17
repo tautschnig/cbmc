@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 8
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+sorted() of runtime-typed numbers compares their values (negative ints,
+int/float/bool mixes, reverse=True); the boxes themselves were compared.

@@ -3439,23 +3439,9 @@ codet python_convertert::convert_assign(const jsont &stmt)
           if(tag.substr(0, 13) == "python_class_")
           {
             std::string bare = tag.substr(13);
-            std::vector<std::string> si_prefixes;
-            {
-              const jsont &sl_probe = json_member(target, "slice");
-              const bool str_key = is_node_type(sl_probe, "Constant") &&
-                                   json_member(sl_probe, "value").is_string();
-              if(str_key)
-              {
-                si_prefixes.push_back(
-                  std::string{"python::"} + tag + "::__setitem_str__");
-                si_prefixes.push_back(
-                  std::string{"python::"} + bare + "::__setitem_str__");
-              }
-              si_prefixes.push_back(
-                std::string{"python::"} + tag + "::__setitem__");
-              si_prefixes.push_back(
-                std::string{"python::"} + bare + "::__setitem__");
-            }
+            const std::vector<std::string> si_prefixes =
+              keyed_dunder_candidates(
+                tag, "__setitem__", json_member(target, "slice"));
             for(const std::string &prefix : si_prefixes)
             {
               const symbolt *ss = symbol_table.lookup(irep_idt{prefix});

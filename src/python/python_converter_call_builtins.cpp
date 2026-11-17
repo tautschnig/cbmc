@@ -2275,10 +2275,12 @@ std::optional<exprt> python_convertert::try_builtin_call(
   // (defaultdict_factories registration happens in convert_assign
   // because we don't know the assignment target here; see the
   // _defaultdict_factory_pending hint we attach to the result.)
+  // Counter is NOT lowered here: Counter(iterable) counts the iterable's
+  // elements, which the library class models exactly (an empty dict here
+  // ignored the iterable -- `Counter([4, 4])[4] == 0` was proved).
   else if(
     collections_imports.count(func_name) > 0 &&
-    (collections_imports[func_name] == "defaultdict" ||
-     collections_imports[func_name] == "Counter"))
+    collections_imports[func_name] == "defaultdict")
   {
     // Determine factory and corresponding value type.
     std::string factory;
@@ -3370,12 +3372,71 @@ std::optional<exprt> python_convertert::try_builtin_call(
           {
             exprt idx = from_integer(i, signedbv_typet{64});
             exprt next = from_integer(i + 1, signedbv_typet{64});
+            exprt ka = key_of(index_exprt{data, idx});
+            exprt kb = key_of(index_exprt{data, next});
+            const irep_idt rel = sorted_reverse ? ID_lt : ID_gt;
+            exprt out_of_order;
+            if(
+              is_python_value_type(ka.type()) &&
+              is_python_value_type(kb.type()))
+            {
+              // Runtime-typed elements compare by their runtime values
+              // (PLR 6.10.1): numbers numerically (bool as 0/1, int vs float
+              // via float); other or mixed kinds are not decided here (an
+              // unconstrained swap decision: a sound over-approximation).
+              // Comparing the boxes themselves compared their raw fields.
+              auto num = [&](const exprt &v) -> exprt
+              {
+                return if_exprt{
+                  python_value_is(v, python_type_tagt::FLOAT),
+                  python_value_float(v),
+                  typecast_exprt{
+                    if_exprt{
+                      python_value_is(v, python_type_tagt::BOOL),
+                      if_exprt{
+                        typecast_exprt{python_value_bool(v), bool_typet{}},
+                        from_integer(1, python_int_type()),
+                        from_integer(0, python_int_type())},
+                      typecast_exprt::conditional_cast(
+                        python_value_int(v), python_int_type())},
+                    double_type()}};
+              };
+              auto is_num = [&](const exprt &v) -> exprt
+              {
+                return or_exprt{
+                  python_value_is(v, python_type_tagt::INT),
+                  python_value_is(v, python_type_tagt::BOOL),
+                  python_value_is(v, python_type_tagt::FLOAT)};
+              };
+              auto is_intlike = [&](const exprt &v) -> exprt
+              {
+                return or_exprt{
+                  python_value_is(v, python_type_tagt::INT),
+                  python_value_is(v, python_type_tagt::BOOL)};
+              };
+              auto ival = [&](const exprt &v) -> exprt
+              {
+                return if_exprt{
+                  python_value_is(v, python_type_tagt::BOOL),
+                  if_exprt{
+                    typecast_exprt{python_value_bool(v), bool_typet{}},
+                    from_integer(1, python_int_type()),
+                    from_integer(0, python_int_type())},
+                  typecast_exprt::conditional_cast(
+                    python_value_int(v), python_int_type())};
+              };
+              out_of_order = if_exprt{
+                and_exprt{is_intlike(ka), is_intlike(kb)},
+                binary_relation_exprt{ival(ka), rel, ival(kb)},
+                if_exprt{
+                  and_exprt{is_num(ka), is_num(kb)},
+                  binary_relation_exprt{num(ka), rel, num(kb)},
+                  side_effect_expr_nondett{bool_typet{}, get_location(expr)}}};
+            }
+            else
+              out_of_order = binary_relation_exprt{ka, rel, kb};
             exprt guard = and_exprt{
-              binary_relation_exprt{next, ID_lt, length},
-              binary_relation_exprt{
-                key_of(index_exprt{data, idx}),
-                sorted_reverse ? ID_lt : ID_gt,
-                key_of(index_exprt{data, next})}};
+              binary_relation_exprt{next, ID_lt, length}, out_of_order};
             static unsigned stmp = 0;
             std::string sn = "__stmp_" + std::to_string(stmp++);
             std::string sq = qualify_name(sn);

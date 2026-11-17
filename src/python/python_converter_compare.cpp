@@ -21,7 +21,74 @@
 #include "python_types.h"
 #include "python_value_type.h"
 
+exprt python_convertert::pv_numeric_equal(const exprt &l, const exprt &r)
+{
+  // PLR 6.10.1: int, bool and float compare by value (True == 1, 2.0 == 2).
+  const typet it = python_int_type();
+  auto intlike = [&](const exprt &v) -> exprt
+  {
+    return or_exprt{
+      python_value_is(v, python_type_tagt::INT),
+      python_value_is(v, python_type_tagt::BOOL)};
+  };
+  auto ival = [&](const exprt &v) -> exprt
+  {
+    return if_exprt{
+      python_value_is(v, python_type_tagt::BOOL),
+      if_exprt{
+        typecast_exprt{python_value_bool(v), bool_typet{}},
+        from_integer(1, it),
+        from_integer(0, it)},
+      typecast_exprt::conditional_cast(python_value_int(v), it)};
+  };
+  auto is_float = [&](const exprt &v) -> exprt
+  { return python_value_is(v, python_type_tagt::FLOAT); };
+  // A float equals an int only exactly (|n| <= 2^53 converts exactly).
+  auto float_int_eq = [&](const exprt &f, const exprt &n) -> exprt
+  {
+    return and_exprt{
+      and_exprt{
+        binary_relation_exprt{n, ID_le, from_integer(mp_integer{1} << 53, it)},
+        binary_relation_exprt{
+          n, ID_ge, from_integer(-(mp_integer{1} << 53), it)}},
+      ieee_float_equal_exprt{f, typecast_exprt{n, double_type()}}};
+  };
+  return if_exprt{
+    and_exprt{intlike(l), intlike(r)},
+    equal_exprt{ival(l), ival(r)},
+    if_exprt{
+      and_exprt{is_float(l), is_float(r)},
+      ieee_float_equal_exprt{python_value_float(l), python_value_float(r)},
+      if_exprt{
+        is_float(l),
+        float_int_eq(python_value_float(l), ival(r)),
+        float_int_eq(python_value_float(r), ival(l))}}};
+}
+
+exprt python_convertert::pv_both_numeric(const exprt &l, const exprt &r)
+{
+  auto num = [&](const exprt &v) -> exprt
+  {
+    return or_exprt{
+      python_value_is(v, python_type_tagt::INT),
+      python_value_is(v, python_type_tagt::BOOL),
+      python_value_is(v, python_type_tagt::FLOAT)};
+  };
+  return and_exprt{num(l), num(r)};
+}
+
 exprt python_convertert::python_value_structural_eq(
+  const exprt &l,
+  const exprt &r,
+  int depth)
+{
+  return if_exprt{
+    pv_both_numeric(l, r),
+    pv_numeric_equal(l, r),
+    python_value_structural_eq_same_kind(l, r, depth)};
+}
+
+exprt python_convertert::python_value_structural_eq_same_kind(
   const exprt &l,
   const exprt &r,
   int depth)
@@ -661,6 +728,81 @@ exprt python_convertert::convert_compare(const jsont &expr)
       }
     }
 
+    // PLR 6.10.1: numbers compare by value across int, bool and float
+    // (True == 1, 2.0 == 2). A runtime-typed value against a number: equal
+    // iff it holds a number of the same value. (The tag-exact path below
+    // made `pv(1) == True` false.)
+    if(
+      (op == "Eq" || op == "NotEq") &&
+      (is_python_value_type(current_left.type()) !=
+       is_python_value_type(right.type())))
+    {
+      const bool pv_left = is_python_value_type(current_left.type());
+      const exprt &pv = pv_left ? current_left : right;
+      const exprt &num = pv_left ? right : current_left;
+      const irep_idt nid = num.type().id();
+      if(
+        !is_python_none(num, symbol_table) &&
+        (nid == ID_signedbv || nid == ID_integer || nid == ID_bool ||
+         nid == ID_floatbv))
+      {
+        const exprt is_int = python_value_is(pv, python_type_tagt::INT);
+        const exprt is_bool = python_value_is(pv, python_type_tagt::BOOL);
+        const exprt is_float = python_value_is(pv, python_type_tagt::FLOAT);
+        const typet it = python_int_type();
+        const exprt pv_bool_int = if_exprt{
+          typecast_exprt{python_value_bool(pv), bool_typet{}},
+          from_integer(1, it),
+          from_integer(0, it)};
+        const exprt pv_int =
+          typecast_exprt::conditional_cast(python_value_int(pv), it);
+        exprt eq;
+        if(nid == ID_floatbv)
+        {
+          const exprt f = typecast_exprt::conditional_cast(num, double_type());
+          eq = or_exprt{
+            and_exprt{
+              is_float, ieee_float_equal_exprt{python_value_float(pv), f}},
+            or_exprt{
+              and_exprt{
+                is_int,
+                ieee_float_equal_exprt{
+                  typecast_exprt{pv_int, double_type()}, f}},
+              and_exprt{
+                is_bool,
+                ieee_float_equal_exprt{
+                  typecast_exprt{pv_bool_int, double_type()}, f}}}};
+        }
+        else
+        {
+          const exprt n =
+            nid == ID_bool
+              ? exprt{if_exprt{num, from_integer(1, it), from_integer(0, it)}}
+              : typecast_exprt::conditional_cast(num, it);
+          // A float equals an int only if it is exactly that integer; the
+          // conversion back must round-trip (|n| < 2^53 is exact).
+          const exprt nf = typecast_exprt{n, double_type()};
+          const exprt exact = and_exprt{
+            binary_relation_exprt{
+              n, ID_le, from_integer(mp_integer{1} << 53, it)},
+            binary_relation_exprt{
+              n, ID_ge, from_integer(-(mp_integer{1} << 53), it)}};
+          eq = or_exprt{
+            and_exprt{is_int, equal_exprt{pv_int, n}},
+            or_exprt{
+              and_exprt{is_bool, equal_exprt{pv_bool_int, n}},
+              and_exprt{
+                is_float,
+                and_exprt{
+                  exact, ieee_float_equal_exprt{python_value_float(pv), nf}}}}};
+        }
+        exprt cmp_num = op == "Eq" ? eq : exprt{not_exprt{eq}};
+        result = result.is_nil() ? cmp_num : exprt{and_exprt{result, cmp_num}};
+        current_left = right;
+        continue;
+      }
+    }
+
     if(
       op != "In" && op != "NotIn" && op != "Is" && op != "IsNot" &&
       !is_python_none(current_left, symbol_table) &&
@@ -1057,6 +1199,17 @@ exprt python_convertert::convert_compare(const jsont &expr)
           {
             exprt l_el = index_exprt{lda, idx, le};
             exprt r_el = index_exprt{rda, idx, re};
+            // One side runtime-typed: compare by runtime value (the unwrap
+            // below reads the target's payload field whatever the tag is,
+            // so `["a", 0] == [0, 0]` held).
+            if(is_python_value_type(le) != is_python_value_type(re))
+            {
+              if(!is_python_value_type(l_el.type()))
+                l_el = wrap_value(l_el);
+              if(!is_python_value_type(r_el.type()))
+                r_el = wrap_value(r_el);
+              return python_value_structural_eq(l_el, r_el, 2);
+            }
 
             if(is_python_value_type(le) && !is_python_value_type(target))
               l_el = unwrap_value(l_el, target);
@@ -1784,9 +1937,24 @@ exprt python_convertert::convert_compare(const jsont &expr)
         const auto &rt = to_struct_type(right.type());
         const auto &ldata = to_array_type(lt.components()[1].type());
         const auto &rdata = to_array_type(rt.components()[1].type());
+        // One side runtime-typed, the other scalar-typed (int, float, bool,
+        // str): box the scalar side's elements and compare by value. The
+        // element-wise unwrap read the scalar payload field regardless of
+        // the runtime tag (`["a", 0] == [0, 0]` was proved).
+        auto boxable = [&](const typet &t)
+        {
+          return t.id() == ID_signedbv || t.id() == ID_integer ||
+                 t.id() == ID_floatbv || t.id() == ID_bool ||
+                 is_python_string_type(t);
+        };
+        const bool mixed = (is_python_value_type(ldata.element_type()) &&
+                            boxable(rdata.element_type())) ||
+                           (is_python_value_type(rdata.element_type()) &&
+                            boxable(ldata.element_type()));
         if(
-          is_python_value_type(ldata.element_type()) &&
-          is_python_value_type(rdata.element_type()))
+          (is_python_value_type(ldata.element_type()) &&
+           is_python_value_type(rdata.element_type())) ||
+          mixed)
         {
           member_exprt llen{current_left, "length", signedbv_typet{64}};
           member_exprt rlen{right, "length", signedbv_typet{64}};
@@ -1799,6 +1967,10 @@ exprt python_convertert::convert_compare(const jsont &expr)
             exprt in_range = binary_relation_exprt{idx, ID_lt, llen};
             exprt l_el = index_exprt{lda, idx, ldata.element_type()};
             exprt r_el = index_exprt{rda, idx, rdata.element_type()};
+            if(!is_python_value_type(l_el.type()))
+              l_el = wrap_value(l_el);
+            if(!is_python_value_type(r_el.type()))
+              r_el = wrap_value(r_el);
             exprt el_eq = python_value_structural_eq(l_el, r_el, 2);
             all_equal =
               and_exprt{all_equal, or_exprt{not_exprt{in_range}, el_eq}};
@@ -2813,8 +2985,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
           std::string bare =
             tag.substr(0, 13) == "python_class_" ? tag.substr(13) : tag;
           for(const std::string &prefix :
-              {std::string{"python::"} + tag + "::__contains__",
-               std::string{"python::"} + bare + "::__contains__"})
+              keyed_dunder_candidates(tag, "__contains__", item.type()))
           {
             const symbolt *cs = symbol_table.lookup(irep_idt{prefix});
             if(cs != nullptr)

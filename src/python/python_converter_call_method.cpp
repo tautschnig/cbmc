@@ -1591,8 +1591,7 @@ std::optional<exprt> python_convertert::try_method_call(
         // value type. The check is on method_name (and not on
         // obj_name) so the alias form ('col.defaultdict')
         // also reaches the dedicated dispatch.
-        bool is_collections_ctor =
-          method_name == "defaultdict" || method_name == "Counter";
+        bool is_collections_ctor = method_name == "defaultdict";
         if(
           class_types.count(method_name) &&
           c_intrinsic_map.count(func_id) == 0 && !is_collections_ctor)
@@ -2125,9 +2124,7 @@ std::optional<exprt> python_convertert::try_method_call(
         // PLR §8.5: collections module — defaultdict / Counter
         // via module-qualified call, e.g. collections.defaultdict(int)
         // or col.defaultdict(int) when imported as col.
-        if(
-          imported_modules.count(obj_name) > 0 &&
-          (method_name == "defaultdict" || method_name == "Counter"))
+        if(imported_modules.count(obj_name) > 0 && method_name == "defaultdict")
         {
           std::string factory;
           if(method_name == "Counter")

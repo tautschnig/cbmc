@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 8
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Counter(iterable) counts every occurrence (stdtypes collections.Counter). It
+was lowered to an empty dict that ignored the iterable, so
+`Counter([4, 4])[4] == 0` was proved; the library model also stored every
+element with count 1.
