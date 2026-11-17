@@ -21,6 +21,9 @@
 #include "python_types.h"
 #include "python_value_type.h"
 
+#include <map>
+#include <set>
+
 exprt python_convertert::pv_numeric_equal(const exprt &l, const exprt &r)
 {
   // PLR 6.10.1: int, bool and float compare by value (True == 1, 2.0 == 2).
@@ -3382,6 +3385,124 @@ exprt python_convertert::convert_compare(const jsont &expr)
                 goto done_cmp;
               }
             }
+          }
+        }
+        // A constant container C of modest size and a (refined) str item:
+        // `item in C` holds iff item equals one of C's substrings (PLR
+        // 6.10.2). Encoded as a disjunction over the distinct substrings,
+        // each a length test plus byte compares through the item's content
+        // pointer, instead of the solver's quantified contains.
+        {
+          std::optional<std::string> csv = extract_string_value(container);
+          if(!csv.has_value() && container.id() == ID_symbol)
+          {
+            auto it =
+              string_constants.find(to_symbol_expr(container).get_identifier());
+            if(it != string_constants.end())
+              csv = it->second;
+          }
+          if(
+            csv.has_value() && csv->size() <= 32 &&
+            is_python_string_type(item.type()) && item.type().id() != ID_string)
+          {
+            const signedbv_typet i64{64};
+            // The length as the string solver sees it (as len() does): the
+            // length member of a solver-produced str is not tied to it.
+            const exprt len = emit_string_int_function(
+              ID_cprover_string_length_func,
+              item,
+              symbol_table,
+              pending_checks);
+            // Bytes through the string solver's char_at, so they are the
+            // item's content as the solver sees it.
+            const irep_idt cat{ID_cprover_string_char_at_func};
+            // Pass the str itself (not a {length, data} view of its members):
+            // the string solver links a str symbol to the string it was
+            // assigned, but not member reads of it.
+            const exprt &item_view = item;
+            if(symbol_table.lookup(cat) == nullptr)
+            {
+              symbolt fs{
+                cat,
+                mathematical_function_typet(
+                  {item_view.type(), i64}, unsignedbv_typet{8}),
+                "python"};
+              fs.base_name = id2string(cat);
+              symbol_table.add(fs);
+            }
+            std::vector<exprt> bytes;
+            auto byte_at = [&](std::size_t j) -> exprt
+            {
+              while(bytes.size() <= j)
+              {
+                function_application_exprt app{
+                  symbol_table.lookup_ref(cat).symbol_expr(),
+                  {item_view, from_integer(bytes.size(), i64)}};
+                app.type() = unsignedbv_typet{8};
+                const std::string tn =
+                  "__in_char_" + std::to_string(symbol_table.symbols.size());
+                const irep_idt tid{"python::" + tn};
+                symbolt ts{tid, unsignedbv_typet{8}, "python"};
+                ts.base_name = tn;
+                ts.is_lvalue = true;
+                ts.is_state_var = true;
+                symbol_table.add(ts);
+                const symbol_exprt t =
+                  symbol_table.lookup_ref(tid).symbol_expr();
+                pending_checks.push_back(
+                  code_frontend_assignt{t, std::move(app)});
+                bytes.push_back(t);
+              }
+              return bytes[j];
+            };
+            std::set<std::string> subs;
+            for(std::size_t a = 0; a <= csv->size(); ++a)
+              for(std::size_t b = a; b <= csv->size(); ++b)
+                subs.insert(csv->substr(a, b - a));
+            // Group by length: len == k && OR(bytes match one of them).
+            std::map<std::size_t, std::vector<std::string>> by_len;
+            for(const auto &t : subs)
+              by_len[t.size()].push_back(t);
+            exprt::operandst arms;
+            for(const auto &[k, ts] : by_len)
+            {
+              const exprt len_is_k =
+                equal_exprt{len, from_integer(k, len.type())};
+              if(k == 0)
+              {
+                arms.push_back(len_is_k);
+                continue;
+              }
+              exprt::operandst alts;
+              if(k == 1)
+              {
+                exprt::operandst eqs;
+                for(const auto &t : ts)
+                  eqs.push_back(equal_exprt{
+                    byte_at(0),
+                    from_integer(
+                      static_cast<unsigned char>(t[0]), unsignedbv_typet{8})});
+                alts.push_back(disjunction(eqs));
+              }
+              else
+              {
+                for(const auto &t : ts)
+                {
+                  exprt::operandst eqs;
+                  for(std::size_t j = 0; j < k; ++j)
+                    eqs.push_back(equal_exprt{
+                      byte_at(j),
+                      from_integer(
+                        static_cast<unsigned char>(t[j]),
+                        unsignedbv_typet{8})});
+                  alts.push_back(conjunction(eqs));
+                }
+              }
+              arms.push_back(and_exprt{len_is_k, disjunction(alts)});
+            }
+            const exprt in_expr = disjunction(arms);
+            cmp = (op == "In") ? in_expr : exprt{not_exprt{in_expr}};
+            goto done_cmp;
           }
         }
         // Use string solver for non-constant string 'in' operator

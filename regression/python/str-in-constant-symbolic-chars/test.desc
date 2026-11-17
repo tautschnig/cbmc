@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+`item in CONST` with a symbolic str item: a disjunction over the substrings
+of CONST, reading the item's length and characters through the string
+solver.
