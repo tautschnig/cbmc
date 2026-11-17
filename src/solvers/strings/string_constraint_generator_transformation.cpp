@@ -226,10 +226,42 @@ string_constraint_generatort::add_axioms_for_python_strip(
   const array_string_exprt &res =
     array_pool.find(f.arguments()[1], f.arguments()[0]);
   const typet &char_type = to_type_with_subtype(str.content().type()).subtype();
-  const mp_integer mode =
+  const mp_integer mode_and_flags =
     numeric_cast_v<mp_integer>(to_constant_expr(f.arguments()[3]));
+  // +4: the characters of Java's Character.isWhitespace (Java 11 and later,
+  // when String.strip came), which go beyond ASCII
+  const bool java_whitespace = mode_and_flags >= 4;
+  const mp_integer mode = mode_and_flags % 4;
   const bool strip_front = (mode == 0 || mode == 1);
   const bool strip_back = (mode == 0 || mode == 2);
+  const auto in_range = [&](const exprt &c, unsigned lower, unsigned upper)
+  {
+    return and_exprt(
+      binary_relation_exprt(c, ID_ge, from_integer(lower, char_type)),
+      binary_relation_exprt(c, ID_le, from_integer(upper, char_type)));
+  };
+  if(java_whitespace)
+  {
+    // (measured on Java 11 to 25: Java 8 adds U+180E, but has no strip)
+    return add_axioms_for_strip(
+      str,
+      res,
+      [&](const exprt &c) -> exprt
+      {
+        return or_exprt{
+          {in_range(c, 0x09, 0x0d),
+           in_range(c, 0x1c, 0x20),
+           equal_exprt{c, from_integer(0x1680, char_type)},
+           in_range(c, 0x2000, 0x2006),
+           in_range(c, 0x2008, 0x200a),
+           in_range(c, 0x2028, 0x2029),
+           equal_exprt{c, from_integer(0x205f, char_type)},
+           equal_exprt{c, from_integer(0x3000, char_type)}}};
+      },
+      strip_front,
+      strip_back,
+      f.type());
+  }
   // Whitespace: 0x09..0x0d (\t \n \v \f \r) or 0x1c..0x20 (FS GS RS US
   // space) -- CPython's str.isspace()/strip() and Java's
   // Character.isWhitespace/String.strip() agree on exactly this ASCII-range

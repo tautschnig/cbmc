@@ -1444,8 +1444,9 @@ java_string_library_preprocesst::make_string_returning_function_from_call(
 /// Calls the shared whitespace-strip solver function
 /// (ID_cprover_string_strip_func, also used by Python's str.strip family)
 /// with a constant mode argument (0 = both ends, 1 = leading, 2 = trailing).
-/// The stripped set is the ASCII-range Character.isWhitespace set
-/// {0x09..0x0d, 0x1c..0x1f, 0x20} -- NOT trim's `c <= 0x20`.
+/// The stripped set is that of Character.isWhitespace (Java 11 and later),
+/// which goes beyond ASCII (U+1680, U+2000..U+2006, ...) -- NOT trim's
+/// `c <= 0x20`.
 /// \param mode: 0 = strip both ends, 1 = stripLeading, 2 = stripTrailing
 /// \param function_id: name of the Java method being replaced
 /// \param type: type of the function
@@ -1468,7 +1469,8 @@ code_blockt java_string_library_preprocesst::make_strip_function_from_call(
   code_blockt code;
   exprt::operandst arguments =
     process_parameters(type.parameters(), loc, function_id, symbol_table, code);
-  arguments.push_back(from_integer(mode, java_int_type()));
+  // (+4: the whitespace of Character.isWhitespace, beyond ASCII)
+  arguments.push_back(from_integer(mode + 4, java_int_type()));
   const refined_string_exprt string_expr = string_expr_of_function(
     ID_cprover_string_strip_func, arguments, loc, symbol_table, code);
   const exprt str = allocate_fresh_string(
@@ -2227,7 +2229,7 @@ void java_string_library_preprocesst::initialize_conversion_table()
       ID_cprover_string_trim_func;
   // Java 11 String.strip family: the whitespace-strip solver function with a
   // constant mode argument (0 = both, 1 = leading, 2 = trailing). Strips the
-  // ASCII-range Character.isWhitespace set, not trim's `c <= 0x20`.
+  // characters of Character.isWhitespace, not trim's `c <= 0x20`.
   for(const auto &m :
       {std::make_pair("strip", 0),
        std::make_pair("stripLeading", 1),
