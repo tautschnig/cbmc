@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 5 --python-unbounded-ints --z3
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+wrong sort
+--
+The "operands have different signs" test of floor division used a bitwise
+xor, which is not defined on unbounded (mathematical) integers; the SMT
+solver rejected the formula and every property was reported as ERROR.

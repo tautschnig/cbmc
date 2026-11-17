@@ -3875,8 +3875,10 @@ std::optional<exprt> python_convertert::try_builtin_call(
       exprt remainder = mod_exprt{a, b};
       exprt has_remainder =
         notequal_exprt{remainder, from_integer(0, a.type())};
-      exprt diff_sign = binary_relation_exprt{
-        bitxor_exprt{a, b}, ID_lt, from_integer(0, a.type())};
+      // Signs differ; bitwise xor is not defined on unbounded ints.
+      exprt diff_sign = notequal_exprt{
+        binary_relation_exprt{a, ID_lt, from_integer(0, a.type())},
+        binary_relation_exprt{b, ID_lt, from_integer(0, b.type())}};
       exprt floor_q = minus_exprt{
         quotient,
         if_exprt{

@@ -1791,8 +1791,10 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       exprt remainder = mod_exprt{left, right};
       exprt has_remainder =
         notequal_exprt{remainder, from_integer(0, left.type())};
-      exprt diff_sign = binary_relation_exprt{
-        bitxor_exprt{left, right}, ID_lt, from_integer(0, left.type())};
+      // Signs differ; bitwise xor is not defined on unbounded ints.
+      exprt diff_sign = notequal_exprt{
+        binary_relation_exprt{left, ID_lt, from_integer(0, left.type())},
+        binary_relation_exprt{right, ID_lt, from_integer(0, right.type())}};
       return minus_exprt{
         quotient,
         if_exprt{
@@ -1908,8 +1910,10 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     {
       exprt c_mod = mod_exprt{left, right};
       exprt has_rem = notequal_exprt{c_mod, from_integer(0, left.type())};
-      exprt diff_sign = binary_relation_exprt{
-        bitxor_exprt{left, right}, ID_lt, from_integer(0, left.type())};
+      // Signs differ; bitwise xor is not defined on unbounded ints.
+      exprt diff_sign = notequal_exprt{
+        binary_relation_exprt{left, ID_lt, from_integer(0, left.type())},
+        binary_relation_exprt{right, ID_lt, from_integer(0, right.type())}};
       return if_exprt{
         and_exprt{has_rem, diff_sign}, plus_exprt{c_mod, right}, c_mod};
     }

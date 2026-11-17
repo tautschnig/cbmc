@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 5 --python-unbounded-ints --z3
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+wrong sort
+--
+Twin of floordiv-unbounded-int-signs: a multiple of the divisor has
+remainder 0.

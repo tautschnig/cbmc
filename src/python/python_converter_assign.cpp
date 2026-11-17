@@ -6052,8 +6052,11 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
       exprt remainder = mod_exprt{arith_lhs, rhs};
       exprt has_remainder =
         notequal_exprt{remainder, from_integer(0, arith_lhs.type())};
-      exprt diff_sign = binary_relation_exprt{
-        bitxor_exprt{arith_lhs, rhs}, ID_lt, from_integer(0, arith_lhs.type())};
+      // Signs differ; bitwise xor is not defined on unbounded ints.
+      exprt diff_sign = notequal_exprt{
+        binary_relation_exprt{
+          arith_lhs, ID_lt, from_integer(0, arith_lhs.type())},
+        binary_relation_exprt{rhs, ID_lt, from_integer(0, rhs.type())}};
       new_rhs = minus_exprt{
         quotient,
         if_exprt{
@@ -6131,8 +6134,11 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
       exprt remainder = mod_exprt{arith_lhs, rhs};
       exprt has_remainder =
         notequal_exprt{remainder, from_integer(0, arith_lhs.type())};
-      exprt diff_sign = binary_relation_exprt{
-        bitxor_exprt{arith_lhs, rhs}, ID_lt, from_integer(0, arith_lhs.type())};
+      // Signs differ; bitwise xor is not defined on unbounded ints.
+      exprt diff_sign = notequal_exprt{
+        binary_relation_exprt{
+          arith_lhs, ID_lt, from_integer(0, arith_lhs.type())},
+        binary_relation_exprt{rhs, ID_lt, from_integer(0, rhs.type())}};
       new_rhs = plus_exprt{
         remainder,
         if_exprt{
