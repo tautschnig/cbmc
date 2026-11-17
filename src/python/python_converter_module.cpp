@@ -1152,6 +1152,15 @@ void python_convertert::process_imported_module(
       }
     }
   }
+  // A method calling a method of `self` defined later in its class: in the
+  // first conversion the callee was not registered yet, and the call was
+  // dropped to a nondet result (a false proof: the callee's effects
+  // vanished). Convert each class again now that all are registered, as the
+  // main module does for its classes (convert_class_def is idempotent).
+  for(const auto &stmt : as_array(body))
+    if(is_node_type(stmt, "ClassDef"))
+      convert_class_def(stmt);
+
   // After this module's own imports were processed (recursively, in
   // the loop above), so dependencies initialise first.
   if(user_module)

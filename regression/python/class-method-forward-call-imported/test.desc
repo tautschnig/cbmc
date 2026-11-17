@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+A method of an imported class calling a method of self defined later in the
+class: the call was converted before the callee was registered and dropped
+to a nondet result, so its effects vanished (`a.n == 0` was proved). Imported
+classes are now converted a second time, as main-module classes are.
