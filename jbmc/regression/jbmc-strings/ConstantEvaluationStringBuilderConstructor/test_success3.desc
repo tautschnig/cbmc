@@ -1,9 +1,10 @@
 CORE
 Main
---function Main.testSuccess3 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+--function Main.testSuccess3 --property 'java::Main.testSuccess3:(I)V.assertion.1' --property 'java::Main.testSuccess3:(I)V.assertion.2' --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
 ^Generated [0-9]+ VCC\(s\), 0 remaining after simplification$
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
 --
+The assertions are decided by constant propagation; a negative capacity throws (see test_negative_capacity), which this test does not check.

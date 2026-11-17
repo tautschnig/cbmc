@@ -36,3 +36,9 @@ for the check):
       ./run-all.sh api.txt 200 out
     ./compare.py out --json out/diff.json --agreeing 3
     ./check_jbmc.py out/diff.json out/25.txt chk --api api.txt
+
+`string-index/` measures the exceptions of String's index methods and
+generates a JBMC regression test from them (see its README).
+
+`string-builder/` generates the models of StringBuilder and StringBuffer
+from one template (see its README).

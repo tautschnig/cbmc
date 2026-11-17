@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.java25 --java-version 25 --throw-runtime-exceptions --unwind 6 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+The exceptions and messages of String's index methods in Java 25, as measured on the JDK.

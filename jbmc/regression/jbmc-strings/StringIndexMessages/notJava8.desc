@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.notJava8 --throw-runtime-exceptions --unwind 6 --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+Without a version, the messages may be those of a later version (they were those of Java 8).

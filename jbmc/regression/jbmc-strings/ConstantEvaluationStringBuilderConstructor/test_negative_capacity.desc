@@ -1,0 +1,10 @@
+CORE
+Main
+--function Main.testNegativeCapacity --cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=10$
+^SIGNAL=0$
+^\[java::Main.testNegativeCapacity:\(I\)V.1\] line [0-9]+ no uncaught exception: FAILURE$
+^VERIFICATION FAILED$
+--
+--
+new StringBuilder(i) of a negative i throws a NegativeArraySizeException, as in the JDK.

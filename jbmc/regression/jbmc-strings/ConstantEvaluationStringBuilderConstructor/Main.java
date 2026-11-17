@@ -20,6 +20,10 @@ public class Main {
     assert sb.toString().equals("");
   }
 
+  public void testNegativeCapacity(int i) {
+    StringBuilder sb = new StringBuilder(i);
+  }
+
   public void testSuccess4() {
     StringBuilder sb = new StringBuilder("abc");
     assert sb.toString().equals("abc");
