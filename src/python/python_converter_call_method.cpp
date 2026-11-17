@@ -2681,10 +2681,15 @@ std::optional<exprt> python_convertert::try_method_call(
                                       is_list_recv || is_dict_recv ||
                                       is_set_recv || is_tuple_recv;
         const std::string ow{owner};
-        const bool matches_owner = (ow == "str" && (is_str_recv || is_bytes)) ||
-                                   (ow == "list" && is_list_recv) ||
-                                   (ow == "dict" && is_dict_recv) ||
-                                   (ow == "set" && is_set_recv);
+        // A list may hold a set whose elements are not small ints, which has
+        // the set methods and not the list methods (set_semantic_symbols are
+        // not flow-sensitive: a list may still hold a list).
+        if(ow == "list" && is_list_recv && may_be_list_backed_set(obj))
+          emit_may_raise("AttributeError");
+        const bool matches_owner =
+          (ow == "str" && (is_str_recv || is_bytes)) ||
+          (ow == "list" && is_list_recv) || (ow == "dict" && is_dict_recv) ||
+          (ow == "set" && (is_set_recv || (is_list_recv && !is_bytes)));
         if(concrete_builtin && !user_class && !matches_owner)
         {
           emit_conditional_exception(true_exprt{}, "AttributeError");
@@ -3019,6 +3024,14 @@ std::optional<exprt> python_convertert::try_method_call(
       // python_converter_call_list_methods.cpp for clarity.
       if(is_python_list_type(obj_base_type))
       {
+        // A list may hold a set (of elements that are not small ints).
+        if(
+          obj.type() == obj_base_type &&
+          (method_name != "copy" || may_be_list_backed_set(obj)))
+        {
+          if(auto r = try_list_backed_set_method(expr, obj, method_name, args))
+            return std::move(*r);
+        }
         if(
           auto r = try_list_method(expr, obj, obj_base_type, method_name, args))
           return std::move(*r);

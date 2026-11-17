@@ -1,0 +1,14 @@
+CORE
+methods.py
+--cvc5 --python-smt-strings
+^EXIT=10$
+^SIGNAL=0$
+^\[.*assertion\.[0-9]+\] file methods.py line 9 Python assertion: FAILURE$
+^\[.*assertion\.[0-9]+\] file methods.py line 18 Python assertion: FAILURE$
+^\[.*assertion\.[0-9]+\] file methods.py line 26 Python assertion: FAILURE$
+^\[.*assertion\.[0-9]+\] file methods.py line 31 Python assertion: FAILURE$
+^\[.*assertion\.[0-9]+\] file methods.py line 36 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+Python assertion: SUCCESS$

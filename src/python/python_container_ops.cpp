@@ -38,6 +38,8 @@
 #include "python_types.h"
 #include "python_value_type.h"
 
+#include <limits>
+
 exprt python_convertert::container_slot_equal(
   const exprt &a,
   const exprt &b,
@@ -184,6 +186,9 @@ exprt python_convertert::set_of_elements(
   }
 
   set_semantic_symbols.insert(result.get_identifier());
+  // CPython orders a set by the hashes of its elements: any order.
+  set_list_bound(result, stored.size());
+  permute_list_set(result, loc);
   return result;
 }
 
@@ -255,6 +260,18 @@ exprt python_convertert::set_of_list(
 
   // PLR §3.2: equality treats the result as a multiset.
   set_semantic_symbols.insert(tmp.get_identifier());
+  // CPython orders a set by the hashes of its elements: any order.
+  // The result is no longer than a list display it is made of.
+  std::size_t max_length = std::numeric_limits<std::size_t>::max();
+  mp_integer list_length;
+  if(
+    list.id() == ID_struct && !list.operands().empty() &&
+    list.operands()[0].is_constant() &&
+    !to_integer(to_constant_expr(list.operands()[0]), list_length))
+    max_length = numeric_cast_v<std::size_t>(list_length);
+  if(max_length != std::numeric_limits<std::size_t>::max())
+    set_list_bound(tmp, max_length);
+  permute_list_set(tmp, loc);
   return tmp;
 }
 

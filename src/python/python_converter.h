@@ -15,6 +15,7 @@
 #include "python_types.h"
 
 #include <functional>
+#include <limits>
 #include <list>
 #include <map>
 #include <optional>
@@ -2163,6 +2164,47 @@ private:
     const typet &obj_base_type,
     const std::string &method_name,
     const jsont &args);
+
+  /// Methods of a set held in a list of distinct elements (sets whose
+  /// elements are not small ints; python_converter_list_sets.cpp): the
+  /// set-only methods on any list receiver, and remove / pop / copy on one
+  /// that may_be_list_backed_set. Returns nullopt for other methods.
+  std::optional<exprt> try_list_backed_set_method(
+    const jsont &expr,
+    const exprt &obj,
+    const std::string &method_name,
+    const jsont &args);
+  /// Whether the list \p e holds a set: a set display, or a symbol in
+  /// set_semantic_symbols.
+  bool may_be_list_backed_set(const exprt &e) const;
+  /// Whether the type annotation \p annotation is of a set (set, frozenset
+  /// and their typing aliases).
+  bool annotation_is_set(const jsont &annotation) const;
+  /// Whether \p elem is an element of the list \p list (its first
+  /// PYTHON_MAX_LIST_LENGTH slots).
+  exprt list_contains(const exprt &list, const exprt &elem);
+  /// Whether the lists \p left and \p right, of which one holds a set, have
+  /// the same elements (in any order).
+  exprt list_set_equal(const exprt &left, const exprt &right);
+  /// Puts the elements of the list-backed set \p set (an lvalue) in any
+  /// order: CPython orders a set by the hashes of its elements, and string
+  /// hashes vary with PYTHONHASHSEED.
+  /// \p max_length bounds its length.
+  void permute_list_set(
+    const exprt &set,
+    const source_locationt &loc,
+    std::size_t max_length = std::numeric_limits<std::size_t>::max());
+  symbol_exprt
+  fresh_list_set_symbol(const std::string &stem, const typet &type);
+  /// Upper bounds of the lengths of the temporaries holding list-backed sets
+  /// (a display, a set method's result): each is assigned where it is made
+  /// (also in a loop), so its bound holds wherever it is read. Variables of
+  /// the program have none.
+  std::map<irep_idt, std::size_t> list_set_bounds;
+  /// An upper bound of the length of the list \p e: of a display, of a
+  /// temporary in list_set_bounds, else PYTHON_MAX_LIST_LENGTH.
+  std::size_t list_bound(const exprt &e) const;
+  void set_list_bound(const exprt &e, std::size_t bound);
 
   /// Final user-function-call fallback (handled by
   /// python_converter_call_user.cpp): nested-function lookup,

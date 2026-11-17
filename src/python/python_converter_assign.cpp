@@ -1141,7 +1141,13 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   }
   if(is_python_list_type(rhs.type()))
   {
-    if(rhs.id() == ID_struct && escaped_mutables.count(symbol_id) == 0)
+    // A list holding a set (set_semantic_symbols); its order is any order,
+    // so its value is not folded.
+    if(may_be_list_backed_set(rhs))
+      set_semantic_symbols.insert(symbol_id);
+    if(
+      rhs.id() == ID_struct && escaped_mutables.count(symbol_id) == 0 &&
+      !may_be_list_backed_set(rhs))
       list_literals[symbol_id] = rhs;
     else if(rhs.id() == ID_side_effect)
     {
@@ -1167,6 +1173,7 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
           rc_it != function_return_count.end() && rc_it->second == 1 &&
           fl_it->second.id() == ID_struct &&
           is_python_list_type(fl_it->second.type()) &&
+          !may_be_list_backed_set(fl_it->second) &&
           fl_it->second.type() == rhs.type())
         {
           list_literals[symbol_id] = fl_it->second;
@@ -5006,7 +5013,11 @@ codet python_convertert::convert_assign(const jsont &stmt)
     }
     if(is_python_list_type(typed_rhs.type()))
     {
-      if(typed_rhs.id() == ID_struct)
+      // A list holding a set (set_semantic_symbols); its order is any order,
+      // so its value is not folded.
+      if(may_be_list_backed_set(typed_rhs))
+        set_semantic_symbols.insert(sym.name);
+      if(typed_rhs.id() == ID_struct && !may_be_list_backed_set(typed_rhs))
         list_literals[sym.name] = typed_rhs;
       else if(typed_rhs.id() == ID_side_effect)
       {
@@ -5028,6 +5039,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
             rc_it != function_return_count.end() && rc_it->second == 1 &&
             fl_it->second.id() == ID_struct &&
             is_python_list_type(fl_it->second.type()) &&
+            !may_be_list_backed_set(fl_it->second) &&
             fl_it->second.type() == typed_rhs.type())
           {
             list_literals[sym.name] = fl_it->second;

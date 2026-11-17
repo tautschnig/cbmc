@@ -1305,6 +1305,9 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       // the default Any / a call-site-inferred type.
       explicitly_annotated_params.insert(
         irep_idt{"python::" + qualified_func_name + "::" + param_name});
+      if(annotation_is_set(annotation))
+        set_semantic_symbols.insert(
+          irep_idt{"python::" + qualified_func_name + "::" + param_name});
       auto components = extract_union_components(annotation);
       if(!components.empty())
       {
@@ -5465,6 +5468,8 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           // like `calc.multiply(5, "ten")`).
           if(!json_member(param, "annotation").is_null())
             explicitly_annotated_params.insert(p.get_identifier());
+          if(annotation_is_set(json_member(param, "annotation")))
+            set_semantic_symbols.insert(p.get_identifier());
           // PLR §6.10.3: mark Optional / Union[..., None] params
           // so the Is/IsNot fast-path treats them as nullable.
           if(!is_staticmethod || param_name != "self")

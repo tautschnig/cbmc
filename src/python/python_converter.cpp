@@ -7395,6 +7395,32 @@ exprt python_convertert::convert_expression_impl(const jsont &expr)
           if(result.id() == ID_struct)
             result.set("#python_set_semantic", "1");
         }
+        // CPython orders a set by the hashes of its elements (of strings,
+        // which vary with PYTHONHASHSEED): any order.
+        if(
+          result.id() == ID_struct && is_python_list_type(result.type()) &&
+          result.get_bool("#python_set_semantic"))
+        {
+          const exprt &length = to_struct_expr(result).operands()[0];
+          mp_integer n;
+          if(
+            !length.is_constant() || to_integer(to_constant_expr(length), n) ||
+            n > 1)
+          {
+            const symbol_exprt set =
+              fresh_list_set_symbol("__set_display_", result.type());
+            pending_checks.push_back(code_frontend_assignt{set, result});
+            permute_list_set(
+              set,
+              get_location(expr),
+              length.is_constant() ? numeric_cast_v<std::size_t>(n)
+                                   : std::numeric_limits<std::size_t>::max());
+            set_semantic_symbols.insert(set.get_identifier());
+            if(length.is_constant())
+              set_list_bound(set, numeric_cast_v<std::size_t>(n));
+            result = set;
+          }
+        }
       }
     }
   }

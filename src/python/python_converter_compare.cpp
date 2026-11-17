@@ -981,6 +981,17 @@ exprt python_convertert::convert_compare(const jsont &expr)
     // Only for the same-type case (different element types are handled by the
     // dedicated bridge below); the ref_mutables python_value-element case was
     // already handled above.
+    // Sets held in lists are equal when they have the same elements, in any
+    // order (PLR §3.2).
+    if(
+      (op == "Eq" || op == "NotEq") &&
+      is_python_list_type(current_left.type()) &&
+      is_python_list_type(right.type()) &&
+      (may_be_list_backed_set(current_left) || may_be_list_backed_set(right)))
+    {
+      const exprt equal = list_set_equal(current_left, right);
+      return op == "Eq" ? equal : exprt{not_exprt{equal}};
+    }
     if(
       (op == "Eq" || op == "NotEq") &&
       is_python_list_type(current_left.type()) &&
