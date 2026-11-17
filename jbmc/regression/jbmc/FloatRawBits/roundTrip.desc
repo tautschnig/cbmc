@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.roundTrip -cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+longBitsToDouble and doubleToRawLongBits are inverse for numbers that are not NaN (longBitsToDouble returned any double).

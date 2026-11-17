@@ -1547,6 +1547,10 @@ simplify_exprt::simplify_typecast(const typecast_exprt &expr)
       }
       else if(expr_type_id == ID_bv)
       {
+        // the same bits (packing f would replace those of a NaN by those of
+        // the NaN of ieee_floatt)
+        if(to_bv_type(expr_type).get_width() == f.spec.width())
+          return constant_exprt{value, expr_type};
         return from_integer(f.pack(), expr_type);
       }
     }
@@ -1571,7 +1575,11 @@ simplify_exprt::simplify_typecast(const typecast_exprt &expr)
       }
       else if(expr_type_id == ID_floatbv)
       {
+        // the same bits (unpacking and packing them would replace those of a
+        // NaN by those of the NaN of ieee_floatt)
         const auto width = to_bv_type(op_type).get_width();
+        if(to_floatbv_type(expr_type).get_width() == width)
+          return constant_exprt{value, expr_type};
         const auto int_value = bvrep2integer(value, width, false);
         ieee_float_valuet ieee_float{to_floatbv_type(expr_type)};
         ieee_float.unpack(int_value);

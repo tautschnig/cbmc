@@ -2196,7 +2196,9 @@ exprt::operandst &java_bytecode_convert_methodt::convert_const(
     }
     else
     {
-      results[0] = ieee_float_valuet{arg0}.to_expr();
+      // (the constant itself: going through ieee_float_valuet would replace
+      // the bits of a NaN by those of the NaN of CBMC)
+      results[0] = arg0;
     }
   }
   else

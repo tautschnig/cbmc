@@ -805,9 +805,12 @@ void java_bytecode_parsert::rconstant_pool()
 
       case CONSTANT_Float:
       {
-        ieee_float_valuet value(ieee_float_spect::single_precision());
-        value.unpack(entry.number);
-        entry.expr = value.to_expr();
+        // The bits of the constant: unpacking and packing it would replace
+        // the bits of a NaN (such as Float.NaN, 0x7fc00000) by those of the
+        // NaN of CBMC, which Float.floatToRawIntBits would then return.
+        const std::size_t width = ieee_float_spect::single_precision().width();
+        entry.expr =
+          constant_exprt{integer2bvrep(entry.number, width), java_float_type()};
       }
       break;
 
@@ -817,9 +820,12 @@ void java_bytecode_parsert::rconstant_pool()
 
       case CONSTANT_Double:
       {
-        ieee_float_valuet value(ieee_float_spect::double_precision());
-        value.unpack(entry.number);
-        entry.expr = value.to_expr();
+        // The bits of the constant: unpacking and packing it would replace
+        // the bits of a NaN (such as Float.NaN, 0x7fc00000) by those of the
+        // NaN of CBMC, which Float.floatToRawIntBits would then return.
+        const std::size_t width = ieee_float_spect::double_precision().width();
+        entry.expr = constant_exprt{
+          integer2bvrep(entry.number, width), java_double_type()};
       }
       break;
 

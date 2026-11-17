@@ -13,6 +13,7 @@ Author: Michael Tautschnig
 #include <util/c_types.h>
 #include <util/cmdline.h>
 #include <util/config.h>
+#include <util/ieee_float.h>
 #include <util/mathematical_expr.h>
 #include <util/namespace.h>
 #include <util/pointer_expr.h>
@@ -808,4 +809,18 @@ TEST_CASE(
       application(ID_cprover_string_index_of_func, {s}, index_type);
     REQUIRE(simplify_expr(index_of, ns) == index_of);
   }
+}
+
+TEST_CASE("Simplify typecasts of NaN constants keep their bits", "[core][util]")
+{
+  const floatbv_typet float_type =
+    ieee_float_spect::single_precision().to_type();
+  const bv_typet bv_type{32};
+  // 0x7fc00000, the NaN of Java's Float.NaN, which is not the NaN that
+  // ieee_floatt packs
+  const constant_exprt bits{integer2bvrep(0x7fc00000, 32), bv_type};
+  const exprt nan =
+    simplify_expr(typecast_exprt{bits, float_type}, empty_namespace);
+  REQUIRE(nan == constant_exprt{bits.get_value(), float_type});
+  REQUIRE(simplify_expr(typecast_exprt{nan, bv_type}, empty_namespace) == bits);
 }

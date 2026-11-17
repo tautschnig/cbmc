@@ -960,8 +960,17 @@ java_string_library_preprocesst::string_literal_to_string_expr(
 /// \param symbol_table: symbol table
 /// \param message_handler: a message handler
 /// \return Code corresponding to the Java conversion of floats to strings.
-/// Provide code for Float.floatToRawIntBits and Double.doubleToRawLongBits:
-/// the bits of the argument, as an integer of its width.
+/// Provide code for Float.floatToRawIntBits and Double.doubleToRawLongBits
+/// (the bits of the argument, as an integer of its width) and for
+/// Float.intBitsToFloat and Double.longBitsToDouble (the floating-point
+/// number of those bits).
+///
+/// The NaN that the arithmetic of CBMC makes has bits that no JVM makes
+/// (0x7f800001 for a float); which NaN the JVM makes is up to the platform
+/// (HotSpot on x86-64: 0xffc00000, measured on Java 8, 17 and 25). So the
+/// raw bits of that NaN are those of any NaN. The bits of other NaNs, such
+/// as those of constants (Float.NaN is 0x7fc00000) and of intBitsToFloat,
+/// are kept.
 /// \param type: type of the function
 /// \param loc: location in the source
 /// \param function_id: unused
@@ -975,22 +984,45 @@ code_blockt java_string_library_preprocesst::make_float_bits_code(
   symbol_table_baset &symbol_table,
   message_handlert &message_handler)
 {
-  (void)function_id;
-  (void)symbol_table;
   (void)message_handler;
   const java_method_typet::parameterst &params = type.parameters();
   PRECONDITION(params.size() == 1);
   PRECONDITION(!params[0].get_identifier().empty());
   const symbol_exprt arg{params[0].get_identifier(), params[0].type()};
-  const std::size_t width = to_floatbv_type(arg.type()).get_width();
+  const std::size_t width = to_bitvector_type(arg.type()).get_width();
   PRECONDITION(
-    type.return_type().id() == ID_signedbv &&
-    to_signedbv_type(type.return_type()).get_width() == width);
+    (arg.type().id() == ID_floatbv && type.return_type().id() == ID_signedbv) ||
+    (arg.type().id() == ID_signedbv && type.return_type().id() == ID_floatbv));
+  PRECONDITION(to_bitvector_type(type.return_type()).get_width() == width);
   // A cast to a bit vector keeps the bits.
+  const typecast_exprt bits{
+    typecast_exprt{arg, bv_typet{width}}, type.return_type()};
   code_blockt code;
+  if(arg.type().id() != ID_floatbv)
+  {
+    code.add(code_returnt{bits}, loc);
+    return code;
+  }
+  const floatbv_typet &float_type = to_floatbv_type(arg.type());
+  ieee_float_valuet cbmc_nan{float_type};
+  cbmc_nan.make_NaN();
+  const symbolt &nan_bits = fresh_java_symbol(
+    type.return_type(), "nan_bits", loc, function_id, symbol_table);
+  code.add(code_frontend_declt{nan_bits.symbol_expr()}, loc);
   code.add(
-    code_returnt{
-      typecast_exprt{typecast_exprt{arg, bv_typet{width}}, type.return_type()}},
+    code_frontend_assignt{
+      nan_bits.symbol_expr(),
+      side_effect_expr_nondett{type.return_type(), loc}},
+    loc);
+  code.add(
+    code_assumet{isnan_exprt{typecast_exprt{
+      typecast_exprt{nan_bits.symbol_expr(), bv_typet{width}}, float_type}}},
+    loc);
+  code.add(
+    code_returnt{if_exprt{
+      equal_exprt{bits, from_integer(cbmc_nan.pack(), type.return_type())},
+      nan_bits.symbol_expr(),
+      bits}},
     loc);
   return code;
 }
@@ -2011,10 +2043,12 @@ void java_string_library_preprocesst::initialize_conversion_table()
         std::placeholders::_3,
         std::placeholders::_4,
         std::placeholders::_5);
-  // The models of these give any bits.
+  // The models of these give any bits (or any number).
   for(const char *method :
       {"java::java.lang.Float.floatToRawIntBits:(F)I",
-       "java::java.lang.Double.doubleToRawLongBits:(D)J"})
+       "java::java.lang.Double.doubleToRawLongBits:(D)J",
+       "java::java.lang.Float.intBitsToFloat:(I)F",
+       "java::java.lang.Double.longBitsToDouble:(J)D"})
   {
     conversion_table[method] = std::bind(
       &java_string_library_preprocesst::make_float_bits_code,
