@@ -8,8 +8,6 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include "simplify_expr.h"
 
-#include <algorithm>
-
 #include "bitvector_expr.h"
 #include "byte_operators.h"
 #include "c_types.h"
@@ -28,6 +26,9 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "simplify_utils.h"
 #include "std_expr.h"
 #include "string_expr.h"
+
+#include <algorithm>
+#include <cmath>
 
 // #define DEBUGX
 
@@ -887,6 +888,62 @@ static simplify_exprt::resultt<> simplify_string_parse_int(
   return from_integer(value, expr.type());
 }
 
+/// Fold is_valid_int(s, radix) / is_valid_long(s, radix) of a constant
+/// string. Mirrors the string solver's non-strict number-format axioms
+/// (get_conjuncts_for_correct_number_format): non-empty; first character a
+/// sign or a digit of the radix; a sign is followed by at least one
+/// character; every later character a digit (either case for a radix above
+/// 10); length at most the printed length of the 32- or 64-bit target.
+static simplify_exprt::resultt<> simplify_string_is_valid_int(
+  const function_application_exprt &expr,
+  const namespacet &ns,
+  std::size_t target_bits)
+{
+  if(expr.arguments().empty() || expr.arguments().size() > 2)
+    return simplify_exprt::unchanged(expr);
+  const auto chars = try_get_constant_string_chars(expr.arguments()[0], ns);
+  if(!chars.has_value())
+    return simplify_exprt::unchanged(expr);
+  mp_integer radix = 10;
+  if(expr.arguments().size() == 2)
+  {
+    const auto r = numeric_cast<mp_integer>(expr.arguments()[1]);
+    if(!r.has_value() || *r < 2 || *r > 36)
+      return simplify_exprt::unchanged(expr);
+    radix = *r;
+  }
+  const unsigned long radix_ul = numeric_cast_v<unsigned long>(radix);
+  auto is_digit = [&](const mp_integer &c)
+  {
+    if(radix_ul <= 10)
+      return c >= '0' && c < '0' + radix;
+    return (c >= '0' && c <= '9') ||
+           (c >= 'a' && c < mp_integer{'a'} + radix - 10) ||
+           (c >= 'A' && c < mp_integer{'A'} + radix - 10);
+  };
+  // 2 + floor((bits - 1) / log2(radix)), as max_printed_string_length.
+  const std::size_t max_len = static_cast<std::size_t>(
+    std::floor(
+      static_cast<double>(target_bits - 1) /
+      std::log2(static_cast<double>(radix_ul))) +
+    2.0);
+  bool valid = !chars->empty() && chars->size() <= max_len;
+  for(std::size_t i = 0; valid && i < chars->size(); ++i)
+  {
+    const auto c = numeric_cast<mp_integer>((*chars)[i]);
+    if(!c.has_value())
+      return simplify_exprt::unchanged(expr);
+    if(i == 0 && (*c == '-' || *c == '+'))
+      valid = chars->size() >= 2;
+    else
+      valid = is_digit(*c);
+  }
+  if(expr.type().id() == ID_bool)
+    return valid ? static_cast<exprt>(true_exprt{})
+                 : static_cast<exprt>(false_exprt{});
+  return from_integer(valid ? 1 : 0, expr.type());
+}
+
 simplify_exprt::resultt<> simplify_exprt::simplify_function_application(
   const function_application_exprt &expr)
 {
@@ -942,6 +999,14 @@ simplify_exprt::resultt<> simplify_exprt::simplify_function_application(
   else if(func_id == ID_cprover_string_parse_int_func)
   {
     return simplify_string_parse_int(expr, ns);
+  }
+  else if(func_id == ID_cprover_string_is_valid_int_func)
+  {
+    return simplify_string_is_valid_int(expr, ns, 32);
+  }
+  else if(func_id == ID_cprover_string_is_valid_long_func)
+  {
+    return simplify_string_is_valid_int(expr, ns, 64);
   }
   else if(
     func_id == ID_cprover_string_equal_func ||

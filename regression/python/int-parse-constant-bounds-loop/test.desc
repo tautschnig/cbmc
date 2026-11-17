@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 30
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+The "is a plain numeral" test guarding int(s, base) is folded for a constant
+s. Before, it stayed symbolic, so the parsed bound could be any value and
+the unwinding assertion failed (and real programs unwound every loop it
+bounded to the limit).

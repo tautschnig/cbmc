@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 30
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+unwinding assertion loop .*: FAILURE
+--
+Twin of int-parse-constant-bounds-loop.
