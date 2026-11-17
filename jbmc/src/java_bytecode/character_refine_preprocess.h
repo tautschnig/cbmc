@@ -48,7 +48,6 @@ private:
   static codet convert_compare(conversion_inputt &target);
   static codet convert_digit_char(conversion_inputt &target);
   static codet convert_digit_int(conversion_inputt &target);
-  static codet convert_for_digit(conversion_inputt &target);
   static codet convert_get_directionality_char(conversion_inputt &target);
   static codet convert_get_directionality_int(conversion_inputt &target);
   static codet convert_get_numeric_value_char(conversion_inputt &target);

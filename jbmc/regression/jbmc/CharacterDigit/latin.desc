@@ -1,0 +1,9 @@
+CORE
+Test
+--function Test.latin -cp `../../../../scripts/format_classpath.sh . ../../../lib/java-models-library/target/core-models.jar ../../../lib/java-models-library/target/cprover-api.jar`
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Character.digit of Latin and fullwidth digits and letters, and radixes out of range (digit(1, 10) was not 1: the conversion computed in the type of a char).
