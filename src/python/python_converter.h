@@ -2358,8 +2358,9 @@ private:
   /// is active: the first exception raised on a path wins (PLR §8.3). A
   /// skip when the exception variables do not exist.
   codet raise_if(const exprt &cond, const char *exc_type);
-  /// Whether a value of the built-in type \p kind ("str", "set", "float" or
-  /// "complex") has the attribute \p name (dir() of CPython 3.12).
+  /// Whether a value of the built-in type \p kind ("str", "set", "float",
+  /// "complex", "list", "tuple", "dict", or "bytes" for bytes and bytearray)
+  /// has the attribute \p name (dir() of CPython 3.12).
   static bool
   builtin_has_attribute(const std::string &kind, const std::string &name);
   /// Raise TypeError when the call \p expr of \p method passes a number of

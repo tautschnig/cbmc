@@ -128,8 +128,9 @@ exprt python_convertert::safe_address_of(
   return address_of_exprt{std::move(tsym)};
 }
 
-/// Whether a value of the built-in type \p kind ("str", "set", "float" or
-/// "complex") has the attribute \p name (dir() of CPython 3.12).
+/// Whether a value of the built-in type \p kind ("str", "set", "float",
+/// "complex", "list", "tuple", "dict", or "bytes" for bytes and bytearray)
+/// has the attribute \p name (dir() of CPython 3.12).
 bool python_convertert::builtin_has_attribute(
   const std::string &kind,
   const std::string &name)
@@ -379,7 +380,231 @@ bool python_convertert::builtin_has_attribute(
       "conjugate",
       "imag",
       "real"}},
-  };
+    {"list",
+     {"__add__",
+      "__class__",
+      "__class_getitem__",
+      "__contains__",
+      "__delattr__",
+      "__delitem__",
+      "__dir__",
+      "__doc__",
+      "__eq__",
+      "__format__",
+      "__ge__",
+      "__getattribute__",
+      "__getitem__",
+      "__getstate__",
+      "__gt__",
+      "__hash__",
+      "__iadd__",
+      "__imul__",
+      "__init__",
+      "__init_subclass__",
+      "__iter__",
+      "__le__",
+      "__len__",
+      "__lt__",
+      "__mul__",
+      "__ne__",
+      "__new__",
+      "__reduce__",
+      "__reduce_ex__",
+      "__repr__",
+      "__reversed__",
+      "__rmul__",
+      "__setattr__",
+      "__setitem__",
+      "__sizeof__",
+      "__str__",
+      "__subclasshook__",
+      "append",
+      "clear",
+      "copy",
+      "count",
+      "extend",
+      "index",
+      "insert",
+      "pop",
+      "remove",
+      "reverse",
+      "sort"}},
+    {"tuple",
+     {"__add__",
+      "__class__",
+      "__class_getitem__",
+      "__contains__",
+      "__delattr__",
+      "__dir__",
+      "__doc__",
+      "__eq__",
+      "__format__",
+      "__ge__",
+      "__getattribute__",
+      "__getitem__",
+      "__getnewargs__",
+      "__getstate__",
+      "__gt__",
+      "__hash__",
+      "__init__",
+      "__init_subclass__",
+      "__iter__",
+      "__le__",
+      "__len__",
+      "__lt__",
+      "__mul__",
+      "__ne__",
+      "__new__",
+      "__reduce__",
+      "__reduce_ex__",
+      "__repr__",
+      "__rmul__",
+      "__setattr__",
+      "__sizeof__",
+      "__str__",
+      "__subclasshook__",
+      "count",
+      "index"}},
+    {"dict",
+     {"__class__",
+      "__class_getitem__",
+      "__contains__",
+      "__delattr__",
+      "__delitem__",
+      "__dir__",
+      "__doc__",
+      "__eq__",
+      "__format__",
+      "__ge__",
+      "__getattribute__",
+      "__getitem__",
+      "__getstate__",
+      "__gt__",
+      "__hash__",
+      "__init__",
+      "__init_subclass__",
+      "__ior__",
+      "__iter__",
+      "__le__",
+      "__len__",
+      "__lt__",
+      "__ne__",
+      "__new__",
+      "__or__",
+      "__reduce__",
+      "__reduce_ex__",
+      "__repr__",
+      "__reversed__",
+      "__ror__",
+      "__setattr__",
+      "__setitem__",
+      "__sizeof__",
+      "__str__",
+      "__subclasshook__",
+      "clear",
+      "copy",
+      "fromkeys",
+      "get",
+      "items",
+      "keys",
+      "pop",
+      "popitem",
+      "setdefault",
+      "update",
+      "values"}},
+    {"bytes",
+     {"__add__",
+      "__alloc__",
+      "__buffer__",
+      "__bytes__",
+      "__class__",
+      "__contains__",
+      "__delattr__",
+      "__delitem__",
+      "__dir__",
+      "__doc__",
+      "__eq__",
+      "__format__",
+      "__ge__",
+      "__getattribute__",
+      "__getitem__",
+      "__getnewargs__",
+      "__getstate__",
+      "__gt__",
+      "__hash__",
+      "__iadd__",
+      "__imul__",
+      "__init__",
+      "__init_subclass__",
+      "__iter__",
+      "__le__",
+      "__len__",
+      "__lt__",
+      "__mod__",
+      "__mul__",
+      "__ne__",
+      "__new__",
+      "__reduce__",
+      "__reduce_ex__",
+      "__release_buffer__",
+      "__repr__",
+      "__rmod__",
+      "__rmul__",
+      "__setattr__",
+      "__setitem__",
+      "__sizeof__",
+      "__str__",
+      "__subclasshook__",
+      "append",
+      "capitalize",
+      "center",
+      "clear",
+      "copy",
+      "count",
+      "decode",
+      "endswith",
+      "expandtabs",
+      "extend",
+      "find",
+      "fromhex",
+      "hex",
+      "index",
+      "insert",
+      "isalnum",
+      "isalpha",
+      "isascii",
+      "isdigit",
+      "islower",
+      "isspace",
+      "istitle",
+      "isupper",
+      "join",
+      "ljust",
+      "lower",
+      "lstrip",
+      "maketrans",
+      "partition",
+      "pop",
+      "remove",
+      "removeprefix",
+      "removesuffix",
+      "replace",
+      "reverse",
+      "rfind",
+      "rindex",
+      "rjust",
+      "rpartition",
+      "rsplit",
+      "rstrip",
+      "split",
+      "splitlines",
+      "startswith",
+      "strip",
+      "swapcase",
+      "title",
+      "translate",
+      "upper",
+      "zfill"}}};
   const auto it = attributes.find(kind);
   return it == attributes.end() || it->second.count(name) > 0;
 }
@@ -2690,7 +2915,17 @@ std::optional<exprt> python_convertert::try_method_call(
           (ow == "str" && (is_str_recv || is_bytes)) ||
           (ow == "list" && is_list_recv) || (ow == "dict" && is_dict_recv) ||
           (ow == "set" && (is_set_recv || (is_list_recv && !is_bytes)));
-        if(concrete_builtin && !user_class && !matches_owner)
+        // A number that is not a constant may stand for an object the front
+        // end does not model (the result of an unknown function or method),
+        // which may have the method.
+        bool provable_number = !numeric || obj.is_constant();
+        if(!provable_number && obj.id() == ID_symbol)
+          provable_number =
+            float_constants.count(to_symbol_expr(obj).get_identifier()) > 0;
+        if(
+          concrete_builtin && !user_class && !matches_owner && !provable_number)
+          emit_may_raise("AttributeError");
+        else if(concrete_builtin && !user_class && !matches_owner)
         {
           emit_conditional_exception(true_exprt{}, "AttributeError");
           return side_effect_expr_nondett{
@@ -2736,6 +2971,40 @@ std::optional<exprt> python_convertert::try_method_call(
         emit_conditional_exception(true_exprt{}, "AttributeError");
         return side_effect_expr_nondett{
           python_value_type(), get_location(expr)};
+      }
+      // A list, tuple or dict made by a display (or a variable holding one)
+      // is one; a list may hold a set, and others stand for generators,
+      // iterators, views, counters or named tuples, which may have the
+      // method (unknown: it may raise).
+      if(
+        (kind == "list" || kind == "bytes" || kind == "tuple" ||
+         kind == "dict") &&
+        !builtin_has_attribute(kind, method_name) &&
+        !(kind == "list" && builtin_has_attribute("set", method_name)))
+      {
+        static const std::set<std::string> iterator_methods = {
+          "__next__", "send", "throw", "close", "isdisjoint", "mapping"};
+        const irep_idt id = obj.id() == ID_symbol
+                              ? to_symbol_expr(obj).get_identifier()
+                              : irep_idt{};
+        const bool display =
+          obj.id() == ID_struct && !obj.get_bool("#python_set_semantic");
+        bool genuine = false;
+        if(kind == "list" || kind == "bytes")
+          genuine = display || (!id.empty() && list_literals.count(id) > 0 &&
+                                !may_be_list_backed_set(obj));
+        else if(kind == "tuple")
+          genuine = display || (!id.empty() && tuple_literals.count(id) > 0);
+        else
+          genuine = display || (!id.empty() && dict_literals.count(id) > 0 &&
+                                defaultdict_factories.count(id) == 0);
+        if(genuine && iterator_methods.count(method_name) == 0)
+        {
+          emit_conditional_exception(true_exprt{}, "AttributeError");
+          return side_effect_expr_nondett{
+            python_value_type(), get_location(expr)};
+        }
+        emit_may_raise("AttributeError");
       }
     }
 
@@ -4440,6 +4709,133 @@ std::optional<exprt> python_convertert::try_method_call(
           return std::move(call);
         }
       }
+    }
+    // A method of a list or dict that the model lacks (`x.__setitem__(0, 1)`),
+    // or of an object that a list or dict stands for, may change it: it
+    // becomes any list or dict. An int is not changed (ints are immutable,
+    // and an object an int stands for is not modelled).
+    {
+      const bool list = is_python_list_type(obj.type());
+      const bool dict = is_python_dict_type(obj.type());
+      const bool lvalue = obj.id() == ID_symbol || obj.id() == ID_dereference ||
+                          obj.id() == ID_member;
+      // Methods of list, dict, bytes and bytearray that do not change it.
+      static const std::set<std::string> reading = {
+        "__class__",
+        "__contains__",
+        "__eq__",
+        "__format__",
+        "__ge__",
+        "__getitem__",
+        "__gt__",
+        "__hash__",
+        "__iter__",
+        "__le__",
+        "__len__",
+        "__lt__",
+        "__ne__",
+        "__reduce__",
+        "__reduce_ex__",
+        "__repr__",
+        "__reversed__",
+        "__sizeof__",
+        "__str__",
+        "__add__",
+        "__mul__",
+        "__rmul__",
+        "__or__",
+        "__ror__",
+        "__mod__",
+        "__rmod__",
+        "__getstate__",
+        "__dir__",
+        "__getnewargs__",
+        "__subclasshook__",
+        "__class_getitem__",
+        "__buffer__",
+        "__init_subclass__",
+        "__new__",
+        "copy",
+        "count",
+        "index",
+        "get",
+        "keys",
+        "values",
+        "items",
+        "fromkeys",
+        "capitalize",
+        "center",
+        "decode",
+        "endswith",
+        "expandtabs",
+        "find",
+        "fromhex",
+        "hex",
+        "isalnum",
+        "isalpha",
+        "isascii",
+        "isdigit",
+        "islower",
+        "isspace",
+        "istitle",
+        "isupper",
+        "join",
+        "ljust",
+        "lower",
+        "lstrip",
+        "maketrans",
+        "partition",
+        "removeprefix",
+        "removesuffix",
+        "replace",
+        "rfind",
+        "rindex",
+        "rjust",
+        "rpartition",
+        "rsplit",
+        "rstrip",
+        "split",
+        "splitlines",
+        "startswith",
+        "strip",
+        "swapcase",
+        "title",
+        "translate",
+        "upper",
+        "zfill"};
+      if((list || dict) && lvalue && reading.count(method_name) == 0)
+      {
+        log_overapprox(
+          "method '" + method_name +
+          "' of a list or dict is not modelled: the receiver becomes any "
+          "value");
+        const signedbv_typet i64{64};
+        pending_checks.push_back(code_frontend_assignt{
+          obj, side_effect_expr_nondett{obj.type(), get_location(expr)}});
+        const member_exprt length{obj, "length", i64};
+        pending_checks.push_back(code_assumet{and_exprt{
+          binary_relation_exprt{length, ID_ge, from_integer(0, i64)},
+          binary_relation_exprt{
+            length,
+            ID_le,
+            from_integer(
+              list ? PYTHON_MAX_LIST_LENGTH : PYTHON_MAX_DICT_SIZE, i64)}}});
+        if(obj.id() == ID_symbol)
+        {
+          const irep_idt id = to_symbol_expr(obj).get_identifier();
+          list_literals.erase(id);
+          dict_literals.erase(id);
+          dict_runtime_value_overrides.erase(id);
+          dict_guaranteed_keys.erase(id);
+          list_set_bounds.erase(id);
+        }
+      }
+      // An int that is not provably one may stand for an object with the
+      // method; a provable one raised above.
+      if(
+        obj.type().id() == ID_signedbv || obj.type().id() == ID_integer ||
+        obj.type().id() == ID_bool)
+        emit_may_raise("AttributeError");
     }
     // Suppress warnings for known regex/common methods on nondet objects
     if(
