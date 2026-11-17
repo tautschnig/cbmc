@@ -2684,13 +2684,195 @@ std::optional<std::string> java_regex_preprocess(const std::string &pattern)
   return out;
 }
 
+/// Whether the quantifiers, counted repetitions and class ranges of the Java
+/// pattern \p p are valid for java.util.regex.Pattern. Conservative: false
+/// for every error of these kinds that Pattern reports (a quantifier with
+/// nothing to repeat, two quantifiers in a row, a '{' that is not a counted
+/// repetition, a range of a class whose end is below its start), and for a
+/// few valid patterns as well (a quantified counted repetition, nested
+/// classes). The common-core translator follows Python's rules for these
+/// (a '{' that does not start a repetition is a literal, a quantifier at the
+/// start repeats nothing), so that, without this check, a pattern that
+/// Pattern rejects was translated, and JBMC proved that it did not throw.
+static bool java_quantifiers_valid(const std::string &p, bool raw)
+{
+  enum class prevt
+  {
+    NONE,
+    ATOM,
+    QUANTIFIED,
+    SUFFIXED
+  };
+  prevt prev = prevt::NONE;
+  const auto quantifier = [&prev](bool suffix_allowed)
+  {
+    if(prev == prevt::NONE || prev == prevt::SUFFIXED)
+      return false;
+    if(prev == prevt::QUANTIFIED)
+    {
+      if(!suffix_allowed)
+        return false;
+      prev = prevt::SUFFIXED;
+      return true;
+    }
+    prev = prevt::QUANTIFIED;
+    return true;
+  };
+  for(std::size_t i = 0; i < p.size(); ++i)
+  {
+    const char c = p[i];
+    if(c == '\\')
+    {
+      if(i + 1 >= p.size())
+        return false;
+      ++i;
+      // (the raw pattern: \p{...} is one atom, \Q...\E quotes; the lowered
+      // pattern has neither)
+      if(
+        raw && (p[i] == 'p' || p[i] == 'P') && i + 1 < p.size() &&
+        p[i + 1] == '{')
+      {
+        const std::size_t close = p.find('}', i);
+        if(close == std::string::npos)
+          return false;
+        i = close;
+      }
+      else if(raw && p[i] == 'Q')
+      {
+        const std::size_t end = p.find("\\E", i);
+        i = end == std::string::npos ? p.size() : end + 1;
+      }
+      prev = prevt::ATOM;
+    }
+    else if(c == '[' && raw)
+    {
+      // the raw pattern: skip the class, with its nested classes, escapes
+      // and \p{...}; its ranges are checked in the lowered pattern
+      int depth = 0;
+      std::size_t j = i;
+      for(; j < p.size(); ++j)
+      {
+        if(p[j] == '\\')
+        {
+          ++j;
+          continue;
+        }
+        if(p[j] == '[')
+        {
+          ++depth;
+          // ']' first is a literal
+          if(j + 1 < p.size() && p[j + 1] == '^')
+            ++j;
+          if(j + 1 < p.size() && p[j + 1] == ']')
+            ++j;
+        }
+        else if(p[j] == ']' && --depth == 0)
+          break;
+      }
+      if(j >= p.size())
+        return false;
+      i = j;
+      prev = prevt::ATOM;
+    }
+    else if(c == '[')
+    {
+      // A class: ']' first is a literal. An item is a char or an escape; an
+      // escaped letter (\\d, \\t, ...) is -1, which no range may use (Java
+      // rejects some of these ranges); nested classes are not checked.
+      std::size_t j = i + 1;
+      if(j < p.size() && p[j] == '^')
+        ++j;
+      const auto item = [&p](std::size_t &k) -> std::optional<int>
+      {
+        if(k >= p.size() || p[k] == '[')
+          return std::nullopt;
+        if(p[k] != '\\')
+          return static_cast<unsigned char>(p[k++]);
+        if(k + 1 >= p.size())
+          return std::nullopt;
+        const unsigned char e = p[k + 1];
+        k += 2;
+        return std::isalnum(e) ? -1 : e;
+      };
+      bool first = true;
+      while(true)
+      {
+        if(j >= p.size())
+          return false;
+        if(p[j] == ']' && !first)
+          break;
+        first = false;
+        const auto start = item(j);
+        if(!start.has_value())
+          return false;
+        if(j + 1 < p.size() && p[j] == '-' && p[j + 1] != ']')
+        {
+          ++j;
+          const auto end = item(j);
+          if(!end.has_value() || *start < 0 || *end < 0 || *end < *start)
+            return false;
+        }
+      }
+      i = j;
+      prev = prevt::ATOM;
+    }
+    else if(c == '(')
+      prev = prevt::NONE;
+    else if(c == '|')
+      prev = prevt::NONE;
+    else if(c == ')')
+      prev = prevt::ATOM;
+    else if(c == '*')
+    {
+      if(!quantifier(false))
+        return false;
+    }
+    else if(c == '+' || c == '?')
+    {
+      if(!quantifier(true))
+        return false;
+    }
+    else if(c == '{')
+    {
+      // {m}, {m,} or {m,n} with m <= n, below 2^31
+      std::size_t j = i + 1;
+      std::string m, n;
+      while(j < p.size() && std::isdigit(static_cast<unsigned char>(p[j])))
+        m += p[j++];
+      bool comma = false;
+      if(j < p.size() && p[j] == ',')
+      {
+        comma = true;
+        ++j;
+        while(j < p.size() && std::isdigit(static_cast<unsigned char>(p[j])))
+          n += p[j++];
+      }
+      if(m.empty() || j >= p.size() || p[j] != '}')
+        return false;
+      if(m.size() > 9 || n.size() > 9)
+        return false;
+      if(comma && !n.empty() && std::stol(n) < std::stol(m))
+        return false;
+      if(prev != prevt::ATOM)
+        return false;
+      prev = prevt::QUANTIFIED;
+      i = j;
+    }
+    else
+      prev = prevt::ATOM;
+  }
+  return true;
+}
+
 std::optional<std::string>
 java_regex_to_smt_fullmatch(const std::string &pattern)
 {
+  if(!java_quantifiers_valid(pattern, true))
+    return std::nullopt;
   // Lower Java-only syntax, then gate on the common core (identical PARSE),
   // then translate with the Java-dialect SEMANTICS (dot terminators, \s).
   const auto lowered = java_regex_preprocess(pattern);
-  if(!lowered.has_value())
+  if(!lowered.has_value() || !java_quantifiers_valid(*lowered, false))
     return std::nullopt;
   if(!regex_in_python_java_common_core(*lowered))
     return std::nullopt;
@@ -2702,8 +2884,10 @@ std::optional<bool> java_regex_match(
   const std::string &subject,
   python_regex_match_kindt kind)
 {
+  if(!java_quantifiers_valid(pattern, true))
+    return std::nullopt;
   const auto lowered = java_regex_preprocess(pattern);
-  if(!lowered.has_value())
+  if(!lowered.has_value() || !java_quantifiers_valid(*lowered, false))
     return std::nullopt;
   if(!regex_in_python_java_common_core(*lowered))
     return std::nullopt;
@@ -2734,8 +2918,10 @@ bool has_unescaped_trailing_dollar(const std::string &p)
 std::optional<std::string>
 java_partial_kind(const std::string &pattern, match_kind kind)
 {
+  if(!java_quantifiers_valid(pattern, true))
+    return std::nullopt;
   const auto lowered = java_regex_preprocess(pattern);
-  if(!lowered.has_value())
+  if(!lowered.has_value() || !java_quantifiers_valid(*lowered, false))
     return std::nullopt;
   if(!regex_in_python_java_common_core(*lowered))
     return std::nullopt;
