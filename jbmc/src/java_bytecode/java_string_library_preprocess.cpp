@@ -2253,17 +2253,26 @@ void java_string_library_preprocesst::initialize_conversion_table()
   // fullmatch solver function (operand order swapped to the intrinsic's
   // (pattern, subject) convention). Precise for constant translatable
   // patterns under an SMT string solver; sound nondet otherwise.
-  conversion_table["java::java.lang.String.matches:(Ljava/lang/String;)Z"] =
-    [this](
-      const java_method_typet &type,
-      const source_locationt &loc,
-      const irep_idt &function_id,
-      symbol_table_baset &symbol_table,
-      message_handlert &)
+  // The model checks the syntax of the regex (PatternSyntaxException), then
+  // calls the private cproverMatches; without the models, matches itself is
+  // the solver function.
+  for(const char *id :
+      {"java::java.lang.String.matches:(Ljava/lang/String;)Z",
+       "java::java.lang.String.cproverMatches:(Ljava/lang/String;)Z"})
   {
-    return make_matches_function_from_call(
-      function_id, type, loc, symbol_table);
-  };
+    conversion_table[id] = [this](
+                             const java_method_typet &type,
+                             const source_locationt &loc,
+                             const irep_idt &function_id,
+                             symbol_table_baset &symbol_table,
+                             message_handlert &)
+    {
+      return make_matches_function_from_call(
+        function_id, type, loc, symbol_table);
+    };
+  }
+  only_without_model.insert(
+    "java::java.lang.String.matches:(Ljava/lang/String;)Z");
   conversion_table
     ["java::java.lang.String.compareToIgnoreCase:(Ljava/lang/String;)I"] =
       [this](
@@ -2288,6 +2297,11 @@ void java_string_library_preprocesst::initialize_conversion_table()
     ["java::java.util.regex.Matcher.cproverLookingAt:"
      "(Ljava/lang/String;Ljava/lang/String;)Z"] =
       ID_cprover_string_java_looking_at_func;
+  // Whether the translation supports a regex, which is then valid (see the
+  // model java.util.regex.CProverRegex)
+  cprover_equivalent_to_java_function
+    ["java::java.util.regex.CProverRegex.cproverSupported:"
+     "(Ljava/lang/String;)Z"] = ID_cprover_string_java_regex_supported_func;
 
   // StringBuilder library
   conversion_table

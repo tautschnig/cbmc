@@ -3696,6 +3696,21 @@ void smt2_convt::convert_expr(const exprt &expr)
       // library stub's Match/None wrapping will still explore
       // both paths.
       if(
+        fn_id == ID_cprover_string_java_regex_supported_func &&
+        args.size() == 1)
+      {
+        // (see string_constraint_generatort: the translation decides it)
+        const auto pattern = try_extract_string_literal(args[0]);
+        const bool supported =
+          pattern.has_value() &&
+          java_regex_to_smt_fullmatch(*pattern).has_value();
+        std::size_t width = boolbv_width(expr.type());
+        if(width == 0)
+          width = 8;
+        out << "(_ bv" << (supported ? 1 : 0) << " " << width << ")";
+        return;
+      }
+      if(
         (fn_id == ID_cprover_string_match_func ||
          fn_id == ID_cprover_string_search_func ||
          fn_id == ID_cprover_string_fullmatch_func ||

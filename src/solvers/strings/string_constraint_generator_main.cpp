@@ -283,6 +283,18 @@ string_constraint_generatort::add_axioms_for_function_application(
     return add_axioms_for_is_suffix(expr, true);
   else if(id == ID_cprover_string_contains_func)
     return add_axioms_for_contains(expr);
+  else if(id == ID_cprover_string_java_regex_supported_func)
+  {
+    // Whether the Java regex translation supports a constant regex (which
+    // implies that java.util.regex.Pattern accepts it); false where the
+    // regex is not constant (or not ASCII), so that the models let it throw.
+    PRECONDITION(expr.arguments().size() == 1);
+    const std::optional<std::string> pattern =
+      extract_const(expr.arguments()[0]);
+    const bool supported =
+      pattern.has_value() && java_regex_to_smt_fullmatch(*pattern).has_value();
+    return {from_integer(supported ? 1 : 0, expr.type()), {}};
+  }
   else if(
     id == ID_cprover_string_match_func || id == ID_cprover_string_search_func ||
     id == ID_cprover_string_fullmatch_func ||
