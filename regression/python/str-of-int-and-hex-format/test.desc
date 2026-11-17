@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Invariant check failed
+--
+Both use the string solver's int-to-string; the radix argument was passed
+only by the format path, so the shared function symbol had two arities and
+conversion failed a precondition.

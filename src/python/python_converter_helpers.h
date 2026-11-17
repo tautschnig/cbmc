@@ -1136,10 +1136,17 @@ collect_param_names(const jsont &func_def)
         result.operands()[1].type(), source_locationt{}}});
   }
 
+  // One function symbol serves every call of an intrinsic, so all calls
+  // must have the same arity. int-to-string takes an optional radix:
+  // always pass it (10 when the caller gave none).
+  exprt::operandst extra = extra_args;
+  if(func_id == ID_cprover_string_of_int_func && extra.size() == 1)
+    extra.push_back(from_integer(10, extra[0].type()));
+
   std::vector<typet> arg_types;
   arg_types.push_back(signedbv_typet{64});
   arg_types.push_back(pointer_typet(unsignedbv_typet{8}, 64));
-  for(const auto &a : extra_args)
+  for(const auto &a : extra)
     arg_types.push_back(a.type());
 
   irep_idt sym_id{func_id};
@@ -1156,7 +1163,7 @@ collect_param_names(const jsont &func_def)
   exprt::operandst args;
   args.push_back(result.operands()[0]);
   args.push_back(result.operands()[1]);
-  args.insert(args.end(), extra_args.begin(), extra_args.end());
+  args.insert(args.end(), extra.begin(), extra.end());
 
   function_application_exprt app(
     symbol_table.lookup_ref(sym_id).symbol_expr(), args);
