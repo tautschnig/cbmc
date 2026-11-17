@@ -2177,6 +2177,10 @@ private:
   /// Whether the list \p e holds a set: a set display, or a symbol in
   /// set_semantic_symbols.
   bool may_be_list_backed_set(const exprt &e) const;
+  /// Whether \p e may hold a set (of any representation: a list for
+  /// elements that are not small ints, a dict for objects with __eq__ and
+  /// __hash__): a set display, or a symbol in set_semantic_symbols.
+  bool may_hold_set(const exprt &e) const;
   /// Whether the type annotation \p annotation is of a set (set, frozenset
   /// and their typing aliases).
   bool annotation_is_set(const jsont &annotation) const;

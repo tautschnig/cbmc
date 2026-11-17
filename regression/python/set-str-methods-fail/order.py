@@ -6,19 +6,19 @@ def loop():
     for x in {"a", "b"}:
         first = x
         break
-    assert first == "a", "loop order"
-
+    assert __assert_k != 0 or (first == "a"), "loop order"
+__assert_k = nondet_int()
 
 def not_equal():
     s = {"a", "b"}
     t = {"b", "a"}
-    assert s != t, "not equal"
+    assert __assert_k != 1 or (s != t), "not equal"
 
 
 def popped():
     p = {"a", "b"}
     p.add("c")
-    assert p.pop() == "c", "pop"
+    assert __assert_k != 2 or (p.pop() == "c"), "pop"
 
 
 loop()

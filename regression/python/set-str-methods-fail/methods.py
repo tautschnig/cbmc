@@ -6,16 +6,16 @@ def handled():
     s = {"a", "b"}
     try:
         s.add("c")
-        assert False, "add"
+        assert __assert_k != 0 or (False), "add"
     except AttributeError:
         pass
-
+__assert_k = nondet_int()
 
 def view():
     k = {"a": 1}.keys()
     try:
         k.isdisjoint({"x"})
-        assert False, "isdisjoint"
+        assert __assert_k != 1 or (False), "isdisjoint"
     except AttributeError:
         pass
 
@@ -23,17 +23,17 @@ def view():
 def update():
     s = {"a", "b"}
     s.update({"c"})
-    assert "c" not in s, "update"
+    assert __assert_k != 2 or ("c" not in s), "update"
 
 
 def union():
     u = {"a", "b"}.union({"c"})
-    assert "c" not in u, "union"
+    assert __assert_k != 3 or ("c" not in u), "union"
 
 
 def order():
     s = {"a", "b"}
-    assert list(s)[0] == "a", "list order"
+    assert __assert_k != 4 or (list(s)[0] == "a"), "list order"
 
 
 handled()

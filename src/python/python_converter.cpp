@@ -7135,7 +7135,13 @@ exprt python_convertert::convert_expression_impl(const jsont &expr)
   else if(node_type == "Tuple")
     result = convert_tuple(expr);
   else if(node_type == "List")
+  {
     result = convert_list(expr);
+    // A list display, which is a list (other values of the list type may be
+    // views, iterators or sets).
+    if(result.id() == ID_struct)
+      result.set("#python_list_display", "1");
+  }
   else if(node_type == "Attribute")
     result = convert_attribute(expr);
   else if(node_type == "Dict")
@@ -7304,8 +7310,11 @@ exprt python_convertert::convert_expression_impl(const jsont &expr)
                 }
                 if(all_cls && !spairs.empty())
                 {
-                  return build_dict_value_user_eq(
+                  // A dict holding a set (see may_hold_set).
+                  exprt set = build_dict_value_user_eq(
                     std::move(spairs), ecls, get_location(expr));
+                  set.set("#python_set_semantic", "1");
+                  return set;
                 }
                 emit_eq_semantics_guard(get_location(expr), "set element");
               }

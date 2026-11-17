@@ -34,6 +34,16 @@ bool python_convertert::may_be_list_backed_set(const exprt &e) const
          set_semantic_symbols.count(to_symbol_expr(s).get_identifier()) > 0;
 }
 
+bool python_convertert::may_hold_set(const exprt &e) const
+{
+  if(e.get_bool("#python_set_semantic"))
+    return true;
+  const exprt &s =
+    e.id() == ID_dereference ? to_dereference_expr(e).pointer() : e;
+  return s.id() == ID_symbol &&
+         set_semantic_symbols.count(to_symbol_expr(s).get_identifier()) > 0;
+}
+
 bool python_convertert::annotation_is_set(const jsont &annotation) const
 {
   const jsont &base = is_node_type(annotation, "Subscript")

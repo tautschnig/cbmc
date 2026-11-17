@@ -2939,7 +2939,8 @@ std::optional<exprt> python_convertert::try_method_call(
         const bool matches_owner =
           (ow == "str" && (is_str_recv || is_bytes)) ||
           (ow == "list" && is_list_recv) || (ow == "dict" && is_dict_recv) ||
-          (ow == "set" && (is_set_recv || (is_list_recv && !is_bytes)));
+          (ow == "set" && (is_set_recv || (is_list_recv && !is_bytes) ||
+                           (is_dict_recv && may_hold_set(obj))));
         // A number that is not a constant may stand for an object the front
         // end does not model (the result of an unknown function or method),
         // which may have the method.
@@ -3022,7 +3023,8 @@ std::optional<exprt> python_convertert::try_method_call(
           genuine = display || (!id.empty() && tuple_literals.count(id) > 0);
         else
           genuine = display || (!id.empty() && dict_literals.count(id) > 0 &&
-                                defaultdict_factories.count(id) == 0);
+                                defaultdict_factories.count(id) == 0 &&
+                                !may_hold_set(obj));
         if(genuine && iterator_methods.count(method_name) == 0)
         {
           emit_conditional_exception(true_exprt{}, "AttributeError");
