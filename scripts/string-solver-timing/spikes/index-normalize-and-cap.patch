@@ -1,0 +1,69 @@
+diff --git a/src/solvers/strings/string_refinement.cpp b/src/solvers/strings/string_refinement.cpp
+index 28f47a1a25..8cccd34ceb 100644
+--- a/src/solvers/strings/string_refinement.cpp
++++ b/src/solvers/strings/string_refinement.cpp
+@@ -19,6 +19,9 @@ Author: Alberto Griggio, alberto.griggio@gmail.com
+ 
+ #include "string_refinement.h"
+ 
++#include <cstdlib>
++
++#include <util/prefix.h>
+ #include <util/expr_iterator.h>
+ #include <util/expr_util.h>
+ #include <util/floatbv_expr.h>
+@@ -1464,7 +1467,9 @@ string_refinementt::dec_solve(const exprt &assumption)
+ /// did not finish on several.
+ void string_refinementt::filter_index_set()
+ {
+-  constexpr std::size_t max_new_indices_per_array = 2;
++  const std::size_t max_new_indices_per_array =
++    std::getenv("CBMC_INDEX_CAP") ? std::stoul(std::getenv("CBMC_INDEX_CAP"))
++                                  : 2;
+   const auto value_of = [this](const exprt &term) -> std::optional<mp_integer>
+   {
+     const exprt value = simplify_expr(supert::get(term), ns);
+@@ -3061,6 +3066,33 @@ static void get_sub_arrays(
+ /// \param ns: namespace
+ /// \param s: an expression containing strings
+ /// \param i: an expression representing an index
++/// \p e with max(0, l) (zero_if_negative) replaced by l where l is a length
++/// symbol of the array pool: lengths are non-negative, so that both forms of
++/// a position made distinct index terms (and twice the instantiations).
++static exprt without_max_of_lengths(const exprt &e)
++{
++  if(const auto if_expr = expr_try_dynamic_cast<if_exprt>(e))
++  {
++    const exprt &cond = if_expr->cond();
++    if(
++      cond.id() == ID_ge && to_binary_expr(cond).lhs() == if_expr->true_case() &&
++      to_binary_expr(cond).rhs().is_zero() && if_expr->false_case().is_zero() &&
++      if_expr->true_case().id() == ID_symbol &&
++      has_prefix(
++        id2string(to_symbol_expr(if_expr->true_case()).get_identifier()),
++        "string_refinement#string_length#"))
++    {
++      return if_expr->true_case();
++    }
++  }
++  if(!e.has_operands())
++    return e;
++  exprt result = e;
++  for(auto &op : result.operands())
++    op = without_max_of_lengths(op);
++  return result;
++}
++
+ static void add_to_index_set(
+   index_set_pairt &index_set,
+   const namespacet &ns,
+@@ -3070,7 +3102,8 @@ static void add_to_index_set(
+   auto cached = index_set.simplified.find(i);
+   if(cached == index_set.simplified.end())
+   {
+-    exprt simplified = i;
++    exprt simplified =
++      std::getenv("CBMC_INDEX_NORMALIZE") ? without_max_of_lengths(i) : i;
+     simplify(simplified, ns);
+     cached = index_set.simplified.emplace(std::move(i), simplified).first;
+   }
