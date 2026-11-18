@@ -2179,6 +2179,12 @@ private:
   /// \p left op \p right for the set operators | & - ^ when one operand
   /// holds a set in a list (and the other is a list or a set of small ints);
   /// nil otherwise.
+  /// \p left op \p right for < <= > >= when one operand holds a set in a
+  /// list (the subset order); nil otherwise.
+  exprt list_set_ordering(
+    const std::string &op,
+    const exprt &left,
+    const exprt &right);
   exprt list_set_binary_operation(
     const jsont &expr,
     const std::string &op,

@@ -392,6 +392,17 @@ exprt python_convertert::convert_compare(const jsont &expr)
     // list<list lexicographic, set<set subset); an Any/class operand is category
     // 0 and is never flagged (no false positive; a class's __lt__ is dispatched
     // below).
+    // Subset order of sets held in lists (sets of strings).
+    if(op == "Lt" || op == "LtE" || op == "Gt" || op == "GtE")
+    {
+      const exprt c = list_set_ordering(op, current_left, right);
+      if(c.is_not_nil())
+      {
+        result = result.is_nil() ? c : exprt(and_exprt{result, c});
+        current_left = right;
+        continue;
+      }
+    }
     if(op == "Lt" || op == "LtE" || op == "Gt" || op == "GtE")
     {
       const int cl = orderable_category_of(current_left);

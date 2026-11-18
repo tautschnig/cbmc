@@ -813,3 +813,128 @@ exprt python_convertert::list_set_binary_operation(
   not_modelled();
   return copy(list);
 }
+
+exprt python_convertert::list_set_ordering(
+  const std::string &op,
+  const exprt &left,
+  const exprt &right)
+{
+  const bool l_list = is_python_list_type(left.type());
+  const bool r_list = is_python_list_type(right.type());
+  const bool l_set = l_list && known_container_kind(left) != "list" &&
+                     may_be_list_backed_set(left);
+  const bool r_set = r_list && known_container_kind(right) != "list" &&
+                     may_be_list_backed_set(right);
+  const bool l_bitmap = is_python_set_type(left.type());
+  const bool r_bitmap = is_python_set_type(right.type());
+  if(!((l_set && (r_set || r_bitmap || r_list)) ||
+       (r_set && (l_bitmap || l_list))))
+    return nil_exprt{};
+  const signedbv_typet i64{64};
+  // A list display with a set: TypeError (ordering of a list and a set).
+  if(
+    known_container_kind(left) == "list" ||
+    known_container_kind(right) == "list")
+  {
+    emit_conditional_exception(true_exprt{}, "TypeError");
+    return false_exprt{};
+  }
+  // Each operand once.
+  auto once = [this](const exprt &e) -> exprt
+  {
+    if(e.id() == ID_symbol)
+      return e;
+    const symbol_exprt t = fresh_list_set_symbol("__set_cmp_", e.type());
+    pending_checks.push_back(code_frontend_assignt{t, e});
+    if(is_python_list_type(e.type()))
+      set_list_bound(t, list_bound(e));
+    return t;
+  };
+  const exprt l = once(left);
+  const exprt r = once(right);
+  auto size = [&](const exprt &s) -> exprt
+  {
+    if(is_python_set_type(s.type()))
+      return nil_exprt{};
+    return member_exprt{s, "length", i64};
+  };
+  // a is a subset of b
+  auto subset = [&](const exprt &a, const exprt &b) -> exprt
+  {
+    if(is_python_set_type(a.type()) && is_python_set_type(b.type()))
+      return nil_exprt{};
+    auto strings = [](const exprt &s)
+    {
+      const typet &et =
+        to_array_type(to_struct_type(s.type()).components()[1].type())
+          .element_type();
+      return is_python_string_type(et) || is_python_string_handle_type(et);
+    };
+    if(is_python_set_type(a.type()))
+    {
+      // ints in strings: only the empty set (strings are no ints)
+      const exprt empty = equal_exprt{
+        member_exprt{a, "bitmap", unsignedbv_typet{64}},
+        from_integer(0, unsignedbv_typet{64})};
+      return strings(b) ? empty : exprt{nil_exprt{}};
+    }
+    if(is_python_set_type(b.type()))
+    {
+      const exprt empty =
+        equal_exprt{member_exprt{a, "length", i64}, from_integer(0, i64)};
+      return strings(a) ? empty : exprt{nil_exprt{}};
+    }
+    const auto &data_type =
+      to_array_type(to_struct_type(a.type()).components()[1].type());
+    const member_exprt length{a, "length", i64};
+    const member_exprt data{a, "data", data_type};
+    exprt::operandst all;
+    const std::size_t bound = list_bound(a);
+    for(std::size_t i = 0; i < bound; ++i)
+    {
+      const exprt idx = from_integer(i, i64);
+      const symbol_exprt e =
+        fresh_list_set_symbol("__set_cmp_elem_", data_type.element_type());
+      pending_checks.push_back(
+        code_frontend_assignt{e, index_exprt{data, idx}});
+      std::vector<codet> outer;
+      std::swap(outer, pending_checks);
+      const exprt in_b = list_contains(b, e);
+      code_blockt check;
+      for(auto &c : pending_checks)
+        check.add(std::move(c));
+      pending_checks = std::move(outer);
+      const symbol_exprt holds =
+        fresh_list_set_symbol("__set_cmp_in_", bool_typet{});
+      pending_checks.push_back(code_frontend_assignt{holds, true_exprt{}});
+      check.add(code_frontend_assignt{holds, in_b});
+      pending_checks.push_back(code_ifthenelset{
+        binary_relation_exprt{idx, ID_lt, length}, std::move(check)});
+      all.push_back(holds);
+    }
+    return conjunction(std::move(all));
+  };
+  const bool forward = op == "LtE" || op == "Lt";
+  const exprt &small = forward ? l : r;
+  const exprt &large = forward ? r : l;
+  const exprt sub = subset(small, large);
+  if(sub.is_nil())
+  {
+    log_overapprox(
+      "ordering of a set of strings and a set of other "
+      "elements: nondet over-approximation");
+    return side_effect_expr_nondett{bool_typet{}, source_locationt{}};
+  }
+  if(op == "LtE" || op == "GtE")
+    return sub;
+  // proper: a subset that is not the other (unequal sizes, or the other is
+  // not a subset)
+  const exprt rev = subset(large, small);
+  const exprt s_small = size(small);
+  const exprt s_large = size(large);
+  if(s_small.is_not_nil() && s_large.is_not_nil())
+    return and_exprt{sub, notequal_exprt{s_small, s_large}};
+  return rev.is_nil()
+           ? exprt{side_effect_expr_nondett{bool_typet{}, source_locationt{}}}
+           : exprt{and_exprt{sub, not_exprt{rev}}};
+}
