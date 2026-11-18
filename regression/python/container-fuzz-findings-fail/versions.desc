@@ -1,0 +1,9 @@
+CORE
+versions.py
+
+^EXIT=10$
+^SIGNAL=0$
+^\[.*assertion\.[0-9]+\] file versions.py line 8 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring

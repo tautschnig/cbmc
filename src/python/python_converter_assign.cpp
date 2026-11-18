@@ -4391,10 +4391,16 @@ codet python_convertert::convert_assign(const jsont &stmt)
 
     // Check if variable exists and has a different type (type change)
     const symbolt *existing = symbol_table.lookup(symbol_id);
-    // Also check the versioned symbol
+    // Also check the versioned symbol, which reads resolve to: the value is
+    // assigned to it (assigning the original left later reads with the
+    // value of the version, `s = 0; s = ["a"]; s = ["b"]` kept s[0] "a").
     auto ver_it = variable_versions.find(qualified_name);
     if(ver_it != variable_versions.end())
+    {
       existing = symbol_table.lookup(ver_it->second);
+      if(existing != nullptr)
+        symbol_id = ver_it->second;
+    }
 
     // PLR §3.1: --python-check-annotations reassignment check.
     // When the variable was previously annotated (count: int =
