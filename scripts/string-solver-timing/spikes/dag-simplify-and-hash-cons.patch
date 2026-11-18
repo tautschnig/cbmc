@@ -1,0 +1,117 @@
+diff --git a/src/solvers/strings/string_refinement.cpp b/src/solvers/strings/string_refinement.cpp
+index 28f47a1a25..8b36cb06d7 100644
+--- a/src/solvers/strings/string_refinement.cpp
++++ b/src/solvers/strings/string_refinement.cpp
+@@ -19,6 +19,8 @@ Author: Alberto Griggio, alberto.griggio@gmail.com
+ 
+ #include "string_refinement.h"
+ 
++#include <cstdlib>
++
+ #include <util/expr_iterator.h>
+ #include <util/expr_util.h>
+ #include <util/floatbv_expr.h>
+@@ -29,6 +31,7 @@ Author: Alberto Griggio, alberto.griggio@gmail.com
+ #include <util/magic.h>
+ #include <util/range.h>
+ #include <util/simplify_expr.h>
++#include <util/simplify_expr_class.h>
+ 
+ #include <solvers/sat/satcheck.h>
+ 
+@@ -893,6 +896,34 @@ string_refinementt::dec_solve(const exprt &assumption)
+       resolved.emplace(&e.read(), std::make_pair(e, result));
+       return result;
+     };
++    // Simplification of the arguments, once for each node of their DAG:
++    // simplify walks shared subexpressions as trees (strings merged at join
++    // points share theirs).
++    simplify_exprt node_simplifier{ns};
++    std::unordered_map<const void *, std::pair<exprt, exprt>> simplified;
++    std::function<exprt(const exprt &)> simplify_dag =
++      [&](const exprt &e) -> exprt
++    {
++      const auto found = simplified.find(&e.read());
++      if(found != simplified.end())
++        return found->second.second;
++      exprt result = e;
++      for(auto &op : result.operands())
++        op = simplify_dag(op);
++      auto r = node_simplifier.simplify_node(result);
++      if(r.has_changed())
++        result = r.expr;
++      simplified.emplace(&e.read(), std::make_pair(e, result));
++      return result;
++    };
++    const bool dag = std::getenv("SPIKE_DAG_SIMPLIFY") != nullptr;
++    auto simplify_application = [&](exprt &e)
++    {
++      if(dag)
++        e = simplify_dag(e);
++      else
++        simplify(e, ns);
++    };
+     std::unordered_map<const void *, std::pair<exprt, exprt>> rewritten;
+     std::function<exprt(const exprt &)> rewrite = [&](const exprt &e) -> exprt
+     {
+@@ -906,7 +937,7 @@ string_refinementt::dec_solve(const exprt &assumption)
+         // realize that an expression like
+         // `(unsignedbv[16]*)((signedbv[8]*)&constarray[0] + 0)` is the
+         // same pointer as `&constarray[0]
+-        simplify(result, ns);
++        simplify_application(result);
+         bool unchanged = string_id_symbol_resolve.replace_expr(result);
+         for(auto &arg : result.operands())
+         {
+@@ -919,7 +950,7 @@ string_refinementt::dec_solve(const exprt &assumption)
+         }
+         // Simplifying again only where something was replaced.
+         if(!unchanged)
+-          simplify(result, ns);
++          simplify_application(result);
+       }
+       else
+       {
+@@ -937,6 +968,42 @@ string_refinementt::dec_solve(const exprt &assumption)
+       expr = rewrite(expr);
+   }
+ 
++  // Equal subexpressions share one node, so that comparing them (in the
++  // tables of the array pool, by irept::operator==) stops at the node rather
++  // than walking two equal trees.
++  if(std::getenv("SPIKE_HASH_CONS"))
++  {
++    std::unordered_map<const void *, exprt> by_node;
++    std::unordered_set<exprt, irep_hash> table;
++    // the originals, kept alive so that their nodes are not reused
++    std::vector<exprt> originals;
++    std::function<exprt(const exprt &)> share = [&](const exprt &e) -> exprt
++    {
++      const auto found = by_node.find(&e.read());
++      if(found != by_node.end())
++        return found->second;
++      exprt result = e;
++      bool changed = false;
++      for(std::size_t i = 0; i < e.operands().size(); ++i)
++      {
++        exprt op = share(e.operands()[i]);
++        if(&op.read() != &e.operands()[i].read())
++        {
++          if(!changed)
++            changed = true;
++          result.operands()[i] = std::move(op);
++        }
++      }
++      const exprt shared = *table.insert(result).first;
++      originals.push_back(e);
++      by_node.emplace(&e.read(), shared);
++      by_node.emplace(&shared.read(), shared);
++      return shared;
++    };
++    for(exprt &expr : equations)
++      expr = share(expr);
++  }
++
+   // Constraints start clear at each `dec_solve` call.
+   string_constraintst constraints;
+   for(auto &expr : equations)
