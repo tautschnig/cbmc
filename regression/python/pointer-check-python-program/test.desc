@@ -1,0 +1,15 @@
+CORE
+main.py
+--unwind 5 --pointer-check
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Invariant check failed
+dereference failure.*: FAILURE$
+--
+--pointer-check failed a namespace lookup: a Python-only program had no
+__CPROVER_deallocated (and the other memory-model globals). The instance
+in a class attribute was also allocated after the class object was
+initialised from it (a read through the class reads the dead
+construction temporary otherwise).

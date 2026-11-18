@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 5 --pointer-check
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+dereference failure.*: FAILURE$
+--
+Twin of pointer-check-python-program.

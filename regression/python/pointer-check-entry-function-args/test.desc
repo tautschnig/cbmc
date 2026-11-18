@@ -1,0 +1,13 @@
+CORE
+main.py
+--function first_or --unwind 5 --pointer-check
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+dereference failure.*: FAILURE$
+--
+The --function harness passed a dangling nondet pointer for a list
+argument and for the list and object slots of an untyped argument; every
+access failed the pointer checks. A caller can only pass valid objects, so
+these now point to fresh objects with nondet contents.

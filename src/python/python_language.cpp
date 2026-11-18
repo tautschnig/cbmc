@@ -10,6 +10,8 @@
 #include <util/get_base_name.h>
 #include <util/message.h>
 #include <util/options.h>
+#include <util/pointer_expr.h>
+#include <util/pointer_offset_size.h>
 #include <util/run.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
@@ -22,6 +24,7 @@
 
 #include "expr2python.h"
 #include "python_converter.h"
+#include "python_value_type.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -483,11 +486,85 @@ bool python_languaget::generate_support_functions(
 
     const code_typet &func_type = to_code_type(func_sym->type);
 
-    // Generate nondet arguments
+    // Generate nondet arguments. A Python caller can only pass valid
+    // objects, so a pointer argument (a list, dict or instance passed by
+    // reference) points to a fresh object with nondet contents, and the
+    // list/dict slots of a runtime-typed argument point to fresh objects;
+    // a dangling nondet pointer made every access a spurious pointer-check
+    // failure (and, without the check, read arbitrary memory).
     exprt::operandst arguments;
+    namespacet ns{symbol_table};
+    std::size_t arg_ctr = 0;
+    auto fresh_object = [&](const typet &t) -> exprt
+    {
+      const std::string nm = "__entry_obj_" + std::to_string(arg_ctr++);
+      const irep_idt id{"python::" + nm};
+      const pointer_typet pt{t, config.ansi_c.pointer_width};
+      symbolt ps{id, pt, "python"};
+      ps.base_name = nm;
+      ps.is_lvalue = true;
+      ps.is_state_var = true;
+      ps.is_static_lifetime = true;
+      symbol_table.add(ps);
+      const symbol_exprt p = symbol_table.lookup_ref(id).symbol_expr();
+      const exprt size = from_integer(
+        pointer_offset_size(t, ns).value_or(bytest{8}), size_type());
+      start_body.add(code_frontend_assignt{
+        p,
+        side_effect_exprt{
+          ID_allocate, {size, false_exprt{}}, pt, source_locationt{}}});
+      start_body.add(code_frontend_assignt{
+        dereference_exprt{p}, side_effect_expr_nondett{t, source_locationt{}}});
+      if(t.id() == ID_struct && to_struct_type(t).has_component("length"))
+      {
+        const exprt len =
+          member_exprt{dereference_exprt{p}, "length", signedbv_typet{64}};
+        start_body.add(code_assumet{and_exprt{
+          binary_relation_exprt{len, ID_ge, from_integer(0, len.type())},
+          binary_relation_exprt{
+            len, ID_le, from_integer(PYTHON_MAX_LIST_LENGTH, len.type())}}});
+      }
+      return p;
+    };
     for(const auto &param : func_type.parameters())
     {
-      side_effect_expr_nondett nondet{param.type(), source_locationt{}};
+      const typet &pt = param.type();
+      if(
+        pt.id() == ID_pointer &&
+        to_pointer_type(pt).base_type().id() != ID_empty &&
+        to_pointer_type(pt).base_type().id() != ID_code)
+      {
+        arguments.push_back(fresh_object(to_pointer_type(pt).base_type()));
+        continue;
+      }
+      if(is_python_value_type(pt))
+      {
+        const std::string nm = "__entry_arg_" + std::to_string(arg_ctr++);
+        const irep_idt id{"python::" + nm};
+        symbolt as{id, pt, "python"};
+        as.base_name = nm;
+        as.is_lvalue = true;
+        as.is_state_var = true;
+        as.is_static_lifetime = true;
+        symbol_table.add(as);
+        const symbol_exprt a = symbol_table.lookup_ref(id).symbol_expr();
+        start_body.add(code_frontend_assignt{
+          a, side_effect_expr_nondett{pt, source_locationt{}}});
+        const pointer_typet vp{empty_typet{}, 64};
+        start_body.add(code_frontend_assignt{
+          member_exprt{a, "__list_ptr", vp},
+          typecast_exprt{
+            fresh_object(python_list_type(python_value_type())), vp}});
+        start_body.add(code_frontend_assignt{
+          member_exprt{a, "__class_ptr", vp},
+          typecast_exprt{
+            fresh_object(
+              python_dict_type(python_string_type(), python_value_type())),
+            vp}});
+        arguments.push_back(a);
+        continue;
+      }
+      side_effect_expr_nondett nondet{pt, source_locationt{}};
       arguments.push_back(std::move(nondet));
     }
 
@@ -526,6 +603,42 @@ bool python_languaget::generate_support_functions(
   symbolt start_symbol{start_id, start_type, "python"};
   start_symbol.base_name = start_name;
   start_symbol.is_lvalue = true;
+
+  // The memory-model globals the pointer checks (--pointer-check,
+  // --memory-leak-check, --malloc-size-check) and symbolic execution read.
+  // The C front end declares them in its built-in additions; a Python-only
+  // program has none, so goto_check_c failed a namespace lookup. Declare
+  // them here and set their initial values at the start of the entry point.
+  {
+    const pointer_typet void_ptr{empty_typet{}, config.ansi_c.pointer_width};
+    std::vector<code_frontend_assignt> inits;
+    auto add_global = [&](const char *name, const typet &t, const exprt &v)
+    {
+      const irep_idt id{std::string{CPROVER_PREFIX} + name};
+      if(symbol_table.lookup(id) == nullptr)
+      {
+        symbolt g{id, t, ID_C};
+        g.base_name = std::string{CPROVER_PREFIX} + name;
+        g.pretty_name = g.base_name;
+        g.is_lvalue = true;
+        g.is_state_var = true;
+        g.is_static_lifetime = true;
+        g.value = v;
+        symbol_table.add(g);
+      }
+      const symbolt &gs = symbol_table.lookup_ref(id);
+      inits.emplace_back(gs.symbol_expr(), v);
+    };
+    add_global("deallocated", void_ptr, null_pointer_exprt{void_ptr});
+    add_global("dead_object", void_ptr, null_pointer_exprt{void_ptr});
+    add_global("memory_leak", void_ptr, null_pointer_exprt{void_ptr});
+    add_global(
+      "max_malloc_size",
+      size_type(),
+      from_integer(config.max_malloc_size(), size_type()));
+    for(auto it = inits.rbegin(); it != inits.rend(); ++it)
+      start_body.statements().insert(start_body.statements().begin(), *it);
+  }
 
   // Note: uncaught exception check removed — too many false positives
   // when functions set exception flags that aren't cleared by handlers.
