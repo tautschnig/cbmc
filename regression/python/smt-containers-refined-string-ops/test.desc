@@ -1,0 +1,14 @@
+CORE
+main.py
+--python-smt-containers --z3
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+--
+--python-smt-containers keeps the refined string representation. When the
+SMT encoder could not lower startswith/contains/find/ordering of such
+strings exactly, it emitted a constant (false, 0, -1 or "equal") and this
+was proved (a false proof). The result is now an uninterpreted
+application of the operation.

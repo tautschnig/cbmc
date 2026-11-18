@@ -3450,9 +3450,8 @@ void smt2_convt::convert_expr(const exprt &expr)
           out << ") (_ bv1 " << width << ") (_ bv0 " << width << "))";
           return;
         }
-        // Sound over-approximation: nondet.
-        out << "(_ bv0 " << width << ")";
-        return;
+        // Otherwise: the uninterpreted application below (a constant
+        // "false" here proved e.g. `not s.startswith(t)`).
       }
       // cprover_string_compare_to_func(s1, s2) → lexicographic sign
       // SMT-String back-end: lower to a signed -1/0/+1 result via str.<
@@ -3477,8 +3476,7 @@ void smt2_convt::convert_expr(const exprt &expr)
           out << ") (bvneg (_ bv1 " << width << ")) (_ bv1 " << width << ")))";
           return;
         }
-        out << "(_ bv0 " << width << ")";
-        return;
+        // Otherwise: the uninterpreted application below.
       }
       // cprover_string_length_func over smt_string is handled by the shared
       // encoder above (converged, Direction B): the front-end declares it
@@ -3512,8 +3510,7 @@ void smt2_convt::convert_expr(const exprt &expr)
           out << "))";
           return;
         }
-        out << "(_ bv0 " << width << ")";
-        return;
+        // Otherwise: the uninterpreted application below.
       }
       // Native SMT-String producing ops (Plan A): return an SMT String.
       // Operands are already SMT String (smt_string); results carry their own

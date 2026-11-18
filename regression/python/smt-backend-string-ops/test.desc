@@ -1,0 +1,12 @@
+CORE
+main.py
+--z3
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+--
+With an SMT backend, refined-string operations the SMT encoder could not
+lower exactly were encoded as a constant (startswith: false), and this was
+proved (a false proof). Such a result is now an uninterpreted application.

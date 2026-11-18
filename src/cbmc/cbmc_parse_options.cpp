@@ -259,7 +259,9 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
         << "--python-unbounded-ints uses mathematical (arbitrary-precision) "
            "integers, which require an SMT solver: pass one of --cvc5 / --z3 "
            "(or another SMT backend). Without one the bit-vector backend "
-           "cannot reason about them and results are unreliable."
+           "cannot reason about them and results are unreliable: it treats "
+           "each operation on them as an unknown value, so properties that "
+           "depend on their values fail spuriously."
         << messaget::eom;
     }
   }
