@@ -3701,6 +3701,9 @@ private:
   ///   names an explicitly-annotated scalar parameter, a runtime tag
   ///   obligation is emitted (a tagged-union/Any arg whose runtime tag does
   ///   not match the annotated scalar type raises TypeError under CPython).
+  /// wrap_value of a call argument: a list lvalue gets back the changes the
+  /// callee made to the copy that wrap_value makes (pending_post_checks).
+  exprt wrap_argument(const exprt &arg);
   exprt coerce_call_argument(
     const exprt &arg,
     const typet &param_type,

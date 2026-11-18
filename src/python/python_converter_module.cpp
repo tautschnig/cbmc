@@ -2291,20 +2291,25 @@ bool python_convertert::convert()
           i < fp_it->second.size() && fp_it->second[i] &&
           conflict[callee].count(i) == 0)
         {
-          typet inferred = infer_arg_type(a);
+          const typet inferred = infer_arg_type(a);
+          // An argument whose type is not inferred here may be of any type
+          // (`f(3); f(xs)` inferred int and passed the list xs as 0): no
+          // inference.
+          auto &m = agreed[callee];
+          auto e = m.find(i);
           if(inferred.id().empty())
-            uninferable_sites[callee].insert(i);
-          if(!inferred.id().empty())
           {
-            auto &m = agreed[callee];
-            auto e = m.find(i);
-            if(e == m.end())
-              m[i] = inferred;
-            else if(e->second != inferred)
-            {
-              conflict[callee].insert(i);
+            uninferable_sites[callee].insert(i);
+            conflict[callee].insert(i);
+            if(e != m.end())
               m.erase(e);
-            }
+          }
+          else if(e == m.end())
+            m[i] = inferred;
+          else if(e->second != inferred)
+          {
+            conflict[callee].insert(i);
+            m.erase(e);
           }
         }
         // Annotation-distrust (PLR §3.1): an ANNOTATED scalar param

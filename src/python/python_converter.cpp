@@ -5547,11 +5547,58 @@ exprt python_convertert::coerce_to_typed_slot(
   return safe_typecast(expr, target_type);
 }
 
+exprt python_convertert::wrap_argument(const exprt &arg)
+{
+  const bool lvalue = arg.id() == ID_symbol || arg.id() == ID_member ||
+                      arg.id() == ID_dereference || arg.id() == ID_index;
+  const std::size_t before = pending_checks.size();
+  exprt boxed = wrap_value(arg);
+
+  // wrap_value allocates a heap record for the copy and assigns the copy to
+  // it, the last of its pending checks.
+  if(
+    !lvalue || !is_python_list_type(arg.type()) ||
+    pending_checks.size() <= before ||
+    pending_checks.back().get_statement() != ID_assign)
+    return boxed;
+  // The callee works on the copy of the list that wrap_value made: copy it
+  // back after the call, as it may have changed it (`a.append(1)`).
+  const exprt copy = to_code_frontend_assign(pending_checks.back()).lhs();
+  const auto &data_type =
+    to_array_type(to_struct_type(arg.type()).components()[1].type());
+  const auto &copy_data_type =
+    to_array_type(to_struct_type(copy.type()).components()[1].type());
+  const signedbv_typet i64{64};
+  const member_exprt copy_data{copy, "data", copy_data_type};
+  const member_exprt data{arg, "data", data_type};
+  for(std::size_t k = 0; k < PYTHON_MAX_LIST_LENGTH; ++k)
+  {
+    const exprt idx = from_integer(k, i64);
+    exprt back =
+      unwrap_value(index_exprt{copy_data, idx}, data_type.element_type());
+    if(back.type() != data_type.element_type())
+      back = safe_typecast(back, data_type.element_type());
+    pending_post_checks.push_back(
+      code_frontend_assignt{index_exprt{data, idx}, back});
+  }
+  pending_post_checks.push_back(code_frontend_assignt{
+    member_exprt{arg, "length", i64}, member_exprt{copy, "length", i64}});
+  if(arg.id() == ID_symbol)
+  {
+    const irep_idt id = to_symbol_expr(arg).get_identifier();
+    list_literals.erase(id);
+    list_set_bounds.erase(id);
+  }
+  return boxed;
+}
+
 exprt python_convertert::coerce_call_argument(
   const exprt &arg,
   const typet &param_type,
   const irep_idt &param_id)
 {
+  if(is_python_value_type(param_type) && is_python_list_type(arg.type()))
+    return wrap_argument(arg);
   // PLR §3.2 / type-safety: Python annotations are NOT runtime coercions.
   // Binding a tagged-union/Any value (python_value) to a concretely-typed
   // SCALAR parameter coerces it via unwrap_value, which reads the requested

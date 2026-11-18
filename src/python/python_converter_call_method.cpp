@@ -80,7 +80,7 @@ void python_convertert::coerce_call_args(
     if(args[i].type() == pt)
       continue;
     if(is_python_value_type(pt) && !is_python_value_type(args[i].type()))
-      args[i] = wrap_value(args[i]);
+      args[i] = wrap_argument(args[i]);
     else
       args[i] = safe_typecast(args[i], pt);
   }
@@ -2157,7 +2157,10 @@ std::optional<exprt> python_convertert::try_method_call(
                 get_location(expr));
             }
             if(arguments[i].type() != pt)
-              arguments[i] = safe_typecast(arguments[i], pt);
+              arguments[i] = is_python_value_type(pt) &&
+                                 is_python_list_type(arguments[i].type())
+                               ? wrap_argument(arguments[i])
+                               : safe_typecast(arguments[i], pt);
           }
           side_effect_expr_function_callt call{
             sym->symbol_expr(),
