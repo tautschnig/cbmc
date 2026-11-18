@@ -30,9 +30,16 @@ exprt array_poolt::get_or_create_length(const array_string_exprt &s)
     // A symbol defined as the if-expression of the lengths. Strings merged
     // at join points of a program nest such choices, and index terms and
     // lemmas built from the length would copy the nesting each time.
+    const auto by_node = if_lengths_by_node.find(&s.read());
+    if(by_node != if_lengths_by_node.end())
+      return by_node->second.second;
     const auto found = if_lengths.find(s);
     if(found != if_lengths.end())
+    {
+      if_lengths_by_node.emplace(
+        &s.read(), std::make_pair(exprt{s}, found->second));
       return found->second;
+    }
     const exprt length = if_exprt{
       if_expr->cond(),
       get_or_create_length(to_array_string_expr(if_expr->true_case())),
@@ -40,6 +47,7 @@ exprt array_poolt::get_or_create_length(const array_string_exprt &s)
     const symbol_exprt symbol = fresh_symbol("string_length", length.type());
     length_definitions.emplace_back(symbol, length);
     if_lengths.emplace(s, symbol);
+    if_lengths_by_node.emplace(&s.read(), std::make_pair(exprt{s}, symbol));
     return symbol;
   }
 

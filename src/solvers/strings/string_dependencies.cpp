@@ -221,18 +221,26 @@ static void add_dependency_to_string_subexprs(
     dependencies.add_dependency(string, builtin_function_node);
   }
 
+  // Each node of the arguments' DAG once (strings merged at join points of
+  // a program are if-expressions that share their subexpressions, whose
+  // trees can be very large).
+  std::unordered_set<const void *> visited;
+  std::vector<const exprt *> to_visit;
   for(const auto &expr : fun_app.arguments())
+    to_visit.push_back(&expr);
+  while(!to_visit.empty())
   {
-    std::for_each(
-      expr.depth_begin(),
-      expr.depth_end(),
-      [&](const exprt &e) { // NOLINT
-        if(is_refined_string_type(e.type()))
-        {
-          const auto string = get_string_expr(array_pool, e);
-          dependencies.add_dependency(string, builtin_function_node);
-        }
-      });
+    const exprt &e = *to_visit.back();
+    to_visit.pop_back();
+    if(!visited.insert(&e.read()).second)
+      continue;
+    if(is_refined_string_type(e.type()))
+    {
+      const auto string = get_string_expr(array_pool, e);
+      dependencies.add_dependency(string, builtin_function_node);
+    }
+    for(const auto &op : e.operands())
+      to_visit.push_back(&op);
   }
 }
 

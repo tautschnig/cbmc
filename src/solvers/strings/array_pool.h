@@ -130,6 +130,10 @@ private:
   /// Lengths of if-expressions over strings, by expression: a symbol
   /// defined in length_definitions.
   std::unordered_map<array_string_exprt, symbol_exprt, irep_hash> if_lengths;
+  /// if_lengths by node (comparing large trees structurally is costly), with
+  /// the node kept alive so that its address is not reused.
+  std::unordered_map<const void *, std::pair<exprt, symbol_exprt>>
+    if_lengths_by_node;
   std::vector<equal_exprt> length_definitions;
   std::size_t emitted_definitions = 0;
 
