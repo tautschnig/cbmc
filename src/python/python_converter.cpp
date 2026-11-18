@@ -4238,6 +4238,38 @@ exprt python_convertert::wrap_value(const exprt &e)
         pending_checks.push_back(std::move(st));
       return boxed;
     }
+    // Captures that are all lambda DEFAULT values (fixed when the lambda
+    // was created, PLR 8.7) are boxed with their current values. Captured
+    // free variables are looked up when the closure is called (late
+    // binding), so a snapshot here would be wrong: those stay nondet.
+    {
+      auto ls = lambda_default_slots.find(fid);
+      bool all_defaults = ls != lambda_default_slots.end();
+      exprt::operandst vals;
+      for(const auto &[src, cname, ct] : cap_it->second)
+      {
+        bool is_default = false;
+        if(ls != lambda_default_slots.end())
+          for(const auto &[pi, cn] : ls->second)
+            if(cn == cname)
+              is_default = true;
+        const symbolt *ss = symbol_table.lookup(irep_idt{src});
+        if(!is_default || ss == nullptr)
+        {
+          all_defaults = false;
+          break;
+        }
+        vals.push_back(ss->symbol_expr());
+      }
+      if(all_defaults)
+      {
+        std::vector<codet> box_stmts;
+        exprt boxed = box_closure(fid, vals, box_stmts, source_locationt{});
+        for(auto &st : box_stmts)
+          pending_checks.push_back(std::move(st));
+        return boxed;
+      }
+    }
     log_overapprox(
       "capture-carrying function value wrapped outside a call context "
       "-- nondet closure");

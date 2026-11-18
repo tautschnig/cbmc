@@ -877,18 +877,102 @@ irep_idt python_convertert::setup_generator_result(
 void python_convertert::collect_def_time_default_checks(
   const jsont &args_node,
   const source_locationt &loc,
-  code_blockt &out)
+  code_blockt &out,
+  const std::string &qualified_func_name)
 {
   bool raised = false;
+  // Positional defaults belong to the last parameters of posonlyargs+args.
+  std::size_t n_pos = 0;
+  for(const char *g : {"posonlyargs", "args"})
+    if(json_member(args_node, g).is_array())
+      n_pos += as_array(json_member(args_node, g)).size();
+  const symbolt *fsym =
+    qualified_func_name.empty()
+      ? nullptr
+      : symbol_table.lookup(irep_idt{"python::" + qualified_func_name});
   for(const char *grp : {"defaults", "kw_defaults"})
   {
     const jsont &lst = json_member(args_node, grp);
     if(!lst.is_array())
       continue;
+    const std::size_t n_def = as_array(lst).size();
+    std::size_t ord = 0;
     for(const auto &d : as_array(lst))
     {
+      const std::size_t this_ord = ord++;
       if(!d.is_object() || d.is_null())
         continue;
+      // PLR 8.7: a mutable default (list/dict/set display or a no-argument
+      // list()/dict()/set()) is ONE object created when the def executes and
+      // shared by every call that omits the argument.
+      if(
+        std::string{grp} == "defaults" && fsym != nullptr &&
+        fsym->type.id() == ID_code && n_pos >= n_def)
+      {
+        const std::size_t pidx = n_pos - n_def + this_ord;
+        const auto &ps = to_code_type(fsym->type).parameters();
+        auto is_empty_ctor = [&](const jsont &e)
+        {
+          if(is_node_type(e, "List") || is_node_type(e, "Set"))
+            return as_array(json_member(e, "elts")).empty();
+          if(is_node_type(e, "Dict"))
+            return as_array(json_member(e, "keys")).empty();
+          if(
+            is_node_type(e, "Call") &&
+            is_node_type(json_member(e, "func"), "Name") &&
+            as_array(json_member(e, "args")).empty())
+          {
+            const std::string f =
+              json_string(json_member(json_member(e, "func"), "id"));
+            return f == "list" || f == "dict" || f == "set";
+          }
+          return false;
+        };
+        const bool mutable_disp = is_empty_ctor(d) || is_node_type(d, "List") ||
+                                  is_node_type(d, "Dict") ||
+                                  is_node_type(d, "Set");
+        if(
+          mutable_disp && pidx < ps.size() &&
+          ps[pidx].type().id() == ID_pointer)
+        {
+          const typet &base = to_pointer_type(ps[pidx].type()).base_type();
+          if(
+            is_python_list_type(base) || is_python_dict_type(base) ||
+            is_python_set_type(base))
+          {
+            auto saved = pending_checks;
+            pending_checks.clear();
+            exprt val =
+              is_empty_ctor(d) ? safe_zero(base) : convert_expression(d);
+            if(!val.is_nil() && val.type() == base)
+            {
+              const std::string nm = "__default_" + std::to_string(pidx);
+              const irep_idt id{"python::" + qualified_func_name + "::" + nm};
+              if(symbol_table.lookup(id) == nullptr)
+              {
+                symbolt ds{id, base, "python"};
+                ds.base_name = nm;
+                ds.is_lvalue = true;
+                ds.is_state_var = true;
+                ds.is_static_lifetime = true;
+                symbol_table.add(ds);
+              }
+              for(auto &chk : pending_checks)
+                out.add(chk);
+              code_frontend_assignt init{
+                symbol_table.lookup_ref(id).symbol_expr(), val};
+              init.add_source_location() = loc;
+              out.add(std::move(init));
+              mutable_default_objects[{id2string(fsym->name), pidx}] = id;
+              if(!pending_checks.empty())
+                raised = true;
+              pending_checks = saved;
+              continue;
+            }
+            pending_checks = saved;
+          }
+        }
+      }
       // Evaluate for exception side effects only; discard the value. Save /
       // clear / restore so the caller's pending_checks is undisturbed and the
       // newly-emitted checks are captured into `out`.
@@ -1402,13 +1486,63 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   // Only for simple types — class instances use call-time evaluation
   {
     const jsont &defaults = json_member(args_node, "defaults");
-    if(defaults.is_array() && !as_array(defaults).empty())
+    // `defaults` belong to the last positional parameters (posonlyargs +
+    // args); *args, keyword-only and **kwargs parameters were appended
+    // after them and must not shift the alignment.
+    std::size_t n_pos = 0;
+    for(const char *g : {"posonlyargs", "args"})
+      if(json_member(args_node, g).is_array())
+        n_pos += as_array(json_member(args_node, g)).size();
+    if(n_pos > parameters.size())
+      n_pos = parameters.size();
+    if(
+      defaults.is_array() && !as_array(defaults).empty() &&
+      as_array(defaults).size() <= n_pos)
     {
       std::size_t n_defaults = as_array(defaults).size();
-      std::size_t first_default = parameters.size() - n_defaults;
+      std::size_t first_default = n_pos - n_defaults;
       auto def_it = as_array(defaults).begin();
-      for(std::size_t i = first_default; i < parameters.size(); i++, ++def_it)
+      for(std::size_t i = first_default; i < n_pos; i++, ++def_it)
       {
+        // PLR 8.7: a mutable display default is one object shared by all
+        // calls; register its storage now (it is initialised where the def
+        // executes, collect_def_time_default_checks), so calls converted
+        // before that point already bind to it.
+        if(
+          parameters[i].type().id() == ID_pointer &&
+          (is_node_type(*def_it, "List") || is_node_type(*def_it, "Dict") ||
+           is_node_type(*def_it, "Set") ||
+           (is_node_type(*def_it, "Call") &&
+            is_node_type(json_member(*def_it, "func"), "Name") &&
+            as_array(json_member(*def_it, "args")).empty() &&
+            (json_string(json_member(json_member(*def_it, "func"), "id")) ==
+               "list" ||
+             json_string(json_member(json_member(*def_it, "func"), "id")) ==
+               "dict" ||
+             json_string(json_member(json_member(*def_it, "func"), "id")) ==
+               "set"))))
+        {
+          const typet &base = to_pointer_type(parameters[i].type()).base_type();
+          if(
+            is_python_list_type(base) || is_python_dict_type(base) ||
+            is_python_set_type(base))
+          {
+            const std::string nm = "__default_" + std::to_string(i);
+            const irep_idt id{"python::" + qualified_func_name + "::" + nm};
+            if(symbol_table.lookup(id) == nullptr)
+            {
+              symbolt ds{id, base, "python"};
+              ds.base_name = nm;
+              ds.is_lvalue = true;
+              ds.is_state_var = true;
+              ds.is_static_lifetime = true;
+              ds.value = safe_zero(base);
+              symbol_table.add(ds);
+            }
+            mutable_default_objects[{"python::" + qualified_func_name, i}] = id;
+            continue;
+          }
+        }
         exprt val = convert_expression(*def_it);
         if(val.is_nil())
           continue;
@@ -1593,6 +1727,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
 
   // Add closure captures as extra parameters
   irep_idt func_qid{"python::" + qualified_func_name};
+  refresh_closure_capture_types(func_qid, stmt);
   auto cap_it = closure_captures.find(id2string(func_qid));
   if(cap_it != closure_captures.end())
   {
@@ -1666,6 +1801,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   }
 
   // Convert function body
+  function_bodies_by_name[qualified_func_name] = &json_member(stmt, "body");
   std::string saved_function = current_function;
   auto saved_globals = global_names;
   if(!current_function.empty())
@@ -2020,6 +2156,25 @@ codet python_convertert::convert_function_def(const jsont &stmt)
                 found = true;
                 break;
               }
+            }
+            // A local of the enclosing function bound by a plain assignment:
+            // its type is the one that assignment gives it, known when the
+            // nested def is converted (it is converted at its position in
+            // the body). Record the capture now and take the type then
+            // (refresh_closure_capture_types); creating the symbol here with
+            // a guessed type (int) mistyped the enclosing local itself.
+            bool has_annotation = false;
+            for(const auto &bs : as_array(body))
+              if(
+                is_node_type(bs, "AnnAssign") &&
+                is_node_type(json_member(bs, "target"), "Name") &&
+                json_string(json_member(json_member(bs, "target"), "id")) ==
+                  ref)
+                has_annotation = true;
+            if(!found && !has_annotation)
+            {
+              captures.push_back({var_id, ref, python_int_type()});
+              found = true;
             }
             // Local variable not yet in symbol table — create it
             if(!found)
@@ -7340,4 +7495,128 @@ python_convertert::parse_dataclass_field_call(const jsont &value) const
         r.in_init = !json_member(v, "value").is_false();
     }
   return r;
+}
+
+void python_convertert::refresh_closure_capture_types(
+  const irep_idt &func_qid,
+  const jsont &funcdef)
+{
+  auto cap_it = closure_captures.find(id2string(func_qid));
+  if(cap_it == closure_captures.end())
+    return;
+  // Does the nested function escape? It does unless its name is only ever
+  // called (`m(...)`) in the enclosing body; a returned, stored or passed
+  // function may run after another call of the enclosing function.
+  const std::string bare = json_string(json_member(funcdef, "name"));
+  std::string qid = id2string(func_qid);
+  if(qid.rfind("python::", 0) == 0)
+    qid = qid.substr(8);
+  const std::string parent = qid.substr(0, qid.rfind("::"));
+  const jsont *parent_body = nullptr;
+  {
+    auto it = function_bodies_by_name.find(parent);
+    if(it != function_bodies_by_name.end())
+      parent_body = it->second;
+  }
+  // A nested function escapes unless every reference to it in the
+  // enclosing body is a call, or a reference from another nested function
+  // of the same body that itself does not escape. (A lambda referring to it
+  // counts as an escape.)
+  std::function<bool(const std::string &, unsigned)> escapes_fn =
+    [&](const std::string &fname, unsigned depth) -> bool
+  {
+    if(parent_body == nullptr || depth > 8)
+      return true;
+    bool esc = false;
+    std::function<void(const jsont &, bool, bool)> walk =
+      [&](const jsont &n, bool as_callee, bool top) -> void
+    {
+      if(esc)
+        return;
+      if(n.is_array())
+      {
+        for(const auto &c : as_array(n))
+          walk(c, false, top);
+        return;
+      }
+      if(!n.is_object())
+        return;
+      if(
+        is_node_type(n, "Name") && json_string(json_member(n, "id")) == fname &&
+        !as_callee)
+      {
+        esc = true;
+        return;
+      }
+      if(is_node_type(n, "Lambda") || is_node_type(n, "ClassDef"))
+      {
+        std::set<std::string> refs;
+        collect_name_refs(n, refs);
+        if(refs.count(fname) > 0)
+          esc = true;
+        return;
+      }
+      if(is_node_type(n, "FunctionDef") || is_node_type(n, "AsyncFunctionDef"))
+      {
+        const std::string gname = json_string(json_member(n, "name"));
+        if(gname == fname)
+          return; // its own body (recursion is a call)
+        if(!top)
+        {
+          std::set<std::string> refs;
+          collect_name_refs(json_member(n, "body"), refs);
+          if(refs.count(fname) > 0)
+            esc = true;
+          return;
+        }
+        std::set<std::string> refs;
+        collect_name_refs(json_member(n, "body"), refs);
+        if(refs.count(fname) == 0)
+          return;
+        // Referenced from sibling g: only calls in g, and g must not escape.
+        walk(json_member(n, "body"), false, false);
+        if(!esc && escapes_fn(gname, depth + 1))
+          esc = true;
+        return;
+      }
+      for(const auto &kv : to_json_object(n))
+      {
+        if(kv.first == "_type")
+          continue;
+        walk(kv.second, is_node_type(n, "Call") && kv.first == "func", top);
+      }
+    };
+    walk(*parent_body, false, true);
+    return esc;
+  };
+  const bool escapes = escapes_fn(bare, 0);
+  for(auto &[outer_id, name, type] : cap_it->second)
+  {
+    const symbolt *os = symbol_table.lookup(irep_idt{outer_id});
+    if(os == nullptr)
+    {
+      // Bound only after the def (late binding): keep the default and
+      // create the enclosing local with it, as before.
+      symbolt ns{irep_idt{outer_id}, type, "python"};
+      ns.base_name = name;
+      ns.is_lvalue = true;
+      ns.is_state_var = true;
+      symbol_table.add(ns);
+      continue;
+    }
+    if(os->type.id() == ID_code)
+      continue;
+    const typet &ot = os->type;
+
+    // A list or dict the nested function only reads or mutates refers to
+    // the enclosing binding (PLR 4.2.2): pass its address, so mutations are
+    // visible in the enclosing scope.
+    if(!escapes && (is_python_list_type(ot) || is_python_dict_type(ot)))
+    {
+      type = pointer_typet{ot, 64};
+      closure_capture_by_address.insert({id2string(func_qid), name});
+    }
+    else
+      type = closure_capture_slot_type(ot);
+  }
 }

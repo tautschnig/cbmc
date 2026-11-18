@@ -1,0 +1,14 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+uncaught exception: FAILURE
+--
+A nested function that only calls into or mutates a list/dict of its
+enclosing function refers to the enclosing binding (PLR 4.2.2). The
+captured local was created with the guessed type int (so `calls.append`
+was an AttributeError) and captures were copied (mutations were lost).
+Non-escaping nested functions now receive the container's address.

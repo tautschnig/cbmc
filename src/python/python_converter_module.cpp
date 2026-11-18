@@ -239,7 +239,10 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
       {
         code_blockt cb;
         collect_def_time_default_checks(
-          json_member(stmt, "args"), get_location(stmt), cb);
+          json_member(stmt, "args"),
+          get_location(stmt),
+          cb,
+          json_string(json_member(stmt, "name")));
         for(const auto &s : cb.statements())
           block.add(s);
       }
@@ -274,7 +277,10 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
             {
               code_blockt cb;
               collect_def_time_default_checks(
-                json_member(m, "args"), get_location(stmt), cb);
+                json_member(m, "args"),
+                get_location(stmt),
+                cb,
+                cls_name + "::" + json_string(json_member(m, "name")));
               for(const auto &s : cb.statements())
                 block.add(s);
             }

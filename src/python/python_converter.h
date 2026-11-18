@@ -968,6 +968,25 @@ private:
   std::
     map<std::string, std::vector<std::tuple<std::string, std::string, typet>>>
       closure_captures;
+  /// Captures of a nested function passed as the address of the enclosing
+  /// binding (a list or dict of a non-escaping nested function), keyed by
+  /// (nested function id, captured name).
+  std::set<std::pair<std::string, std::string>> closure_capture_by_address;
+  /// The body of each function being or having been converted, by
+  /// qualified name (the parse tree outlives the converter).
+  std::map<std::string, const jsont *> function_bodies_by_name;
+  /// Mutable default argument values (PLR 8.7: evaluated once, when the
+  /// def executes, and shared by every call that omits the argument): the
+  /// static object holding it, by (function symbol id, parameter index).
+  std::map<std::pair<std::string, std::size_t>, irep_idt>
+    mutable_default_objects;
+  /// Lambda defaults carried as hidden captures: lambda id -> parameter
+  /// index -> capture name (`__dflt_<param>`).
+  std::map<irep_idt, std::map<std::size_t, std::string>> lambda_default_slots;
+  /// Set the types of \p func_qid's closure captures from the enclosing
+  /// scope's symbols, when the nested def \p funcdef is converted.
+  void
+  refresh_closure_capture_types(const irep_idt &func_qid, const jsont &funcdef);
   /// Closure cell substrate (PLR §4.2.2), mutating slice. Per nested
   /// function qualified name, the set of NONLOCAL cell-variable names
   /// captured by a HEAP CELL pointer rather than by qualify_name's
@@ -1935,7 +1954,8 @@ private:
   void collect_def_time_default_checks(
     const jsont &args_node,
     const source_locationt &loc,
-    code_blockt &out);
+    code_blockt &out,
+    const std::string &qualified_func_name = std::string{});
 
   /// Result of scanning a function/method body for its return type
   /// (used only when there is no explicit return annotation).

@@ -1242,6 +1242,26 @@ exprt python_convertert::convert_user_call(
       // invocations stay independent. Fall back to the original capture
       // source (outer_id) for the non-escaping / in-scope path.
       auto cvc = closure_var_captures.find(qualify_name(func_name));
+      // The captures are the LAST parameters: put them there, leaving the
+      // user-parameter slots the caller did not fill (defaults, keywords)
+      // nil. Appending them after the given arguments shifted them into
+      // defaulted slots: `m(1)` for `def m(a, b=2)` capturing k bound
+      // b = k and k = 0 (a false proof).
+      const std::size_t ncap = cap_it2->second.size();
+      const std::size_t first_cap =
+        params.size() >= ncap ? params.size() - ncap : 0;
+      if(arguments.size() < first_cap)
+        arguments.resize(first_cap, nil_exprt{});
+      else if(arguments.size() > first_cap)
+      {
+        // Only nil padding (from keyword handling) may sit there.
+        bool only_nil = true;
+        for(std::size_t k = first_cap; k < arguments.size(); ++k)
+          if(arguments[k].is_not_nil())
+            only_nil = false;
+        if(only_nil)
+          arguments.resize(first_cap);
+      }
       for(const auto &[outer_id, name, type] : cap_it2->second)
       {
         irep_idt src{outer_id};
@@ -1285,6 +1305,46 @@ exprt python_convertert::convert_user_call(
   {
     if(arguments[i].is_nil())
     {
+      // A lambda default: the value captured when the lambda was created.
+      {
+        auto ls = lambda_default_slots.find(sym->name);
+        auto ci = closure_captures.find(id2string(sym->name));
+        if(ls != lambda_default_slots.end() && ci != closure_captures.end())
+        {
+          auto slot = ls->second.find(i);
+          if(slot != ls->second.end())
+          {
+            const std::size_t ncap = ci->second.size();
+            const std::size_t first_cap =
+              params.size() >= ncap ? params.size() - ncap : 0;
+            for(std::size_t k = 0; k < ncap; ++k)
+              if(
+                std::get<1>(ci->second[k]) == slot->second &&
+                first_cap + k < arguments.size() &&
+                arguments[first_cap + k].is_not_nil())
+              {
+                arguments[i] = typecast_exprt::conditional_cast(
+                  arguments[first_cap + k], params[i].type());
+                break;
+              }
+            if(arguments[i].is_not_nil())
+              continue;
+          }
+        }
+      }
+      // PLR 8.7: a mutable default is the one object created at def time.
+      auto mo = mutable_default_objects.find({id2string(sym->name), i});
+      if(mo != mutable_default_objects.end())
+      {
+        const symbolt &ds = symbol_table.lookup_ref(mo->second);
+        if(
+          params[i].type().id() == ID_pointer &&
+          to_pointer_type(params[i].type()).base_type() == ds.type)
+        {
+          arguments[i] = address_of_exprt{ds.symbol_expr()};
+          continue;
+        }
+      }
       auto def_it = default_values.find({func_name, i});
       if(def_it != default_values.end())
       {

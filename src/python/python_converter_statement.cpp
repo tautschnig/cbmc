@@ -1454,7 +1454,11 @@ codet python_convertert::convert_statement_body(const jsont &stmt)
   {
     code_blockt cb;
     collect_def_time_default_checks(
-      json_member(stmt, "args"), get_location(stmt), cb);
+      json_member(stmt, "args"),
+      get_location(stmt),
+      cb,
+      (current_function.empty() ? std::string{} : current_function + "::") +
+        json_string(json_member(stmt, "name")));
     for(const auto &s : cb.statements())
       pending_checks.push_back(s);
   }

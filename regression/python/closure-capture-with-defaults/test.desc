@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Captures are the trailing parameters. They were appended right after the
+given arguments, so `m(1)` for `def m(a, b=2)` capturing k bound b = k and
+k = 0 (a false proof of a wrong result). Positional defaults were also
+aligned with the keyword-only parameters, so `m(1, c=7)` bound b = 0.

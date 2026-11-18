@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Lambda defaults were ignored: an omitted argument was 0, so `add(7) == 7`
+was proved (CPython: 37). Each default is snapshotted when the lambda is
+evaluated and carried as a hidden capture, so lambdas created in a loop
+keep their own value.

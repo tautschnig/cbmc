@@ -313,6 +313,55 @@ exprt python_convertert::convert_lambda(const jsont &expr)
     }
   }
 
+  // PLR 6.14 / 8.7: default values are evaluated when the lambda
+  // expression is evaluated, once per evaluation. Each is snapshotted into a
+  // temporary of the enclosing scope here and carried as a hidden capture
+  // (`__dflt_<param>`), so a closure created in a loop keeps its own value;
+  // a call that omits the argument binds the captured value.
+  std::vector<std::tuple<std::string, std::string, typet>> default_captures;
+  {
+    const jsont &defaults = json_member(args_node, "defaults");
+    const std::size_t n_pos = parameters.size();
+    if(
+      defaults.is_array() && !as_array(defaults).empty() &&
+      as_array(defaults).size() <= n_pos)
+    {
+      std::size_t idx = n_pos - as_array(defaults).size();
+      for(const auto &d : as_array(defaults))
+      {
+        const std::size_t pidx = idx++;
+        exprt val = convert_expression(d);
+        if(val.is_nil())
+          continue;
+        const typet &pt = parameters[pidx].type();
+        if(val.type() != pt)
+          val = is_python_value_type(pt) && !is_python_value_type(val.type())
+                  ? wrap_value(val)
+                  : safe_typecast(val, pt);
+        const std::string pname = id2string(parameters[pidx].get_base_name());
+        const std::string snap = lambda_name + "_dflt_" + pname;
+        const irep_idt sid{qualify_name(snap)};
+        if(symbol_table.lookup(sid) == nullptr)
+        {
+          symbolt ss{sid, closure_capture_slot_type(pt), "python"};
+          ss.base_name = snap;
+          ss.is_lvalue = true;
+          ss.is_state_var = true;
+          ss.is_static_lifetime = true;
+          symbol_table.add(ss);
+        }
+        const symbol_exprt snap_sym =
+          symbol_table.lookup_ref(sid).symbol_expr();
+        pending_checks.push_back(code_frontend_assignt{
+          snap_sym, typecast_exprt::conditional_cast(val, snap_sym.type())});
+        const std::string cname = "__dflt_" + pname;
+        default_captures.emplace_back(
+          id2string(sid), cname, closure_capture_slot_type(pt));
+        lambda_default_slots[irep_idt{"python::" + lambda_name}][pidx] = cname;
+      }
+    }
+  }
+
   std::string saved_func = current_function;
   if(!current_function.empty())
     enclosing_functions.push_back(current_function);
@@ -342,6 +391,15 @@ exprt python_convertert::convert_lambda(const jsont &expr)
     // Record capture for call-site argument passing
     closure_captures["python::" + lambda_name].push_back(
       {outer_id, ref, closure_capture_slot_type(outer_sym->type)});
+  }
+
+  for(const auto &[sid, cname, ct] : default_captures)
+  {
+    code_typet::parametert p{ct};
+    p.set_identifier("python::" + lambda_name + "::" + cname);
+    p.set_base_name(cname);
+    parameters.push_back(p);
+    closure_captures["python::" + lambda_name].push_back({sid, cname, ct});
   }
 
   for(const auto &p : parameters)

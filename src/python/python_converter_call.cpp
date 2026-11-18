@@ -274,7 +274,13 @@ exprt python_convertert::dispatch_closure_value(
     auto ci = closure_captures.find(id2string(lid));
     std::size_t ncap = (ci != closure_captures.end()) ? ci->second.size() : 0;
     std::size_t nuser = lparams.size() >= ncap ? lparams.size() - ncap : 0;
-    if(nuser != args.size())
+    // Trailing parameters with a lambda default may be omitted.
+    std::size_t ndflt = 0;
+    auto lds = lambda_default_slots.find(lid);
+    if(lds != lambda_default_slots.end())
+      for(std::size_t q = nuser; q > 0 && lds->second.count(q - 1); --q)
+        ++ndflt;
+    if(args.size() > nuser || args.size() + ndflt < nuser)
       continue; // positional arity mismatch -> not this candidate
     any = true;
     const bool self_first = bound_method_closures.count(k) > 0;
@@ -306,6 +312,17 @@ exprt python_convertert::dispatch_closure_value(
     for(const auto &c : rec_type.components())
       capture_args.push_back(
         member_exprt{dereference_exprt{rec_ptr}, c.get_name(), c.type()});
+    // Omitted defaulted parameters: the captured default value.
+    for(std::size_t i = args.size();
+        i < nuser && lds != lambda_default_slots.end();
+        ++i)
+    {
+      const std::string &cname = lds->second.at(i);
+      const typet &ct = rec_type.get_component(cname).type();
+      user_args.push_back(typecast_exprt::conditional_cast(
+        member_exprt{dereference_exprt{rec_ptr}, cname, ct},
+        lparams[i].type()));
+    }
     exprt::operandst call_args;
     if(self_first)
     {
@@ -332,7 +349,7 @@ exprt python_convertert::dispatch_closure_value(
     disp.push_back(code_ifthenelset{
       and_exprt{
         python_value_is(closure_val, python_type_tagt::CLOSURE),
-        equal_exprt{fn, from_integer(static_cast<int>(k), signedbv_typet{64})}},
+        equal_exprt{fn, from_integer(static_cast<int>(k), fn.type())}},
       std::move(body)});
   }
   if(!any)
