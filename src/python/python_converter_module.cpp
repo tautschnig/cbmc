@@ -254,6 +254,10 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
       const symbolt *cls_sym = symbol_table.lookup(cls_id);
       if(cls_sym != nullptr && !cls_sym->value.is_nil())
       {
+        auto pre = class_init_prelude.find(cls_name);
+        if(pre != class_init_prelude.end())
+          for(const auto &c : pre->second)
+            block.add(c);
         code_frontend_assignt init{cls_sym->symbol_expr(), cls_sym->value};
         block.add(std::move(init));
       }

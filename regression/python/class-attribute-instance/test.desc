@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 5 --pointer-check
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+dereference failure.*: FAILURE$
+--
+A class attribute bound to an instance (`origin = Cell(4)`) was typed as
+an int, so reads of its attributes were unconstrained. It holds the
+instance (PLR 9.4), shared by the class and its instances.

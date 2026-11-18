@@ -3552,12 +3552,15 @@ codet python_convertert::convert_class_def(const jsont &stmt)
               {
                 std::string cn =
                   json_string(json_member(json_member(val, "func"), "id"));
+                // A class attribute bound to an instance (`origin = C(4)`)
+                // holds that instance (PLR 9.4), not an int.
+                if(class_types.count(cn))
+                  attr_type = class_types[cn];
                 if(
                   class_types.count(cn) &&
                   symbol_table.lookup(
                     irep_idt{"python::" + cn + "::__get__"}) != nullptr)
                 {
-                  attr_type = class_types[cn];
                   class_descriptor_attrs[class_name][attr_name] = cn;
                 }
               }
@@ -4817,7 +4820,12 @@ codet python_convertert::convert_class_def(const jsont &stmt)
     class_obj.is_lvalue = true;
     class_obj.is_state_var = true;
     class_obj.is_static_lifetime = true;
-    // Initialize with class-level attribute values
+    // Initialize with class-level attribute values. Statements the value
+    // conversions emit (e.g. the allocation of an instance in `d = D()`)
+    // run with the class body: they are kept with the class object and
+    // emitted before its initialisation (PLR 8.8: the class body executes
+    // at class definition).
+    const std::size_t pc_class_init = pending_checks.size();
     exprt::operandst field_values;
     for(const auto &comp : class_type.components())
     {
@@ -4901,6 +4909,11 @@ codet python_convertert::convert_class_def(const jsont &stmt)
     }
     class_obj.value = struct_exprt{std::move(field_values), class_type};
     symbol_table.add(class_obj);
+    auto &prelude = class_init_prelude[class_name];
+    for(std::size_t i = pc_class_init; i < pending_checks.size(); ++i)
+      prelude.push_back(std::move(pending_checks[i]));
+    pending_checks.erase(
+      pending_checks.begin() + pc_class_init, pending_checks.end());
   }
 
   // Generate class object initialization in the module body

@@ -685,6 +685,9 @@ private:
   /// positional arg is left at the class-level default, not nondet-bound).
   std::map<std::string, std::vector<std::string>> dataclass_init_fields;
   std::map<std::string, std::set<std::string>> dataclass_defaulted_fields;
+  /// Statements the class-object initialiser depends on (emitted by the
+  /// conversion of class-level attribute values), per class.
+  std::map<std::string, std::vector<codet>> class_init_prelude;
   /// How a dataclass field gets its value when __init__ is not given one
   /// (dataclasses.field): a default expression, or a zero-argument
   /// default_factory called once per instance. `in_init` is false for
