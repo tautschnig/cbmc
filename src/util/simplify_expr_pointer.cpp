@@ -664,6 +664,13 @@ simplify_exprt::simplify_object_size(const object_size_exprt &expr)
       if(size_opt.has_value())
       {
         const typet &expr_type = expr.type();
+        // An object of infinite size has no upper bound.
+        if(
+          has_subexpr(*size_opt, ID_infinity) &&
+          (expr_type.id() == ID_unsignedbv || expr_type.id() == ID_signedbv))
+        {
+          return infinite_object_size(expr_type);
+        }
         exprt size = size_opt.value();
 
         if(size.type() != expr_type)

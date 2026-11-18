@@ -12,6 +12,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "pointer_offset_size.h"
 
 #include "arith_tools.h"
+#include "bitvector_types.h"
 #include "byte_operators.h"
 #include "c_types.h"
 #include "config.h"
@@ -965,4 +966,13 @@ std::optional<exprt> get_subexpression_at_offset(
   }
   else
     return get_subexpression_at_offset(expr, *offset_bytes, target_type, ns);
+}
+
+exprt infinite_object_size(const typet &size_type)
+{
+  PRECONDITION(
+    size_type.id() == ID_unsignedbv || size_type.id() == ID_signedbv);
+  if(size_type.id() == ID_unsignedbv)
+    return to_unsignedbv_type(size_type).largest_expr();
+  return to_signedbv_type(size_type).largest_expr();
 }

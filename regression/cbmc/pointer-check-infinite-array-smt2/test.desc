@@ -1,0 +1,13 @@
+CORE smt-backend
+main.c
+--pointer-check --smt2
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+pointer outside object bounds.*FAILURE
+--
+The size of an object of infinite size simplified to an expression over
+infinity: the bit-vector backend reported spurious bounds failures and the
+SMT backend failed an invariant. Its size is now the largest value of the
+size type.

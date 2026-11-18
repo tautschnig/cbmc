@@ -62,6 +62,11 @@ std::optional<exprt> member_offset_expr(
 
 std::optional<exprt> size_of_expr(const typet &type, const namespacet &ns);
 
+/// The size used for an object of infinite size (an array of infinite
+/// length): the largest value of the bit-vector type \p size_type, so that
+/// no offset representable in a pointer is out of its bounds.
+exprt infinite_object_size(const typet &size_type);
+
 std::optional<exprt> get_subexpression_at_offset(
   const exprt &expr,
   const bytest &offset,
