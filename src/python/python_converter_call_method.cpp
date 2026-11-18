@@ -3331,6 +3331,34 @@ std::optional<exprt> python_convertert::try_method_call(
       // python_converter_call_set_methods.cpp for clarity.
       if(is_python_set_type(obj_base_type))
       {
+        // A set of small ints with a set of strings (held in a list).
+        static const std::map<std::string, std::string> operators = {
+          {"union", "BitOr"},
+          {"intersection", "BitAnd"},
+          {"difference", "Sub"},
+          {"symmetric_difference", "BitXor"}};
+        const auto op = operators.find(method_name);
+        if(
+          op != operators.end() && args.is_array() &&
+          as_array(args).size() == 1 &&
+          !is_node_type(*as_array(args).begin(), "Starred"))
+        {
+          const jsont &arg_node = *as_array(args).begin();
+          const evaluate_argumentst evaluate_arg{
+            evaluated_arguments, {&arg_node}};
+          const exprt arg = convert_expression(arg_node);
+          if(is_python_list_type(arg.type()) && may_be_list_backed_set(arg))
+          {
+            const exprt r =
+              list_set_binary_operation(expr, op->second, obj, arg);
+            if(r.is_not_nil())
+              return r;
+          }
+          if(
+            auto r =
+              try_set_method(expr, obj, obj_base_type, method_name, args))
+            return std::move(*r);
+        }
         if(auto r = try_set_method(expr, obj, obj_base_type, method_name, args))
           return std::move(*r);
       }
