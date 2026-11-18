@@ -1,0 +1,11 @@
+CORE
+main.py
+--cvc5 --python-smt-strings
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+The program that refined strings do not finish (test.desc), with native
+SMT strings: cvc5 1.2.1 5 s.

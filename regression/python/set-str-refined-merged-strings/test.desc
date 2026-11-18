@@ -1,0 +1,12 @@
+FUTURE
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+The refined string solver does not finish this program (more than 300 s;
+without the spikes in scripts/string-solver-timing/spikes it runs out of
+8 GB). See the analysis in main.py and plan item 12.
