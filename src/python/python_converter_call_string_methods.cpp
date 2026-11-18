@@ -4405,9 +4405,17 @@ std::optional<exprt> python_convertert::try_string_method(
             !is_python_string_type(jet) && !is_python_value_type(jet) &&
             !is_python_string_handle_type(jet))
           {
-            emit_conditional_exception(true_exprt{}, "TypeError");
-            return side_effect_expr_nondett{
-              python_string_type(), get_location(expr)};
+            // An empty list joins to "" whatever its element type.
+            const exprt length =
+              member_exprt{list_arg, "length", signedbv_typet{64}};
+            const exprt empty =
+              equal_exprt{length, from_integer(0, length.type())};
+            emit_conditional_exception(not_exprt{empty}, "TypeError");
+            return if_exprt{
+              empty,
+              python_string_literal(""),
+              side_effect_expr_nondett{
+                python_string_type(), get_location(expr)}};
           }
         }
         if(

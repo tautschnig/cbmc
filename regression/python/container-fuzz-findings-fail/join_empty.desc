@@ -1,0 +1,9 @@
+CORE
+join_empty.py
+
+^EXIT=10$
+^SIGNAL=0$
+^\[.*assertion\.[0-9]+\] file join_empty.py line 13 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
