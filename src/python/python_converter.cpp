@@ -4179,6 +4179,12 @@ exprt python_convertert::python_truthiness(const exprt &e)
     }
   }
 
+  // A set of small ints (a bitmap): truthy iff it has an element.
+  if(is_python_set_type(t))
+    return notequal_exprt{
+      member_exprt{e, "bitmap", unsignedbv_typet{64}},
+      from_integer(0, unsignedbv_typet{64})};
+
   // Class instance struct: try __bool__ then __len__; default True.
   if(t.id() == ID_struct || t.id() == ID_struct_tag)
   {
