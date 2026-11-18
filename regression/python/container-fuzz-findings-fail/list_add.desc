@@ -1,0 +1,9 @@
+CORE
+list_add.py
+
+^EXIT=10$
+^SIGNAL=0$
+^\[.*assertion\.[0-9]+\] file list_add.py line 9 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring

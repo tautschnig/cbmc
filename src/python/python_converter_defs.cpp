@@ -6963,6 +6963,23 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
           list_literals.erase(
             irep_idt{qualify_name(json_string(json_member(recv, "id")))});
       }
+      // A set (held in a list) has neither append nor insert.
+      if(method == "append" || method == "insert")
+      {
+        const jsont &recv = json_member(func, "value");
+        if(is_node_type(recv, "Name"))
+        {
+          const irep_idt id{qualify_name(json_string(json_member(recv, "id")))};
+          const auto kind = container_kinds.find(id);
+          if(kind != container_kinds.end() && kind->second == "set")
+          {
+            code_blockt raise;
+            raise.add(raise_if(true_exprt{}, "AttributeError"));
+            raise.add_source_location() = get_location(stmt);
+            return std::move(raise);
+          }
+        }
+      }
       if(method == "append")
       {
         exprt obj = convert_expression(json_member(func, "value"));

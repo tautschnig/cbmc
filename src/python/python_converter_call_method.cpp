@@ -2934,7 +2934,16 @@ std::optional<exprt> python_convertert::try_method_call(
         // A list may hold a set whose elements are not small ints, which has
         // the set methods and not the list methods (set_semantic_symbols are
         // not flow-sensitive: a list may still hold a list).
-        if(ow == "list" && is_list_recv && may_be_list_backed_set(obj))
+        const std::string kind = known_container_kind(obj);
+        if(ow == "list" && is_list_recv && kind == "set")
+        {
+          emit_conditional_exception(true_exprt{}, "AttributeError");
+          return side_effect_expr_nondett{
+            python_value_type(), get_location(expr)};
+        }
+        if(
+          ow == "list" && is_list_recv && kind.empty() &&
+          may_be_list_backed_set(obj))
           emit_may_raise("AttributeError");
         const bool matches_owner =
           (ow == "str" && (is_str_recv || is_bytes)) ||
@@ -2998,6 +3007,15 @@ std::optional<exprt> python_convertert::try_method_call(
         return side_effect_expr_nondett{
           python_value_type(), get_location(expr)};
       }
+      // A set held in a list has no list method that sets lack.
+      if(
+        kind == "list" && known_container_kind(obj) == "set" &&
+        !builtin_has_attribute("set", method_name))
+      {
+        emit_conditional_exception(true_exprt{}, "AttributeError");
+        return side_effect_expr_nondett{
+          python_value_type(), get_location(expr)};
+      }
       // A list, tuple or dict made by a display (or a variable holding one)
       // is one; a list may hold a set, and others stand for generators,
       // iterators, views, counters or named tuples, which may have the
@@ -3017,8 +3035,9 @@ std::optional<exprt> python_convertert::try_method_call(
           obj.id() == ID_struct && !obj.get_bool("#python_set_semantic");
         bool genuine = false;
         if(kind == "list" || kind == "bytes")
-          genuine = display || (!id.empty() && list_literals.count(id) > 0 &&
-                                !may_be_list_backed_set(obj));
+          genuine = display || !known_container_kind(obj).empty() ||
+                    (!id.empty() && list_literals.count(id) > 0 &&
+                     !may_be_list_backed_set(obj));
         else if(kind == "tuple")
           genuine = display || (!id.empty() && tuple_literals.count(id) > 0);
         else

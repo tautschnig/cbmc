@@ -831,6 +831,7 @@ python_convertert::snapshot_tracking() const
   snap.soa_row_view_names = soa_row_view_names;
   snap.var_typeddict = var_typeddict;
   snap.var_soa_elem = var_soa_elem;
+  snap.container_kinds = container_kinds;
   return snap;
 }
 
@@ -846,6 +847,7 @@ void python_convertert::restore_tracking(const tracking_snapshott &snap)
   soa_row_view_names = snap.soa_row_view_names;
   var_typeddict = snap.var_typeddict;
   var_soa_elem = snap.var_soa_elem;
+  container_kinds = snap.container_kinds;
 }
 
 namespace
@@ -910,6 +912,8 @@ void python_convertert::merge_tracking(
   var_typeddict =
     merge_maps(state0.var_typeddict, state1.var_typeddict, str_eq);
   var_soa_elem = merge_maps(state0.var_soa_elem, state1.var_soa_elem, str_eq);
+  container_kinds =
+    merge_maps(state0.container_kinds, state1.container_kinds, str_eq);
 }
 
 /// Back-end-dispatching Python string literal. See
@@ -2820,6 +2824,7 @@ void python_convertert::invalidate_global_value_tracking(
   // falls back to the symbol value).
   prune(string_constants);
   prune(float_constants);
+  prune(container_kinds);
   // dict_literals is invalidated only at the POST-argument site
   // (include_dict_literals): a callee may have mutated a global dict in
   // place (`d[k]=v`), leaving a stale literal that folds a later
@@ -2929,6 +2934,7 @@ void python_convertert::invalidate_loop_writes(const jsont &body)
     list_literals.erase(id);
     tuple_literals.erase(id);
     complex_literals.erase(id);
+    container_kinds.erase(id);
   }
 }
 
@@ -7430,7 +7436,7 @@ exprt python_convertert::convert_expression_impl(const jsont &expr)
               get_location(expr),
               length.is_constant() ? numeric_cast_v<std::size_t>(n)
                                    : std::numeric_limits<std::size_t>::max());
-            set_semantic_symbols.insert(set.get_identifier());
+            mark_set_temporary(set);
             if(length.is_constant())
               set_list_bound(set, numeric_cast_v<std::size_t>(n));
             result = set;

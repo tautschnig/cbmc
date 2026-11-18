@@ -26,6 +26,71 @@
 
 codet python_convertert::convert_statement(const jsont &stmt)
 {
+  // The names the statement binds (a store or a del of a name, a handler's
+  // or an import's name, a definition) no longer hold what container_kinds
+  // says; an assignment records the new kind as it is converted.
+  if(!container_kinds.empty())
+  {
+    std::function<void(const jsont &, bool)> forget =
+      [&](const jsont &node, bool top)
+    {
+      if(node.is_array())
+      {
+        for(const auto &n : as_array(node))
+          forget(n, false);
+        return;
+      }
+      if(!node.is_object())
+        return;
+      const std::string type = json_string(json_member(node, "_type"));
+      auto forget_name = [&](const std::string &name)
+      {
+        if(!name.empty())
+          container_kinds.erase(irep_idt{qualify_name(name)});
+      };
+      if(type == "Name")
+      {
+        const std::string ctx =
+          json_string(json_member(json_member(node, "ctx"), "_type"));
+        if(ctx == "Store" || ctx == "Del")
+          forget_name(json_string(json_member(node, "id")));
+        return;
+      }
+      if(type == "ExceptHandler" && json_member(node, "name").is_string())
+        forget_name(json_string(json_member(node, "name")));
+      if(type == "alias")
+      {
+        const jsont &as = json_member(node, "asname");
+        const std::string name = as.is_string()
+                                   ? json_string(as)
+                                   : json_string(json_member(node, "name"));
+        forget_name(name.substr(0, name.find('.')));
+        return;
+      }
+      if(
+        type == "FunctionDef" || type == "AsyncFunctionDef" ||
+        type == "ClassDef")
+      {
+        forget_name(json_string(json_member(node, "name")));
+        if(!top)
+          return; // its own scope
+      }
+      if(type == "Global" || type == "Nonlocal")
+      {
+        const jsont &names = json_member(node, "names");
+        if(names.is_array())
+          for(const auto &n : as_array(names))
+            forget_name(json_string(n));
+        return;
+      }
+      if(type == "Lambda")
+        return;
+      for(const auto &member : to_json_object(node))
+        if(member.first != "_type")
+          forget(member.second, false);
+    };
+    forget(stmt, true);
+  }
   // Fail closed on unresolved names. When a name cannot be resolved
   // (logged as "Unknown variable"), the expression that read it
   // becomes nil, and the statement holding it is dropped or

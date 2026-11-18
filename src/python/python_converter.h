@@ -1231,6 +1231,7 @@ private:
     std::set<irep_idt> soa_row_view_names;
     std::map<irep_idt, std::string> var_typeddict;
     std::map<irep_idt, std::string> var_soa_elem;
+    std::map<irep_idt, std::string> container_kinds;
     // function_aliases and bound_methods are intentionally NOT
     // snapshot/merged: they record one-way name → callable
     // mappings whose runtime dispatch is needed for any program
@@ -2214,6 +2215,17 @@ private:
   /// (also in a loop), so its bound holds wherever it is read. Variables of
   /// the program have none.
   std::map<irep_idt, std::size_t> list_set_bounds;
+  /// Whether a variable holds a "set" or a "list" (both may be a list):
+  /// flow-sensitive, like list_literals (snapshot_tracking).
+  std::map<irep_idt, std::string> container_kinds;
+  /// "set" or "list" when \p e is known to hold one: a display, or a
+  /// variable in container_kinds; empty otherwise.
+  std::string known_container_kind(const exprt &e) const;
+  /// Records in container_kinds what the variable \p id holds after an
+  /// assignment of \p value.
+  void track_container_kind(const irep_idt &id, const exprt &value);
+  /// Records the temporary \p set as holding a set.
+  void mark_set_temporary(const symbol_exprt &set);
   /// An upper bound of the length of the list \p e: of a display, of a
   /// temporary in list_set_bounds, else PYTHON_MAX_LIST_LENGTH.
   std::size_t list_bound(const exprt &e) const;

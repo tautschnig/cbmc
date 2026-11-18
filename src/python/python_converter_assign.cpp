@@ -1142,6 +1142,7 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   // A dict holding a set of objects with __eq__ (see may_hold_set).
   if(is_python_dict_type(rhs.type()) && may_hold_set(rhs))
     set_semantic_symbols.insert(symbol_id);
+  track_container_kind(symbol_id, rhs);
   if(is_python_list_type(rhs.type()))
   {
     // A list holding a set (set_semantic_symbols); its order is any order,
@@ -5023,6 +5024,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
     // A dict holding a set of objects with __eq__ (see may_hold_set).
     if(is_python_dict_type(typed_rhs.type()) && may_hold_set(typed_rhs))
       set_semantic_symbols.insert(sym.name);
+    track_container_kind(sym.name, typed_rhs);
     if(is_python_list_type(typed_rhs.type()))
     {
       // A list holding a set (set_semantic_symbols); its order is any order,

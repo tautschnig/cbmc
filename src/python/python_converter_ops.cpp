@@ -259,6 +259,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       // A copy of a set is a set.
       if(may_hold_set(left))
         set_semantic_symbols.insert(tid);
+      track_container_kind(tid, left);
       pending_checks.push_back(code_frontend_assignt{lsym, left});
       left = lsym;
     }

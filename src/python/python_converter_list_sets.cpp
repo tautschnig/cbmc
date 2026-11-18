@@ -17,6 +17,7 @@
 #include "python_converter.h"
 #include "python_converter_helpers.h"
 #include "python_types.h"
+#include "python_value_type.h"
 
 #include <optional>
 #include <string>
@@ -42,6 +43,38 @@ bool python_convertert::may_hold_set(const exprt &e) const
     e.id() == ID_dereference ? to_dereference_expr(e).pointer() : e;
   return s.id() == ID_symbol &&
          set_semantic_symbols.count(to_symbol_expr(s).get_identifier()) > 0;
+}
+
+std::string python_convertert::known_container_kind(const exprt &e) const
+{
+  if(e.get_bool("#python_set_semantic"))
+    return "set";
+  if(e.get_bool("#python_list_display"))
+    return "list";
+  if(e.id() == ID_symbol)
+  {
+    const auto it = container_kinds.find(to_symbol_expr(e).get_identifier());
+    if(it != container_kinds.end())
+      return it->second;
+  }
+  return {};
+}
+
+void python_convertert::mark_set_temporary(const symbol_exprt &set)
+{
+  set_semantic_symbols.insert(set.get_identifier());
+  container_kinds[set.get_identifier()] = "set";
+}
+
+void python_convertert::track_container_kind(
+  const irep_idt &id,
+  const exprt &value)
+{
+  const std::string kind = known_container_kind(value);
+  if(kind.empty())
+    container_kinds.erase(id);
+  else
+    container_kinds[id] = kind;
 }
 
 bool python_convertert::annotation_is_set(const jsont &annotation) const
@@ -258,7 +291,15 @@ std::optional<exprt> python_convertert::try_list_backed_set_method(
     "issuperset",
     "isdisjoint"};
   static const std::set<std::string> shared = {"remove", "pop", "copy"};
-  const bool known_set = may_be_list_backed_set(obj);
+  const std::string kind = known_container_kind(obj);
+  // A list has no set-only method.
+  if(kind == "list" && set_only.count(method_name) != 0 && converted == nullptr)
+  {
+    emit_conditional_exception(true_exprt{}, "AttributeError");
+    return side_effect_expr_nondett{python_value_type(), get_location(expr)};
+  }
+  const bool known_set =
+    kind == "set" || (kind.empty() && may_be_list_backed_set(obj));
   if(
     set_only.count(method_name) == 0 &&
     !(known_set && shared.count(method_name)))
@@ -454,7 +495,7 @@ std::optional<exprt> python_convertert::try_list_backed_set_method(
       code_frontend_assignt{result, side_effect_expr_nondett{set_type, loc}});
     pending_checks.push_back(code_frontend_assignt{
       member_exprt{result, "length", i64}, from_integer(0, i64)});
-    set_semantic_symbols.insert(result.get_identifier());
+    mark_set_temporary(result);
     return result;
   };
 
@@ -546,7 +587,7 @@ std::optional<exprt> python_convertert::try_list_backed_set_method(
   {
     const symbol_exprt result = fresh_list_set_symbol("__set_copy_", set_type);
     pending_checks.push_back(code_frontend_assignt{result, set});
-    set_semantic_symbols.insert(result.get_identifier());
+    mark_set_temporary(result);
     set_list_bound(result, list_bound(set));
     return result;
   }
@@ -690,15 +731,7 @@ exprt python_convertert::list_set_binary_operation(
     return nil_exprt{};
   // A list display is a list, for which these operators raise TypeError.
   auto list_display = [this](const exprt &e)
-  {
-    if(e.get_bool("#python_list_display"))
-      return true;
-    if(e.id() != ID_symbol)
-      return false;
-    const auto it = list_literals.find(to_symbol_expr(e).get_identifier());
-    return it != list_literals.end() &&
-           it->second.get_bool("#python_list_display");
-  };
+  { return known_container_kind(e) == "list"; };
   if(list_display(left) || list_display(right))
   {
     emit_conditional_exception(true_exprt{}, "TypeError");
@@ -732,7 +765,7 @@ exprt python_convertert::list_set_binary_operation(
     pending_checks.push_back(code_frontend_assignt{
       member_exprt{r, "length", signedbv_typet{64}},
       from_integer(0, signedbv_typet{64})});
-    set_semantic_symbols.insert(r.get_identifier());
+    mark_set_temporary(r);
     set_list_bound(r, 0);
     return r;
   };
@@ -742,7 +775,7 @@ exprt python_convertert::list_set_binary_operation(
     pending_checks.push_back(code_frontend_assignt{r, s});
     if(is_python_list_type(s.type()))
     {
-      set_semantic_symbols.insert(r.get_identifier());
+      mark_set_temporary(r);
       set_list_bound(r, list_bound(s));
     }
     return exprt{r};

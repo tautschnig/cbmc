@@ -992,17 +992,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // A set never equals a list: a display, or a variable holding one
       // (other values of the list type may be views, which compare as sets).
       auto list_display = [this](const exprt &e)
-      {
-        if(may_be_list_backed_set(e))
-          return false;
-        if(e.get_bool("#python_list_display"))
-          return true;
-        if(e.id() != ID_symbol)
-          return false;
-        const auto it = list_literals.find(to_symbol_expr(e).get_identifier());
-        return it != list_literals.end() &&
-               it->second.get_bool("#python_list_display");
-      };
+      { return known_container_kind(e) == "list"; };
       if(list_display(current_left) || list_display(right))
         return op == "Eq" ? exprt{false_exprt{}} : exprt{true_exprt{}};
       const exprt equal = list_set_equal(current_left, right);

@@ -1,0 +1,9 @@
+CORE
+set_foo.py
+
+^EXIT=10$
+^SIGNAL=0$
+^\[.*assertion\.[0-9]+\] file set_foo.py line 10 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring

@@ -185,7 +185,7 @@ exprt python_convertert::set_of_elements(
         code_ifthenelset{conjunction(std::move(distinct)), std::move(add)});
   }
 
-  set_semantic_symbols.insert(result.get_identifier());
+  mark_set_temporary(result);
   // CPython orders a set by the hashes of its elements: any order.
   set_list_bound(result, stored.size());
   permute_list_set(result, loc);
@@ -259,7 +259,7 @@ exprt python_convertert::set_of_list(
   }
 
   // PLR §3.2: equality treats the result as a multiset.
-  set_semantic_symbols.insert(tmp.get_identifier());
+  mark_set_temporary(tmp);
   // CPython orders a set by the hashes of its elements: any order.
   // The result is no longer than a list display it is made of.
   std::size_t max_length = std::numeric_limits<std::size_t>::max();
