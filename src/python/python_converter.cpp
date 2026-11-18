@@ -5547,6 +5547,44 @@ exprt python_convertert::coerce_to_typed_slot(
   return safe_typecast(expr, target_type);
 }
 
+void python_convertert::havoc_mutable_arguments(const jsont &args)
+{
+  if(!args.is_array())
+    return;
+  const signedbv_typet i64{64};
+  for(const auto &a : as_array(args))
+  {
+    // A name is read without side effects; the value of another expression
+    // is not seen again.
+    if(!is_node_type(a, "Name"))
+      continue;
+    const exprt value = convert_expression(a);
+    const bool list = is_python_list_type(value.type());
+    const bool dict = is_python_dict_type(value.type());
+    if((!list && !dict) || value.id() != ID_symbol)
+      continue;
+    log_overapprox(
+      "a list or dict passed to a call that is not modelled becomes any "
+      "value");
+    pending_checks.push_back(code_frontend_assignt{
+      value, side_effect_expr_nondett{value.type(), source_locationt{}}});
+    const member_exprt length{value, "length", i64};
+    pending_checks.push_back(code_assumet{and_exprt{
+      binary_relation_exprt{length, ID_ge, from_integer(0, i64)},
+      binary_relation_exprt{
+        length,
+        ID_le,
+        from_integer(
+          list ? PYTHON_MAX_LIST_LENGTH : PYTHON_MAX_DICT_SIZE, i64)}}});
+    const irep_idt id = to_symbol_expr(value).get_identifier();
+    list_literals.erase(id);
+    dict_literals.erase(id);
+    list_set_bounds.erase(id);
+    dict_runtime_value_overrides.erase(id);
+    dict_guaranteed_keys.erase(id);
+  }
+}
+
 exprt python_convertert::wrap_argument(const exprt &arg)
 {
   const bool lvalue = arg.id() == ID_symbol || arg.id() == ID_member ||

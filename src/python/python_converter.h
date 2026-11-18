@@ -3704,6 +3704,9 @@ private:
   /// wrap_value of a call argument: a list lvalue gets back the changes the
   /// callee made to the copy that wrap_value makes (pending_post_checks).
   exprt wrap_argument(const exprt &arg);
+  /// The list and dict variables passed (as names) in \p args to a call
+  /// that is not modelled become any value: the call may change them.
+  void havoc_mutable_arguments(const jsont &args);
   exprt coerce_call_argument(
     const exprt &arg,
     const typet &param_type,

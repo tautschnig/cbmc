@@ -682,6 +682,7 @@ exprt python_convertert::convert_user_call(
         "no body for callee " + func_name,
         get_location(expr));
     }
+    havoc_mutable_arguments(args);
     side_effect_expr_nondett nondet{python_int_type(), get_location(expr)};
     return std::move(nondet);
   }

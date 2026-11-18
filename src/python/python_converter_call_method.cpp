@@ -2824,6 +2824,7 @@ std::optional<exprt> python_convertert::try_method_call(
           return side_effect_expr_nondett{
             python_int_type(), get_location(expr)};
         }
+        havoc_mutable_arguments(args);
         return side_effect_expr_nondett{python_int_type(), get_location(expr)};
       }
     }
@@ -4787,6 +4788,8 @@ std::optional<exprt> python_convertert::try_method_call(
         }
       }
     }
+    // The list and dict arguments of a method that is not modelled.
+    havoc_mutable_arguments(args);
     // A method of a list or dict that the model lacks (`x.__setitem__(0, 1)`),
     // or of an object that a list or dict stands for, may change it: it
     // becomes any list or dict. An int is not changed (ints are immutable,

@@ -1,0 +1,9 @@
+CORE
+unmodelled.py
+
+^EXIT=10$
+^SIGNAL=0$
+^\[.*assertion\.[0-9]+\] file unmodelled.py line 10 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
