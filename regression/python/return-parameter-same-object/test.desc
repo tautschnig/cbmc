@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+`b = keep(a, 2)` where keep returns its list parameter: b is a (PLR 3.1).
+The returned list was a copy, so a mutation through b was not visible
+through a.

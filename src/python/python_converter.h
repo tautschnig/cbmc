@@ -105,6 +105,13 @@ private:
   /// function bodies, deferred inside them (deferred_body_diagnostics).
   void body_diagnostic(bool is_error, const std::string &msg);
   void flush_body_diagnostics();
+  /// `x = f(...)` where f returns one of its list/dict parameters
+  /// unchanged: run the call and bind x to the passed object (or the shared
+  /// mutable default). nullopt when the pattern does not apply.
+  std::optional<codet> convert_assign_returned_param_alias(
+    const jsont &target,
+    const jsont &value,
+    const jsont &stmt);
 
   /// Current function name (empty for top-level code)
   std::string current_function;

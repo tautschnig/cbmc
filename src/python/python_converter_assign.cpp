@@ -1391,6 +1391,18 @@ codet python_convertert::convert_assign(const jsont &stmt)
     }
   }
 
+  // PLR 3.1 / 6.3.4: `x = f(..., a, ...)` where f returns its list or dict
+  // parameter itself binds x to the SAME object as the argument (or as
+  // the shared mutable default). Returning by value made `b = same(a);
+  // b.append(2)` leave `a` unchanged (a false proof).
+  if(as_array(targets).size() == 1)
+  {
+    if(
+      auto c = convert_assign_returned_param_alias(
+        *as_array(targets).begin(), value, stmt))
+      return std::move(*c);
+  }
+
   // PLR §6.10.3: list/dict identity aliasing for plain Assign.
   // Mirror convert_ann_assign's alias handling: when a single
   // Name target receives another Name whose value is a list /
@@ -6333,4 +6345,201 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
   code_frontend_assignt assign{lhs, new_rhs};
   assign.add_source_location() = loc;
   return std::move(assign);
+}
+
+std::optional<codet> python_convertert::convert_assign_returned_param_alias(
+  const jsont &target,
+  const jsont &value,
+  const jsont &stmt)
+{
+  if(
+    !is_node_type(target, "Name") || !is_node_type(value, "Call") ||
+    !is_node_type(json_member(value, "func"), "Name"))
+    return std::nullopt;
+  const std::string fname =
+    json_string(json_member(json_member(value, "func"), "id"));
+  // Module-level user functions only (the definition is known by name).
+  if(
+    !current_function.empty() &&
+    symbol_table.lookup(irep_idt{qualify_name(fname)}) != nullptr)
+    return std::nullopt;
+  const irep_idt fid{"python::" + fname};
+  const symbolt *fsym = symbol_table.lookup(fid);
+  auto bit = function_bodies_by_name.find(fname);
+  if(
+    fsym == nullptr || fsym->type.id() != ID_code ||
+    bit == function_bodies_by_name.end() ||
+    function_aliases.count(qualify_name(fname)) > 0)
+    return std::nullopt;
+  const jsont &body = *bit->second;
+  if(!body.is_array() || as_array(body).empty())
+    return std::nullopt;
+  // The returned parameter: every `return` returns the same Name, the
+  // body ends with that return, and the name is never rebound.
+  std::string ret;
+  bool ok = true;
+  std::function<void(const jsont &)> scan = [&](const jsont &n)
+  {
+    if(!ok)
+      return;
+    if(n.is_array())
+    {
+      for(const auto &c : as_array(n))
+        scan(c);
+      return;
+    }
+    if(!n.is_object())
+      return;
+    if(
+      is_node_type(n, "FunctionDef") || is_node_type(n, "AsyncFunctionDef") ||
+      is_node_type(n, "Lambda") || is_node_type(n, "ClassDef"))
+      return;
+    if(is_node_type(n, "Yield") || is_node_type(n, "YieldFrom"))
+    {
+      ok = false;
+      return;
+    }
+    if(is_node_type(n, "Return"))
+    {
+      const jsont &rv = json_member(n, "value");
+      if(!is_node_type(rv, "Name"))
+      {
+        ok = false;
+        return;
+      }
+      const std::string r = json_string(json_member(rv, "id"));
+      if(!ret.empty() && r != ret)
+        ok = false;
+      ret = r;
+    }
+    for(const auto &kv : to_json_object(n))
+      if(kv.first != "_type")
+        scan(kv.second);
+  };
+  scan(body);
+  const jsont &last = *std::prev(as_array(body).end());
+  if(!ok || ret.empty() || !is_node_type(last, "Return"))
+    return std::nullopt;
+  {
+    std::set<std::string> assigned, excluded, non_plain;
+    collect_assigned_locals(body, assigned, excluded, non_plain);
+    if(assigned.count(ret) > 0 || non_plain.count(ret) > 0)
+      return std::nullopt;
+  }
+  // Index of the returned name among the positional parameters.
+  const jsont &fdef_args = [&]() -> const jsont &
+  {
+    static const jsont null_json;
+    const jsont &mb = json_member(parse_tree.ast_json, "body");
+    if(mb.is_array())
+      for(const auto &st : as_array(mb))
+        if(
+          is_node_type(st, "FunctionDef") &&
+          json_string(json_member(st, "name")) == fname)
+          return json_member(st, "args");
+    return null_json;
+  }();
+  if(!fdef_args.is_object())
+    return std::nullopt;
+  if(
+    !json_member(fdef_args, "vararg").is_null() ||
+    !json_member(fdef_args, "kwarg").is_null())
+    return std::nullopt;
+  std::vector<std::string> pnames;
+  for(const char *g : {"posonlyargs", "args"})
+    if(json_member(fdef_args, g).is_array())
+      for(const auto &a : as_array(json_member(fdef_args, g)))
+        pnames.push_back(json_string(json_member(a, "arg")));
+  std::size_t pidx = pnames.size();
+  for(std::size_t i = 0; i < pnames.size(); ++i)
+    if(pnames[i] == ret)
+      pidx = i;
+  if(pidx == pnames.size())
+    return std::nullopt;
+  const auto &ps = to_code_type(fsym->type).parameters();
+  if(pidx >= ps.size() || ps[pidx].type().id() != ID_pointer)
+    return std::nullopt;
+  const typet &base = to_pointer_type(ps[pidx].type()).base_type();
+  if(!is_python_list_type(base) && !is_python_dict_type(base))
+    return std::nullopt;
+  // The object passed for that parameter.
+  irep_idt target_id;
+  const jsont &cargs = json_member(value, "args");
+  const jsont &ckw = json_member(value, "keywords");
+  const jsont *arg_node = nullptr;
+  if(cargs.is_array())
+  {
+    std::size_t i = 0;
+    for(const auto &a : as_array(cargs))
+    {
+      if(is_node_type(a, "Starred"))
+        return std::nullopt;
+      if(i++ == pidx)
+        arg_node = &a;
+    }
+  }
+  if(ckw.is_array())
+    for(const auto &k : as_array(ckw))
+    {
+      const jsont &kn = json_member(k, "arg");
+      if(kn.is_null())
+        return std::nullopt;
+      if(json_string(kn) == ret)
+        arg_node = &json_member(k, "value");
+    }
+  if(arg_node != nullptr)
+  {
+    if(!is_node_type(*arg_node, "Name"))
+      return std::nullopt;
+    const irep_idt aid{qualify_name(json_string(json_member(*arg_node, "id")))};
+    auto at = alias_targets.find(aid);
+    target_id = at != alias_targets.end() ? at->second : aid;
+  }
+  else
+  {
+    auto mo = mutable_default_objects.find({id2string(fid), pidx});
+    if(mo == mutable_default_objects.end())
+      return std::nullopt;
+    target_id = mo->second;
+  }
+  const symbolt *tsym = symbol_table.lookup(target_id);
+  if(tsym == nullptr || tsym->type != base)
+    return std::nullopt;
+  const std::string lhs_name = json_string(json_member(target, "id"));
+  const irep_idt lhs_id{qualify_name(lhs_name)};
+  if(lhs_id == target_id)
+    return std::nullopt;
+  // Run the call (its effects, e.g. the mutation of the object), then
+  // bind the target to the object it returns.
+  code_blockt block;
+  exprt call = convert_expression(value);
+  for(auto &c : pending_checks)
+    block.add(std::move(c));
+  pending_checks.clear();
+  if(call.is_nil())
+    return std::nullopt;
+  code_expressiont ce{call};
+  ce.add_source_location() = get_location(stmt);
+  block.add(std::move(ce));
+  const pointer_typet ptr_type{base, 64};
+  if(symbol_table.lookup(lhs_id) == nullptr)
+  {
+    symbolt ls{lhs_id, ptr_type, "python"};
+    ls.base_name = lhs_name;
+    ls.is_lvalue = true;
+    ls.is_state_var = true;
+    ls.is_static_lifetime = current_function.empty();
+    symbol_table.add(ls);
+  }
+  else
+    symbol_table.get_writeable_ref(lhs_id).type = ptr_type;
+  alias_targets[lhs_id] = target_id;
+  list_literals.erase(target_id);
+  dict_literals.erase(target_id);
+  code_frontend_assignt a{
+    symbol_table.lookup_ref(lhs_id).symbol_expr(),
+    address_of_exprt{tsym->symbol_expr()}};
+  a.add_source_location() = get_location(stmt);
+  block.add(std::move(a));
+  return std::optional<codet>{std::move(block)};
 }
