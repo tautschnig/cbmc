@@ -365,6 +365,27 @@ exprt python_convertert::convert_if_exp(const jsont &expr)
     return nil_exprt{};
   if(test.type() != bool_typet{})
     test = safe_typecast(test, bool_typet{});
+  // The test is evaluated once, before the branch: the branch may change
+  // what it reads (`s.pop() if s else "-"` emptied s, so the value read
+  // "-").
+  if(!test.is_constant() && test.id() != ID_symbol)
+  {
+    static unsigned if_exp_ctr = 0;
+    const std::string name = "__if_test_" + std::to_string(if_exp_ctr++);
+    const irep_idt id{qualify_name(name)};
+    if(symbol_table.lookup(id) == nullptr)
+    {
+      symbolt t{id, bool_typet{}, "python"};
+      t.base_name = name;
+      t.is_lvalue = true;
+      t.is_state_var = true;
+      t.is_static_lifetime = current_function.empty();
+      symbol_table.add(t);
+    }
+    const symbol_exprt t = symbol_table.lookup_ref(id).symbol_expr();
+    pending_checks.push_back(code_frontend_assignt{t, test});
+    test = t;
+  }
 
   // PLR §6.13: only the selected branch is evaluated, so a
   // may-raise sub-expression in a branch must fire its check
