@@ -7,6 +7,8 @@ Author: Romain Brenguier, romain.brenguier@diffblue.com
 
 #include "union_find_replace.h"
 
+#include <functional>
+#include <unordered_map>
 
 /// Merge the set containing `a` and the set containing `b`.
 /// \param a: an expression
@@ -27,9 +29,54 @@ exprt union_find_replacet::make_union(const exprt &a, const exprt &b)
 /// \return true if expr is left unchanged
 bool union_find_replacet::replace_expr(exprt &expr) const
 {
-  bool unchanged = ::replace_expr(map, expr);
-  while(!unchanged && !::replace_expr(map, expr))
-    continue;
+  // Replace every sub-expression that is in the map by its representative,
+  // and the representative's sub-expressions in turn, to a fixpoint (the
+  // map is acyclic). Shared sub-expressions are rewritten once (memoised):
+  // a plain tree traversal visits a shared node once per path to it, which
+  // is exponential in the depth of DAG-shaped expressions (merges of merges
+  // of pointers) and exhausted memory on string solver inputs.
+  if(map.empty())
+    return true;
+  std::unordered_map<exprt, exprt, irep_hash> memo;
+  std::function<const exprt &(const exprt &)> rec =
+    [&](const exprt &e) -> const exprt &
+  {
+    auto mi = memo.find(e);
+    if(mi != memo.end())
+      return mi->second;
+    exprt result;
+    auto findit = map.find(e);
+    if(findit != map.end())
+    {
+      PRECONDITION_WITH_DIAGNOSTICS(
+        e.type() == findit->second.type(),
+        "types to be replaced should match. old type:\n" + e.type().pretty() +
+          "\nnew type:\n" + findit->second.type().pretty());
+      result = rec(findit->second);
+    }
+    else
+    {
+      result = e;
+      bool changed = false;
+      exprt::operandst &ops = result.operands();
+      for(std::size_t i = 0; i < ops.size(); ++i)
+      {
+        const exprt &r = rec(e.operands()[i]);
+        if(r != e.operands()[i])
+        {
+          ops[i] = r;
+          changed = true;
+        }
+      }
+      if(!changed)
+        result = e;
+    }
+    return memo.emplace(e, std::move(result)).first->second;
+  };
+  exprt replaced = rec(expr);
+  const bool unchanged = replaced == expr;
+  if(!unchanged)
+    expr = std::move(replaced);
   return unchanged;
 }
 

@@ -784,6 +784,10 @@ string_refinementt::dec_solve(const exprt &assumption)
               << messaget::eom;
   for(exprt &expr : equations)
   {
+    // Only function applications are rewritten; skip the (usually many)
+    // equations without one instead of walking them.
+    if(!has_subexpr(expr, ID_function_application))
+      continue;
     auto it = expr.depth_begin();
     while(it != expr.depth_end())
     {
@@ -835,8 +839,18 @@ string_refinementt::dec_solve(const exprt &assumption)
   log.debug() << "dec_solve: compute dependency graph and remove function "
               << "applications captured by the dependencies:" << messaget::eom;
   std::vector<exprt> local_equations;
+  local_equations.reserve(equations.size());
   for(const exprt &eq : equations)
   {
+    // add_node only creates nodes for function applications and otherwise
+    // keeps `eq` unchanged (the rewritten copy below is discarded), so an
+    // equation without one needs no rewriting. On large formulas this
+    // rewriting of every equation dominated the solver's run time.
+    if(!has_subexpr(eq, ID_function_application))
+    {
+      local_equations.push_back(eq);
+      continue;
+    }
     // Ensures that arrays that are equal, are associated to the same nodes
     // in the graph.
     exprt eq_with_char_array_replaced_with_representative_elements =

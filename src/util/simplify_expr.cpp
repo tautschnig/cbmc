@@ -803,10 +803,34 @@ static simplify_exprt::resultt<> simplify_string_binary_predicate(
   if(expr.arguments().size() != 2)
     return simplify_exprt::unchanged(expr);
   const auto a = try_get_constant_string_chars(expr.arguments()[0], ns);
-  if(!a.has_value())
-    return simplify_exprt::unchanged(expr);
   const auto b = try_get_constant_string_chars(expr.arguments()[1], ns);
-  if(!b.has_value())
+  // Equality with the empty string is a length test: s == "" iff
+  // length(s) == 0 (for a refined {length, data} string operand).
+  if(
+    func_id == ID_cprover_string_equal_func && (a.has_value() != b.has_value()))
+  {
+    const auto &known = a.has_value() ? *a : *b;
+    const exprt &other = expr.arguments()[a.has_value() ? 1 : 0];
+    const typet &ot = other.type().id() == ID_struct_tag
+                        ? static_cast<const typet &>(
+                            ns.follow_tag(to_struct_tag_type(other.type())))
+                        : other.type();
+    if(
+      known.empty() && ot.id() == ID_struct &&
+      to_struct_type(ot).has_component("length"))
+    {
+      const typet &lt = to_struct_type(ot).get_component("length").type();
+      const exprt len = other.id() == ID_struct && other.operands().size() >= 1
+                          ? other.operands()[0]
+                          : exprt{member_exprt{other, "length", lt}};
+      const exprt is_empty = equal_exprt{len, from_integer(0, lt)};
+      if(expr.type().id() == ID_bool)
+        return is_empty;
+      return exprt{if_exprt{
+        is_empty, from_integer(1, expr.type()), from_integer(0, expr.type())}};
+    }
+  }
+  if(!a.has_value() || !b.has_value())
     return simplify_exprt::unchanged(expr);
   bool result;
   if(func_id == ID_cprover_string_equal_func)
