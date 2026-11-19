@@ -1,0 +1,10 @@
+CORE
+main.py
+--unwind 2 --unwindset python::route.1:17,__CPROVER__start.0:17
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+--
+Twin of list-of-lists-symbolic-index-append.

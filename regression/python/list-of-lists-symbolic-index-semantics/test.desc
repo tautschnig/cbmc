@@ -1,0 +1,11 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+The dispatch on a non-constant outer index keeps Python's semantics: a
+negative index counts from the end, and an index out of range raises
+IndexError before the method runs (PLR 6.3.2).

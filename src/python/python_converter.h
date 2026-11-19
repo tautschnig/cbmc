@@ -15,6 +15,7 @@
 #include "python_types.h"
 
 #include <functional>
+#include <list>
 #include <map>
 #include <optional>
 #include <set>
@@ -2007,6 +2008,13 @@ private:
     code_blockt &body_block);
 
   codet convert_expr_stmt(const jsont &stmt);
+  /// `X[e].m(...)` on a list of containers X at a non-constant index e:
+  /// evaluate e once and dispatch on its value to the constant-index
+  /// statements (see the definition). nullopt when not applicable.
+  std::optional<codet> split_symbolic_outer_subscript(const jsont &stmt);
+  bool splitting_outer_subscript = false;
+  /// Owned copies of statements synthesized by the dispatch above.
+  std::list<jsont> split_stmt_copies;
   codet convert_break();
   codet convert_continue();
   codet convert_pass();

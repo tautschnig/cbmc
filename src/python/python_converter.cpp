@@ -1795,6 +1795,16 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
   // `candidate = actions[index]`), so a later `lst.append(candidate)`
   // can resolve the element type even when `name` is not a literal.
   std::map<irep_idt, typet> name_value_t;
+  // Function definitions the walk descends into (it follows "body"): the
+  // annotated parameter types and the names bound locally, innermost
+  // last. A parameter's annotation types it; a locally bound name
+  // shadows a module-level one.
+  struct fn_scopet
+  {
+    std::map<std::string, typet> params;
+    std::set<std::string> locals;
+  };
+  std::vector<fn_scopet> fn_scopes;
   std::function<typet(const jsont &)> type_of_expr;
   type_of_expr = [&](const jsont &n) -> typet
   {
@@ -1814,6 +1824,15 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
       }
       if(v.is_true() || v.is_false())
         return bool_typet{};
+    }
+    if(is_node_type(n, "Name") && !fn_scopes.empty())
+    {
+      const std::string nm = json_string(json_member(n, "id"));
+      auto pt = fn_scopes.back().params.find(nm);
+      if(pt != fn_scopes.back().params.end())
+        return pt->second;
+      if(fn_scopes.back().locals.count(nm) > 0)
+        return typet{ID_empty};
     }
     if(is_node_type(n, "Name"))
     {
@@ -2002,7 +2021,10 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
     if(is_node_type(n, "Subscript"))
     {
       const jsont &v = json_member(n, "value");
-      if(is_node_type(v, "Name"))
+      const bool fn_scoped_name =
+        is_node_type(v, "Name") && !fn_scopes.empty() &&
+        fn_scopes.back().locals.count(json_string(json_member(v, "id"))) > 0;
+      if(is_node_type(v, "Name") && !fn_scoped_name)
       {
         std::string vn = json_string(json_member(v, "id"));
         irep_idt vid{qualify_name(vn)};
@@ -2501,10 +2523,14 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
               !is_node_type(json_member(obj_node, "slice"), "Slice") &&
               (method == "append" || method == "insert"))
             {
-              irep_idt sid{qualify_name(json_string(
-                json_member(json_member(obj_node, "value"), "id")))};
-              const bool tracked = pending_nested.count(sid) > 0 ||
-                                   nested_empty_list_inner_types.count(sid) > 0;
+              const std::string recv_name =
+                json_string(json_member(json_member(obj_node, "value"), "id"));
+              irep_idt sid{qualify_name(recv_name)};
+              const bool tracked =
+                (pending_nested.count(sid) > 0 ||
+                 nested_empty_list_inner_types.count(sid) > 0) &&
+                (fn_scopes.empty() ||
+                 fn_scopes.back().locals.count(recv_name) == 0);
               const jsont &args = json_member(val, "args");
               const std::size_t vi = method == "insert" ? 1 : 0;
               if(tracked && args.is_array() && as_array(args).size() > vi)
@@ -2616,6 +2642,31 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
           is_node_type(stmt, "For") || is_node_type(stmt, "AsyncFor");
         if(is_for_node)
           for_stack.push_back(&stmt);
+        const bool is_fn_node = is_node_type(stmt, "FunctionDef") ||
+                                is_node_type(stmt, "AsyncFunctionDef");
+        if(is_fn_node)
+        {
+          fn_scopet sc;
+          std::set<std::string> excluded, non_plain;
+          collect_assigned_locals(
+            json_member(stmt, "body"), sc.locals, excluded, non_plain);
+          const jsont &fargs = json_member(stmt, "args");
+          for(const char *g : {"posonlyargs", "args", "kwonlyargs"})
+            if(json_member(fargs, g).is_array())
+              for(const auto &a : as_array(json_member(fargs, g)))
+              {
+                const std::string an = json_string(json_member(a, "arg"));
+                sc.locals.insert(an);
+                const jsont &ann = json_member(a, "annotation");
+                if(ann.is_object())
+                  sc.params[an] = convert_type_annotation(ann);
+              }
+          for(const char *g : {"vararg", "kwarg"})
+            if(json_member(fargs, g).is_object())
+              sc.locals.insert(
+                json_string(json_member(json_member(fargs, g), "arg")));
+          fn_scopes.push_back(std::move(sc));
+        }
         for(const char *child : {"body", "orelse", "finalbody", "handlers"})
         {
           const jsont &c = json_member(stmt, child);
@@ -2624,6 +2675,8 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
         }
         if(is_for_node)
           for_stack.pop_back();
+        if(is_fn_node)
+          fn_scopes.pop_back();
       }
     }
   };

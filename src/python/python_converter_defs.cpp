@@ -6672,6 +6672,8 @@ codet python_convertert::convert_class_def(const jsont &stmt)
 
 codet python_convertert::convert_expr_stmt(const jsont &stmt)
 {
+  if(auto split = split_symbolic_outer_subscript(stmt))
+    return std::move(*split);
   // SPIKE structure-of-arrays: statement-level method calls
   // (apps.append(...)) dispatch HERE, not through convert_call --
   // clear the TypedDict-field read memo so no consumer reuses a
@@ -7619,4 +7621,171 @@ void python_convertert::refresh_closure_capture_types(
     else
       type = closure_capture_slot_type(ot);
   }
+}
+
+std::optional<codet>
+python_convertert::split_symbolic_outer_subscript(const jsont &stmt)
+{
+  // `X[e].m(args)` with X a list of containers and e non-constant: the
+  // receiver X[e] is an element at a symbolic index, so every write the
+  // method makes (an append writes X[e].data[X[e].length]) is a write at
+  // a symbolic index into every element of every inner list. Symbolic
+  // execution then updates all N*N leaves for each such statement. Evaluate
+  // e once and dispatch on its value: in the branch for a constant c the
+  // receiver is X[c], whose length is usually known, so the method touches
+  // one element. The evaluation order is unchanged: e has no calls,
+  // so evaluating it before X is not observable.
+  if(splitting_outer_subscript)
+    return std::nullopt;
+  const jsont &call = json_member(stmt, "value");
+  if(!is_node_type(call, "Call"))
+    return std::nullopt;
+  const jsont &func = json_member(call, "func");
+  if(!is_node_type(func, "Attribute"))
+    return std::nullopt;
+  const jsont &recv = json_member(func, "value");
+  if(!is_node_type(recv, "Subscript"))
+    return std::nullopt;
+  const jsont &base = json_member(recv, "value");
+  const jsont &idx = json_member(recv, "slice");
+  if(!is_node_type(base, "Name") || is_node_type(idx, "Constant"))
+    return std::nullopt;
+  if(is_node_type(idx, "Slice") || is_node_type(idx, "Tuple"))
+    return std::nullopt;
+  bool simple = true;
+  std::function<void(const jsont &)> scan = [&](const jsont &n)
+  {
+    if(!simple)
+      return;
+    if(n.is_array())
+    {
+      for(const auto &c : as_array(n))
+        scan(c);
+      return;
+    }
+    if(!n.is_object())
+      return;
+    if(
+      is_node_type(n, "Call") || is_node_type(n, "NamedExpr") ||
+      is_node_type(n, "Await") || is_node_type(n, "Yield") ||
+      is_node_type(n, "YieldFrom") || is_node_type(n, "Lambda"))
+    {
+      simple = false;
+      return;
+    }
+    for(const auto &kv : to_json_object(n))
+      if(kv.first != "_type")
+        scan(kv.second);
+  };
+  scan(idx);
+  if(!simple)
+    return std::nullopt;
+  // X must be a list (or a reference to one) whose elements are lists or
+  // dicts.
+  const symbolt *xs = symbol_table.lookup(
+    irep_idt{qualify_name(json_string(json_member(base, "id")))});
+  if(xs == nullptr)
+    xs = symbol_table.lookup(
+      irep_idt{"python::" + json_string(json_member(base, "id"))});
+  if(xs == nullptr)
+    return std::nullopt;
+  typet xt = xs->type;
+  if(xt.id() == ID_pointer)
+    xt = to_pointer_type(xt).base_type();
+  if(!is_python_list_type(xt))
+    return std::nullopt;
+  const auto &data_t = to_array_type(to_struct_type(xt).components()[1].type());
+  const typet &et = data_t.element_type();
+  if(!is_python_list_type(et) && !is_python_dict_type(et))
+    return std::nullopt;
+  const auto cap = numeric_cast<mp_integer>(data_t.size());
+  if(!cap.has_value() || *cap < 2 || *cap > 64)
+    return std::nullopt;
+
+  // Evaluate the index once.
+  const std::size_t pc0 = pending_checks.size();
+  exprt iv = convert_expression(idx);
+  if(
+    iv.is_nil() ||
+    (iv.type().id() != ID_signedbv && iv.type().id() != ID_unsignedbv &&
+     iv.type().id() != ID_integer))
+  {
+    pending_checks.erase(pending_checks.begin() + pc0, pending_checks.end());
+    return std::nullopt;
+  }
+  code_blockt block;
+  for(std::size_t i = pc0; i < pending_checks.size(); ++i)
+    block.add(std::move(pending_checks[i]));
+  pending_checks.erase(pending_checks.begin() + pc0, pending_checks.end());
+  static unsigned sidx_ctr = 0;
+  const std::string tn = "__sidx_" + std::to_string(sidx_ctr++);
+  const irep_idt tid{qualify_name(tn)};
+  if(symbol_table.lookup(tid) == nullptr)
+  {
+    symbolt ts{tid, iv.type(), "python"};
+    ts.base_name = tn;
+    ts.is_lvalue = true;
+    ts.is_state_var = true;
+    ts.is_static_lifetime = current_function.empty();
+    symbol_table.add(ts);
+  }
+  const symbol_exprt tsym = symbol_table.lookup_ref(tid).symbol_expr();
+  code_frontend_assignt set{tsym, iv};
+  set.add_source_location() = get_location(stmt);
+  block.add(std::move(set));
+
+  auto with_slice = [&](const jsont &new_slice) -> const jsont &
+  {
+    jsont copy = stmt;
+    json_objectt &v = to_json_object(to_json_object(copy)["value"]);
+    json_objectt &f = to_json_object(v["func"]);
+    json_objectt &r = to_json_object(f["value"]);
+    r["slice"] = new_slice;
+    split_stmt_copies.push_back(std::move(copy));
+    return split_stmt_copies.back();
+  };
+  // PLR 6.3.2: a negative index counts from the end. Index values outside
+  // [0, capacity) after that are outside the list: IndexError.
+  {
+    const exprt xlen = member_exprt{
+      xs->type.id() == ID_pointer ? exprt{dereference_exprt{xs->symbol_expr()}}
+                                  : exprt{xs->symbol_expr()},
+      "length",
+      signedbv_typet{64}};
+    block.add(code_ifthenelset{
+      binary_relation_exprt{tsym, ID_lt, from_integer(0, tsym.type())},
+      code_frontend_assignt{
+        tsym,
+        plus_exprt{
+          tsym, typecast_exprt::conditional_cast(xlen, tsym.type())}}});
+  }
+  splitting_outer_subscript = true;
+  const std::size_t pc1 = pending_checks.size();
+  emit_conditional_exception(true_exprt{}, "IndexError");
+  code_blockt raise_block;
+  for(std::size_t i = pc1; i < pending_checks.size(); ++i)
+    raise_block.add(std::move(pending_checks[i]));
+  pending_checks.erase(pending_checks.begin() + pc1, pending_checks.end());
+  codet chain = std::move(raise_block);
+  const std::size_t n = numeric_cast_v<std::size_t>(*cap);
+  for(std::size_t c = n; c-- > 0;)
+  {
+    json_objectt cn;
+    cn["_type"] = json_stringt("Constant");
+    cn["value"] = json_numbert(std::to_string(c));
+    for(const char *k :
+        {"lineno", "col_offset", "end_lineno", "end_col_offset"})
+      if(!json_member(idx, k).is_null())
+        cn[k] = json_member(idx, k);
+    codet branch = convert_statement(with_slice(cn));
+    code_ifthenelset ite{
+      equal_exprt{tsym, from_integer(c, tsym.type())},
+      std::move(branch),
+      std::move(chain)};
+    ite.add_source_location() = get_location(stmt);
+    chain = std::move(ite);
+  }
+  splitting_outer_subscript = false;
+  block.add(std::move(chain));
+  return std::optional<codet>{std::move(block)};
 }

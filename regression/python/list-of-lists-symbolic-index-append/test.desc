@@ -1,0 +1,14 @@
+CORE
+main.py
+--unwind 2 --unwindset python::route.1:17,__CPROVER__start.0:17
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+`bins[k].append(v)` on a list of 16 lists at a symbolic k. The append
+wrote at a symbolic index into every element of every inner list, and the
+inner element type was not inferred from the function's annotated
+parameter (python_value): symbolic execution took 70 s. The statement now
+dispatches on k (each branch appends to bins[c]) and the element type is
+int: about 5 s.
