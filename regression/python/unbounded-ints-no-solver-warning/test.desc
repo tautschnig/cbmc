@@ -1,8 +1,0 @@
-CORE
-main.py
---python-unbounded-ints
-^--python-unbounded-ints uses mathematical \(arbitrary-precision\) integers, which require an SMT solver
-^VERIFICATION SUCCESSFUL$
-^EXIT=0$
-^SIGNAL=0$
---

@@ -255,14 +255,16 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     }
     if(cmdline.isset("python-unbounded-ints") && !any_smt_solver)
     {
-      log.warning()
-        << "--python-unbounded-ints uses mathematical (arbitrary-precision) "
-           "integers, which require an SMT solver: pass one of --cvc5 / --z3 "
-           "(or another SMT backend). Without one the bit-vector backend "
-           "cannot reason about them and results are unreliable: it treats "
-           "each operation on them as an unknown value, so properties that "
-           "depend on their values fail spuriously."
-        << messaget::eom;
+      // A hard error, not a warning: the bit-vector (SAT) backend ignores
+      // every operation on mathematical integers (it treats it as an
+      // unknown value), so properties that depend on their values fail
+      // spuriously and the unwinding of loops over them is not decided.
+      // --outfile (SMT2 dump) counts as an SMT backend.
+      throw invalid_command_line_argument_exceptiont{
+        "requires an SMT solver: the flag uses mathematical integers, which "
+        "the SAT backend cannot represent",
+        "--python-unbounded-ints",
+        "pass --z3 or --cvc5 (or another SMT backend, or --outfile)"};
     }
   }
   if(cmdline.isset("python-lazy-stubs"))

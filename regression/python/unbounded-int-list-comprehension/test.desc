@@ -1,6 +1,6 @@
 CORE
 main.py
---python-unbounded-ints --unwind 12
+--python-unbounded-ints --unwind 12 --z3
 
 ^EXIT=0$
 ^SIGNAL=0$

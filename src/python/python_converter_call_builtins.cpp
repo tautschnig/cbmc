@@ -6814,13 +6814,18 @@ exprt python_convertert::emit_native_int_parse(
   // string (a sign, other accepted spellings, longer numerals, invalid
   // input) gets an unconstrained value.
   const typet &it = python_int_type();
-  if(it.id() != ID_signedbv)
-    return side_effect_expr_nondett{it, loc}; // unbounded ints: not modelled
   const auto [valid, val] = native_digit_string(str, base, 0);
-  const exprt fits = and_exprt{
-    valid,
-    binary_relation_exprt{
-      val, ID_le, from_integer(to_signedbv_type(it).largest(), val.type())}};
+  // Unbounded ints: every K-digit value is exact; the 64-bit model:
+  // values beyond it are unconstrained (they wrap in that model).
+  const exprt fits =
+    it.id() == ID_signedbv
+      ? exprt{and_exprt{
+          valid,
+          binary_relation_exprt{
+            val,
+            ID_le,
+            from_integer(to_signedbv_type(it).largest(), val.type())}}}
+      : valid;
   return if_exprt{
     fits, typecast_exprt{val, it}, side_effect_expr_nondett{it, loc}};
 }

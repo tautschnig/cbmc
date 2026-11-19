@@ -1,0 +1,12 @@
+CORE
+main.py
+--python-unbounded-ints
+^EXIT=(1|6)$
+^SIGNAL=0$
+requires an SMT solver
+--
+^VERIFICATION
+--
+Without an SMT solver the SAT backend ignores operations on mathematical
+integers, so results were spurious failures (e.g. `int(s, 16) >= 0`, and
+undecided loop unwinding). The combination is rejected.
