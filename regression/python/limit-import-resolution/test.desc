@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 main.py
 
 ^EXIT=0$
@@ -6,6 +6,4 @@ main.py
 ^VERIFICATION SUCCESSFUL$
 --
 --
-Counter returns nondet (no body). The assertion c[1] == 2 fails
-because the nondet dict doesn't track element counts.
-With --python-no-body-check, verification succeeds (no crash).
+Counter is modelled exactly (library/collections), so c[1] == 2 holds.
