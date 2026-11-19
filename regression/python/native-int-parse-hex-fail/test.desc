@@ -1,0 +1,10 @@
+CORE smt-backend
+main.py
+--python-smt-strings --cvc5
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] .* Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+--
+Twin of native-int-parse-hex.

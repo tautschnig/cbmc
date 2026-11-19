@@ -2739,6 +2739,15 @@ private:
     const std::string &fmt,
     const exprt &args,
     const source_locationt &loc);
+  /// Native SMT string \p str as digits of \p base (letter case: 0 any,
+  /// 1 lower, 2 upper): (is 1..K such digits, value as 128-bit bv).
+  std::pair<exprt, exprt>
+  native_digit_string(const exprt &str, int base, int letter_case);
+  /// int(str, base) of a native SMT string (see the definition).
+  exprt emit_native_int_parse(
+    const exprt &str,
+    int base,
+    const source_locationt &loc);
   /// Concatenate str parts, folding adjacent literals.
   exprt concat_string_parts(const std::vector<exprt> &parts);
   exprt format_value_spec(

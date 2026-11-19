@@ -8043,26 +8043,37 @@ exprt python_convertert::format_value_spec(
   // radix, substring, upper case, concatenation. The padding is a prefix of
   // a literal of `width` fill characters.
   const signedbv_typet i64{64};
-  auto str_len = [&](const exprt &x)
+  // Lengths and pad counts: bit-vectors for refined strings, Ints for
+  // native SMT strings (int2bv of string lengths is costly for solvers).
+  const bool native = use_smt_string_native;
+  const typet lt = native ? typet{integer_typet{}} : typet{i64};
+  auto str_len = [&](const exprt &x) -> exprt
   {
+    if(native)
+      return native_string_app(
+        ID_cprover_string_length_func, {string_typet{}}, {x}, lt);
     const exprt l = native_or_member_string_length(x);
     return l.type() == i64 ? l : safe_typecast(l, i64);
   };
-  auto pad_of = [&](char fill, const exprt &k)
+  auto pad_of = [&](char fill, const exprt &k) -> exprt
   {
-    return string_substr(
-      python_string_literal(std::string(parsed->width, fill)),
-      from_integer(0, i64),
-      k);
+    const exprt lit = python_string_literal(std::string(parsed->width, fill));
+    if(native)
+      return native_string_app(
+        ID_cprover_string_substring_func,
+        {string_typet{}, lt, lt},
+        {lit, from_integer(0, lt), k},
+        string_typet{});
+    return string_substr(lit, from_integer(0, i64), k);
   };
   // max(0, width - used)
   auto pad_len = [&](const exprt &used)
   {
-    const exprt d = minus_exprt{from_integer(parsed->width, i64), used};
+    const exprt d = minus_exprt{from_integer(parsed->width, lt), used};
     return exprt{if_exprt{
-      binary_relation_exprt{d, ID_gt, from_integer(0, i64)},
+      binary_relation_exprt{d, ID_gt, from_integer(0, lt)},
       d,
-      from_integer(0, i64)}};
+      from_integer(0, lt)}};
   };
   auto aligned =
     [&](char align, char fill, const exprt &head, const exprt &body) -> exprt
@@ -8079,7 +8090,7 @@ exprt python_convertert::format_value_spec(
       return string_concat(string_concat(head, pad_of(fill, k)), body);
     case '^':
     {
-      const exprt kl = div_exprt{k, from_integer(2, i64)};
+      const exprt kl = div_exprt{k, from_integer(2, lt)};
       return string_concat(
         string_concat(pad_of(fill, kl), string_concat(head, body)),
         pad_of(fill, minus_exprt{k, kl}));
@@ -8105,33 +8116,88 @@ exprt python_convertert::format_value_spec(
         ? exprt{if_exprt{v, from_integer(1, i64), from_integer(0, i64)}}
         : typecast_exprt::conditional_cast(v, i64);
     const exprt neg = binary_relation_exprt{iv, ID_lt, from_integer(0, i64)};
-    exprt with_sign = nil_exprt{};
+    exprt body = nil_exprt{};
     if(use_smt_string_native)
     {
-      if(ip->base != 10)
-        return nil_exprt{};
-      with_sign = native_string_of_int(iv);
+      // Native SMT strings: the digits are a fresh string constrained to be
+      // the canonical numeral of |v| in the base, in the presentation's
+      // letter case: digits only, no leading zero, value |v|.
+      static unsigned nfmt_ctr = 0;
+      const std::string nm = "__nfmt_" + std::to_string(nfmt_ctr++);
+      const irep_idt id{qualify_name(nm)};
+      if(symbol_table.lookup(id) == nullptr)
+      {
+        symbolt ss{id, string_typet{}, "python"};
+        ss.base_name = nm;
+        ss.is_lvalue = true;
+        ss.is_state_var = true;
+        ss.is_static_lifetime = current_function.empty();
+        symbol_table.add(ss);
+      }
+      const symbol_exprt t = symbol_table.lookup_ref(id).symbol_expr();
+      pending_checks.push_back(code_frontend_assignt{
+        t, side_effect_expr_nondett{string_typet{}, loc}});
+      const auto [valid, val] =
+        native_digit_string(t, ip->base, ip->upper ? 2 : 1);
+      const typet &wt = val.type();
+      const exprt v128 = typecast_exprt{iv, wt};
+      const exprt absv = if_exprt{neg, unary_minus_exprt{v128}, v128};
+      const integer_typet Z;
+      const exprt tlen = native_string_app(
+        ID_cprover_string_length_func, {string_typet{}}, {t}, Z);
+      const exprt first = native_string_app(
+        ID_cprover_string_to_code_func,
+        {string_typet{}},
+        {native_string_app(
+          ID_cprover_string_char_at_func,
+          {string_typet{}, Z},
+          {t, from_integer(0, Z)},
+          string_typet{})},
+        Z);
+      pending_checks.push_back(code_assumet{and_exprt{
+        valid,
+        equal_exprt{val, absv},
+        or_exprt{
+          equal_exprt{tlen, from_integer(1, Z)},
+          notequal_exprt{first, from_integer('0', Z)}}}});
+      // Implied by the above (a numeral without leading zeros has exactly
+      // as many digits as the value needs); stated explicitly because it
+      // helps the solver: len(t) > i iff |v| >= base^i.
+      {
+        mp_integer pw = 1;
+        for(std::size_t i = 1; pw * ip->base <= (mp_integer{1} << 64); ++i)
+        {
+          pw *= ip->base;
+          pending_checks.push_back(code_assumet{equal_exprt{
+            binary_relation_exprt{tlen, ID_gt, from_integer(i, Z)},
+            binary_relation_exprt{absv, ID_ge, from_integer(pw, wt)}}});
+        }
+      }
+      body = t;
     }
     else
-      with_sign = emit_string_function(
+    {
+      const exprt with_sign = emit_string_function(
         ID_cprover_string_of_int_func,
         {iv, from_integer(ip->base, i64)},
         symbol_table,
         pending_checks,
         loop_depth > 0,
         current_function);
-    // The digits without the '-' that int-to-string puts on a negative.
-    const exprt off = if_exprt{neg, from_integer(1, i64), from_integer(0, i64)};
-    exprt body =
-      string_substr(with_sign, off, minus_exprt{str_len(with_sign), off});
-    if(ip->upper)
-      body = emit_string_function(
-        ID_cprover_string_to_upper_case_func,
-        {string_struct_view(body)},
-        symbol_table,
-        pending_checks,
-        loop_depth > 0,
-        current_function);
+      // The digits without the '-' that int-to-string puts on a negative.
+      const exprt off =
+        if_exprt{neg, from_integer(1, i64), from_integer(0, i64)};
+      body =
+        string_substr(with_sign, off, minus_exprt{str_len(with_sign), off});
+      if(ip->upper)
+        body = emit_string_function(
+          ID_cprover_string_to_upper_case_func,
+          {string_struct_view(body)},
+          symbol_table,
+          pending_checks,
+          loop_depth > 0,
+          current_function);
+    }
     const std::string pos_sign = parsed->sign == '+'   ? "+"
                                  : parsed->sign == ' ' ? " "
                                                        : "";
@@ -8149,12 +8215,15 @@ exprt python_convertert::format_value_spec(
     if(parsed->precision.has_value())
     {
       const exprt p = from_integer(
-        mp_integer{static_cast<long long>(*parsed->precision)}, i64);
+        mp_integer{static_cast<long long>(*parsed->precision)}, lt);
       const exprt l = str_len(v);
-      body = string_substr(
-        v,
-        from_integer(0, i64),
-        if_exprt{binary_relation_exprt{l, ID_lt, p}, l, p});
+      const exprt cut = if_exprt{binary_relation_exprt{l, ID_lt, p}, l, p};
+      body = native ? native_string_app(
+                        ID_cprover_string_substring_func,
+                        {string_typet{}, lt, lt},
+                        {v, from_integer(0, lt), cut},
+                        string_typet{})
+                    : string_substr(v, from_integer(0, i64), cut);
     }
     return aligned(
       parsed->align == 0 ? '<' : parsed->align,

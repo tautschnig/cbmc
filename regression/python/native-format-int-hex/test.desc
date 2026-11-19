@@ -1,0 +1,11 @@
+CORE smt-backend
+main.py
+--python-smt-strings --cvc5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+With native strings, format() of a symbolic int in a base other than 10
+was unconstrained. The digits are now a string constrained to be the
+canonical numeral of |v| in the base and letter case of the presentation.

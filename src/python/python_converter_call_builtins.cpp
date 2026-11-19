@@ -6621,6 +6621,8 @@ exprt python_convertert::emit_int_parse(
   // unconstrained int: sound, imprecise.
   if(base != 10 && (base < 2 || base > 36 || base_nonconst))
     return side_effect_expr_nondett{python_int_type(), loc};
+  if(str.type().id() == ID_string)
+    return emit_native_int_parse(str, base, loc);
   // Parse into 128 bits. The solver's parse axioms exclude every input
   // whose value overflows the result type, so parsing straight into the
   // 64-bit model dropped those inputs (a vacuous proof of e.g.
@@ -6696,4 +6698,129 @@ exprt python_convertert::emit_int_parse(
     code_frontend_assignt{any, side_effect_expr_nondett{wide, loc}});
   const typet &it = python_int_type();
   return typecast_exprt{if_exprt{valid, res, any}, it};
+}
+
+static std::size_t native_parse_max_digits(int base)
+{
+  std::size_t k = 0;
+  for(mp_integer v = (mp_integer{1} << 63) - 1; v > 0; v /= base)
+    ++k;
+  return k;
+}
+
+std::pair<exprt, exprt> python_convertert::native_digit_string(
+  const exprt &str,
+  int base,
+  int letter_case)
+{
+  // Whether `str` is 1..K digits of `base` (letters of the given case:
+  // 0 both, 1 lower, 2 upper), and its value as a 128-bit bit-vector (no
+  // overflow for K digits). A character's digit value is selected by
+  // comparing its code with the digit codes, so no Int-to-bit-vector
+  // conversion is needed (solvers handle int2bv of string-derived Ints
+  // poorly). K is the number of digits of the largest 64-bit value.
+  const integer_typet Z;
+  const exprt len = native_string_app(
+    ID_cprover_string_length_func, {string_typet{}}, {str}, Z);
+  auto code_at = [&](const exprt &i) -> exprt
+  {
+    const exprt ch = native_string_app(
+      ID_cprover_string_char_at_func,
+      {string_typet{}, Z},
+      {str, i},
+      string_typet{});
+    return native_string_app(
+      ID_cprover_string_to_code_func, {string_typet{}}, {ch}, Z);
+  };
+  auto zi = [&](long long v) { return from_integer(v, Z); };
+  auto fresh = [&](const std::string &stem, const typet &t) -> symbol_exprt
+  {
+    static unsigned ctr = 0;
+    const std::string nm = "__nparse_" + stem + "_" + std::to_string(ctr++);
+    const irep_idt id{"python::" + nm};
+    symbolt ss{id, t, "python"};
+    ss.base_name = nm;
+    ss.is_lvalue = true;
+    ss.is_state_var = true;
+    symbol_table.add(ss);
+    return symbol_table.lookup_ref(id).symbol_expr();
+  };
+  const std::size_t K = native_parse_max_digits(base);
+  const signedbv_typet W{128};
+  auto zw = [&](long long v) { return from_integer(v, W); };
+  std::vector<std::pair<long long, long long>> digit_codes;
+  for(int d = 0; d < base; ++d)
+  {
+    if(d < 10)
+      digit_codes.emplace_back('0' + d, d);
+    else
+    {
+      if(letter_case != 2)
+        digit_codes.emplace_back('a' + d - 10, d);
+      if(letter_case != 1)
+        digit_codes.emplace_back('A' + d - 10, d);
+    }
+  }
+  const symbol_exprt n = fresh("len", Z);
+  pending_checks.push_back(code_frontend_assignt{n, len});
+  exprt acc = zw(0);
+  exprt ok = true_exprt{};
+  exprt result = zw(0);
+  exprt valid = false_exprt{};
+  for(std::size_t i = 0; i < K; ++i)
+  {
+    const symbol_exprt ci = fresh("c", Z);
+    pending_checks.push_back(code_frontend_assignt{
+      ci,
+      if_exprt{
+        binary_relation_exprt{zi(static_cast<long long>(i)), ID_lt, n},
+        code_at(zi(static_cast<long long>(i))),
+        zi(-1)}});
+    exprt dv = zw(0);
+    exprt is_digit = false_exprt{};
+    for(const auto &[code, d] : digit_codes)
+    {
+      const equal_exprt eq{ci, zi(code)};
+      dv = if_exprt{eq, zw(d), dv};
+      is_digit = or_exprt{is_digit, eq};
+    }
+    const symbol_exprt oi = fresh("ok", bool_typet{});
+    pending_checks.push_back(
+      code_frontend_assignt{oi, and_exprt{ok, is_digit}});
+    const symbol_exprt ai = fresh("acc", W);
+    pending_checks.push_back(
+      code_frontend_assignt{ai, plus_exprt{mult_exprt{acc, zw(base)}, dv}});
+    acc = ai;
+    ok = oi;
+    const exprt here = equal_exprt{n, zi(static_cast<long long>(i + 1))};
+    result = if_exprt{here, ai, result};
+    valid = or_exprt{valid, and_exprt{here, oi}};
+  }
+  const symbol_exprt val = fresh("val", W);
+  pending_checks.push_back(code_frontend_assignt{val, result});
+  const symbol_exprt vld = fresh("valid", bool_typet{});
+  pending_checks.push_back(code_frontend_assignt{vld, valid});
+  return {vld, val};
+}
+
+exprt python_convertert::emit_native_int_parse(
+  const exprt &str,
+  int base,
+  const source_locationt &loc)
+{
+  // Native SMT strings: the refined-string parse intrinsics have no SMT
+  // encoding (they were unconstrained: int("0", 16) gave -1). For 1..K
+  // digits of the base the value is exact (native_digit_string); any other
+  // string (a sign, other accepted spellings, longer numerals, invalid
+  // input) gets an unconstrained value.
+  const typet &it = python_int_type();
+  if(it.id() != ID_signedbv)
+    return side_effect_expr_nondett{it, loc}; // unbounded ints: not modelled
+  const auto [valid, val] = native_digit_string(str, base, 0);
+  const exprt fits = and_exprt{
+    valid,
+    binary_relation_exprt{
+      val, ID_le, from_integer(to_signedbv_type(it).largest(), val.type())}};
+  return if_exprt{
+    fits, typecast_exprt{val, it}, side_effect_expr_nondett{it, loc}};
 }

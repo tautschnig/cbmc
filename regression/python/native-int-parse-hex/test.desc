@@ -1,0 +1,12 @@
+CORE smt-backend
+main.py
+--python-smt-strings --cvc5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+The refined-string parse intrinsic has no SMT encoding, so with native
+strings int() was unconstrained (int("0", 16) == -1 was a counterexample).
+The value is now composed from the characters: exact for 1..K digits of
+the base, unconstrained for other spellings.
