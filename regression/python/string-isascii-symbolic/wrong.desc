@@ -1,0 +1,11 @@
+CORE
+wrong.py
+
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] file wrong.py line 4 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+A symbolic string need not be ASCII.

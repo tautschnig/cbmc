@@ -3420,6 +3420,9 @@ std::optional<exprt> python_convertert::try_string_method(
     // beyond Latin-1 that the classes do not decide gives a nondet result.
     if(obj.type().id() == ID_string)
       return native_string_predicate(obj, method_name, get_location(expr));
+    // A refined string: isascii is the solver's test of all its bytes.
+    if(method_name == "isascii" && is_python_string_type(obj.type()))
+      return refined_is_ascii(obj);
     // Non-constant string predicate: try to read the first
     // byte through the string struct's data pointer and apply
     // the predicate as a byte-level check. This is exact for
