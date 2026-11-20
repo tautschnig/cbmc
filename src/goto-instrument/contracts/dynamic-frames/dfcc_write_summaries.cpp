@@ -163,6 +163,26 @@ void write_summariest::analyze(const goto_programt::instructiont &instruction)
       content.unknown = true;
       write_through(origins(code.op0()), content);
     }
+    else if(statement == ID_array_equal && code.operands().size() == 3)
+    {
+      // Assigns whether the arrays are equal to the third operand.
+      write(code.op2(), originst{});
+    }
+    else if(
+      statement == ID_expression || statement == ID_printf ||
+      statement == ID_input || statement == ID_output ||
+      statement == ID_nondet || statement == ID_asm || statement == ID_fence ||
+      statement == ID_user_specified_predicate ||
+      statement == ID_user_specified_parameter_predicates ||
+      statement == ID_user_specified_return_predicates)
+    {
+      // These write nothing (symex ignores `asm`).
+    }
+    else
+    {
+      // Writes the analysis does not know about, for example `cpp_delete`.
+      current.unknown = true;
+    }
   }
 }
 
