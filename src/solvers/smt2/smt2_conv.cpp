@@ -3027,6 +3027,110 @@ void smt2_convt::convert_expr(const exprt &expr)
         to_symbol_expr(function_application_expr.function()).get_identifier();
       const auto &args = function_application_expr.arguments();
 
+      // Upstream SMT-LIB theory-of-strings encoding (origin/develop
+      // 1b39c80d062): a front-end such as Strata emits string/regex built-ins
+      // over SMT-LIB-native String/RegLan operands and they lower directly to
+      // the SMT-LIB operators. This handles the ids the Python-specific
+      // handlers below do NOT cover (the regex operator family + to/in_regex,
+      // char_at, replace, startswith/endswith/is_empty, re.loop); the shared
+      // string ops (concat/length/substring/contains/is_prefix/is_suffix/
+      // equal/index_of) are intentionally NOT in this map -- they are handled
+      // by the Python-specific handlers below, which additionally bridge the
+      // refined-string (length, char-array) operand representation. Each
+      // handler here emits and returns, so it never reaches those.
+      {
+        static const std::map<irep_idt, std::string> upstream_flat_string_ops =
+          {{ID_cprover_string_char_at_func, "str.at"},
+           {ID_cprover_string_replace_func, "str.replace"},
+           {ID_cprover_string_to_regex_func, "str.to_re"},
+           {ID_cprover_string_in_regex_func, "str.in_re"},
+           {ID_cprover_regex_range_func, "re.range"},
+           {ID_cprover_regex_concat_func, "re.++"},
+           {ID_cprover_regex_star_func, "re.*"},
+           {ID_cprover_regex_plus_func, "re.+"},
+           {ID_cprover_regex_opt_func, "re.opt"},
+           {ID_cprover_regex_union_func, "re.union"},
+           {ID_cprover_regex_inter_func, "re.inter"},
+           {ID_cprover_regex_comp_func, "re.comp"},
+           {ID_cprover_regex_diff_func, "re.diff"},
+           {ID_cprover_regex_all_func, "re.all"},
+           {ID_cprover_regex_allchar_func, "re.allchar"},
+           {ID_cprover_regex_none_func, "re.none"}};
+
+        std::string smt_name;
+        if(auto it = upstream_flat_string_ops.find(fn_id);
+           it != upstream_flat_string_ops.end())
+          smt_name = it->second;
+
+        const bool is_startswith = fn_id == ID_cprover_string_startswith_func;
+        const bool is_endswith = fn_id == ID_cprover_string_endswith_func;
+        const bool is_is_empty = fn_id == ID_cprover_string_is_empty_func;
+        const bool is_regex_loop = fn_id == ID_cprover_regex_loop_func;
+
+        if(
+          !smt_name.empty() || is_startswith || is_endswith || is_is_empty ||
+          is_regex_loop)
+        {
+          // Soundness guard: this native lowering expects SMT-LIB-native
+          // operands. The same ids are also used with the refined-string
+          // (length, char-array) representation consumed by the SAT string
+          // solver; such an application carries array-/pointer-typed operands
+          // and must NOT be lowered here.
+          for(const auto &arg : args)
+          {
+            if(arg.type().id() == ID_array || arg.type().id() == ID_pointer)
+            {
+              throw unsupported_operation_exceptiont(
+                "string/regex built-in '" + id2string(fn_id) +
+                "' reached the SMT-LIB string lowering with a refined-string "
+                "(array/pointer) operand; the refined-string representation "
+                "requires the SAT string solver (--refine-strings)");
+            }
+          }
+
+          if(is_startswith || is_endswith)
+          {
+            PRECONDITION(args.size() == 2);
+            out << (is_startswith ? "(str.prefixof " : "(str.suffixof ");
+            convert_expr(args[1]);
+            out << ' ';
+            convert_expr(args[0]);
+            out << ')';
+          }
+          else if(is_is_empty)
+          {
+            PRECONDITION(args.size() == 1);
+            out << "(= ";
+            convert_expr(args[0]);
+            out << " \"\")";
+          }
+          else if(is_regex_loop)
+          {
+            PRECONDITION(args.size() == 3);
+            const auto lo =
+              numeric_cast_v<mp_integer>(to_constant_expr(args[1]));
+            const auto hi =
+              numeric_cast_v<mp_integer>(to_constant_expr(args[2]));
+            out << "((_ re.loop " << lo << ' ' << hi << ") ";
+            convert_expr(args[0]);
+            out << ')';
+          }
+          else if(args.empty())
+            out << smt_name;
+          else
+          {
+            out << '(' << smt_name;
+            for(const auto &arg : args)
+            {
+              out << ' ';
+              convert_expr(arg);
+            }
+            out << ')';
+          }
+          return;
+        }
+      }
+
       // Python re.group decomposition: the result String is fully defined by
       // find_symbols (the n-th capture group's fragment, or a nondet
       // fallback); emit that pre-defined identifier here.
@@ -3715,179 +3819,8 @@ void smt2_convt::convert_expr(const exprt &expr)
         return;
       }
     }
-
-    // Front-ends such as Strata represent string and regex operations as
-    // applications of the CPROVER string built-in functions
-    // (ID_cprover_string_*_func / ID_cprover_regex_*_func). In the SMT-LIB
-    // back-end these carry SMT-LIB-native operands (String / RegLan, and
-    // scalar Int/bit-vector index arguments) -- as opposed to the
-    // refined-string (length, char-array) representation that the SAT string
-    // solver in src/solvers/strings consumes -- and we lower them directly to
-    // the SMT-LIB theory-of-strings operators here.
-    //
-    // Operand contract (what a front-end must emit): arguments are SMT-LIB
-    // native and in SMT-LIB operand order, so most built-ins lower to a flat
-    // application (op arg0 arg1 ...). Specifically:
-    //   concat(s, t, ...)          -> (str.++ s t ...)
-    //   length(s)                  -> (str.len s)             : Int result
-    //   char_at(s, i)              -> (str.at s i)            : 1-char String
-    //   substring(s, off, len)     -> (str.substr s off len)  : offset+length
-    //   contains(haystack, needle) -> (str.contains haystack needle)
-    //   is_prefix(prefix, s)       -> (str.prefixof prefix s)
-    //   is_suffix(suffix, s)       -> (str.suffixof suffix s)
-    //   replace(s, old, new)       -> (str.replace s old new) : first match
-    //   equal(s, t)                -> (= s t)
-    //   index_of(s, sub[, off])    -> (str.indexof s sub off) : off defaults 0
-    //   startswith(s, prefix)      -> (str.prefixof prefix s)
-    //   endswith(s, suffix)        -> (str.suffixof suffix s)
-    //   is_empty(s)                -> (= s "")
-    // and the regex operators map to str.to_re / str.in_re and the re.* family
-    // (re.range, re.++, re.*, re.+, re.opt, re.loop, re.union, re.inter,
-    // re.comp, re.diff, re.all, re.allchar, re.none). Built-ins without an
-    // exact SMT-LIB theory-of-strings counterpart (e.g. compare_to, of_int,
-    // parse_int, format, case folding, trim) are intentionally not lowered and
-    // fall through to the generic function-application handling below.
-    //
-    // Note: this lowering is specific to the (non-incremental) smt2_convt
-    // back-end. The incremental SMT back-end uses a separate converter
-    // (src/solvers/smt2_incremental) and does not support these built-ins.
-    irep_idt fn_id;
-    if(function_application_expr.function().id() == ID_symbol)
-      fn_id =
-        to_symbol_expr(function_application_expr.function()).get_identifier();
-
-    const auto &args = function_application_expr.arguments();
-
-    // Flat-application operators: lowered to (op arg0 arg1 ...) with operands
-    // in the order given. The operands are interpreted in SMT-LIB order, which
-    // can DIVERGE from the canonical SAT string solver's built-ins -- notably
-    // substring is (string, offset, length) per SMT-LIB str.substr, NOT the
-    // SAT solver's (string, start, end), and index_of's optional third operand
-    // is a start offset. A front-end must emit these built-ins with SMT-LIB
-    // operand semantics; the soundness guard below only catches refined-string
-    // (array/pointer) operands, not a mismatched integer operand pair.
-    static const std::map<irep_idt, std::string> flat_string_ops = {
-      // string operators
-      {ID_cprover_string_concat_func, "str.++"},
-      {ID_cprover_string_length_func, "str.len"},
-      {ID_cprover_string_substring_func, "str.substr"},
-      {ID_cprover_string_char_at_func, "str.at"},
-      {ID_cprover_string_contains_func, "str.contains"},
-      {ID_cprover_string_is_prefix_func, "str.prefixof"},
-      {ID_cprover_string_is_suffix_func, "str.suffixof"},
-      {ID_cprover_string_replace_func, "str.replace"},
-      {ID_cprover_string_equal_func, "="},
-      // regex operators
-      {ID_cprover_string_to_regex_func, "str.to_re"},
-      {ID_cprover_string_in_regex_func, "str.in_re"},
-      {ID_cprover_regex_range_func, "re.range"},
-      {ID_cprover_regex_concat_func, "re.++"},
-      {ID_cprover_regex_star_func, "re.*"},
-      {ID_cprover_regex_plus_func, "re.+"},
-      {ID_cprover_regex_opt_func, "re.opt"},
-      {ID_cprover_regex_union_func, "re.union"},
-      {ID_cprover_regex_inter_func, "re.inter"},
-      {ID_cprover_regex_comp_func, "re.comp"},
-      {ID_cprover_regex_diff_func, "re.diff"},
-      {ID_cprover_regex_all_func, "re.all"},
-      {ID_cprover_regex_allchar_func, "re.allchar"},
-      {ID_cprover_regex_none_func, "re.none"}};
-
-    std::string smt_name;
-    if(auto it = flat_string_ops.find(fn_id); it != flat_string_ops.end())
-      smt_name = it->second;
-
-    // Operators needing a fixed operand rearrangement or wrapper.
-    const bool is_index_of = fn_id == ID_cprover_string_index_of_func;
-    const bool is_startswith = fn_id == ID_cprover_string_startswith_func;
-    const bool is_endswith = fn_id == ID_cprover_string_endswith_func;
-    const bool is_is_empty = fn_id == ID_cprover_string_is_empty_func;
-    const bool is_regex_loop = fn_id == ID_cprover_regex_loop_func;
-
-    if(
-      !smt_name.empty() || is_index_of || is_startswith || is_endswith ||
-      is_is_empty || is_regex_loop)
-    {
-      // Soundness guard: this native lowering expects SMT-LIB-native operands.
-      // The same cprover_string_*_func ids are also used with the
-      // refined-string (length, char-array) representation consumed by the SAT
-      // string solver; such an application carries array- or pointer-typed
-      // operands and must NOT be lowered here, as doing so would be silently
-      // unsound. Reject it with a clear message instead.
-      for(const auto &arg : args)
-      {
-        if(arg.type().id() == ID_array || arg.type().id() == ID_pointer)
-        {
-          throw unsupported_operation_exceptiont(
-            "string/regex built-in '" + id2string(fn_id) +
-            "' reached the SMT-LIB string lowering with a refined-string "
-            "(array/pointer) operand; the refined-string representation "
-            "requires the SAT string solver (--refine-strings)");
-        }
-      }
-
-      if(is_index_of)
-      {
-        // str.indexof requires three operands; default the start offset to the
-        // SMT-LIB Int 0 when the front-end omits it.
-        PRECONDITION(args.size() == 2 || args.size() == 3);
-        out << "(str.indexof ";
-        convert_expr(args[0]);
-        out << ' ';
-        convert_expr(args[1]);
-        out << ' ';
-        if(args.size() == 3)
-          convert_expr(args[2]);
-        else
-          out << '0';
-        out << ')';
-      }
-      else if(is_startswith || is_endswith)
-      {
-        // startswith(s, prefix) / endswith(s, suffix): the affix is the second
-        // argument, but SMT-LIB str.prefixof/str.suffixof take the affix first.
-        PRECONDITION(args.size() == 2);
-        out << (is_startswith ? "(str.prefixof " : "(str.suffixof ");
-        convert_expr(args[1]);
-        out << ' ';
-        convert_expr(args[0]);
-        out << ')';
-      }
-      else if(is_is_empty)
-      {
-        // is_empty(s) -> (= s "")
-        PRECONDITION(args.size() == 1);
-        out << "(= ";
-        convert_expr(args[0]);
-        out << " \"\")";
-      }
-      else if(is_regex_loop)
-      {
-        // re.loop is an indexed SMT-LIB operator: ((_ re.loop lo hi) r), where
-        // lo and hi are numerals. Contract: loop(regex, lo, hi) with lo/hi
-        // constant naturals.
-        PRECONDITION(args.size() == 3);
-        const auto lo = numeric_cast_v<mp_integer>(to_constant_expr(args[1]));
-        const auto hi = numeric_cast_v<mp_integer>(to_constant_expr(args[2]));
-        out << "((_ re.loop " << lo << ' ' << hi << ") ";
-        convert_expr(args[0]);
-        out << ')';
-      }
-      else if(args.empty())
-        out << smt_name;
-      else
-      {
-        out << '(' << smt_name;
-        for(const auto &arg : args)
-        {
-          out << ' ';
-          convert_expr(arg);
-        }
-        out << ')';
-      }
-    }
     // do not use parentheses if there function is a constant
-    else if(function_application_expr.arguments().empty())
+    if(function_application_expr.arguments().empty())
     {
       convert_expr(function_application_expr.function());
     }
@@ -7107,22 +7040,7 @@ void smt2_convt::find_symbols(const exprt &expr)
         convert_type(expr.type());
       }
 
-      out << ')' << '\n';
-
-      // We need an additional constraint for range-typed symbols,
-      // or otherwise we get satisfying assignments with values
-      // outside of the range when the size of the range isn't
-      // a power of two.
-      if(expr.type().id() == ID_range)
-      {
-        auto &range_type = to_integer_range_type(expr.type());
-        if(!is_power_of_two(range_type.size()))
-        {
-          out << "(assert (bvule " << smt2_identifier << ' ';
-          convert_expr(from_integer(range_type.to(), range_type));
-          out << "))\n"; // bvule, assert
-        }
-      }
+      out << ")" << "\n";
 
       if(expr.type().id() == ID_smt_string)
       {
@@ -7141,6 +7059,21 @@ void smt2_convt::find_symbols(const exprt &expr)
         out << "(assert (< (str.len " << smt2_identifier
             << ") 9223372036854775808))"
             << "\n";
+      }
+
+      // We need an additional constraint for range-typed symbols,
+      // or otherwise we get satisfying assignments with values
+      // outside of the range when the size of the range isn't
+      // a power of two.
+      if(expr.type().id() == ID_range)
+      {
+        auto &range_type = to_integer_range_type(expr.type());
+        if(!is_power_of_two(range_type.size()))
+        {
+          out << "(assert (bvule " << smt2_identifier << ' ';
+          convert_expr(from_integer(range_type.to(), range_type));
+          out << "))\n"; // bvule, assert
+        }
       }
     }
   }
