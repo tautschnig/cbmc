@@ -234,6 +234,12 @@ struct originst
     return was_unknown != unknown ||
            size != globals.size() + locals.size() + parameters.size();
   }
+
+  bool operator==(const originst &other) const
+  {
+    return globals == other.globals && locals == other.locals &&
+           parameters == other.parameters && unknown == other.unknown;
+  }
 };
 
 /// What a function, its callees included, may write outside its own locals,
@@ -252,10 +258,7 @@ struct write_summaryt
   bool operator==(const write_summaryt &other) const
   {
     return globals == other.globals && parameters == other.parameters &&
-           unknown == other.unknown && result.globals == other.result.globals &&
-           result.locals == other.result.locals &&
-           result.parameters == other.result.parameters &&
-           result.unknown == other.result.unknown;
+           unknown == other.unknown && result == other.result;
   }
 };
 
@@ -319,8 +322,8 @@ public:
     auto entry = pointer_types.find(type);
     if(entry != pointer_types.end())
       return entry->second;
-    // Assume none while the type is visited, for recursive types.
-    pointer_types[type] = false;
+    // This does not recurse into the base type of a pointer, and only a
+    // pointer can make a type refer to itself, so this terminates.
     bool result = false;
     if(type.id() == ID_pointer)
       result = true;
@@ -350,7 +353,6 @@ private:
 
   // State of the function being analyzed.
   std::map<irep_idt, originst> variables;
-  std::map<irep_idt, std::size_t> parameter_index;
   write_summaryt current;
   bool variables_changed = false;
 
@@ -376,12 +378,10 @@ private:
   {
     const goto_functiont &function = goto_functions.function_map.at(id);
     variables.clear();
-    parameter_index.clear();
     current = write_summaryt();
     for(std::size_t i = 0; i < function.parameter_identifiers.size(); ++i)
     {
       const irep_idt &parameter = function.parameter_identifiers[i];
-      parameter_index[parameter] = i;
       variables[parameter].parameters.insert(i);
     }
     do
@@ -710,8 +710,9 @@ private:
     }
     for(const auto i : summary.parameters)
     {
-      if(i >= function.parameter_identifiers.size())
-        return false;
+      INVARIANT(
+        i < function.parameter_identifiers.size(),
+        "summaries only name parameters of the function");
       const symbol_exprt parameter =
         ns.lookup(function.parameter_identifiers[i]).symbol_expr();
       if(!write_through(parameter, summaries, ns, location, body))
@@ -732,8 +733,9 @@ private:
         }
         for(const auto i : summary.result.parameters)
         {
-          if(i >= function.parameter_identifiers.size())
-            return false;
+          INVARIANT(
+            i < function.parameter_identifiers.size(),
+            "summaries only name parameters of the function");
           const symbol_exprt parameter =
             ns.lookup(function.parameter_identifiers[i]).symbol_expr();
           if(parameter.type().id() != ID_pointer)
@@ -749,11 +751,10 @@ private:
             result);
         }
       }
-      else if(summaries.has_pointers(return_type) || summary.result.unknown)
+      else if(summaries.has_pointers(return_type))
       {
         // A result whose pointers the summary cannot name.
-        if(summaries.has_pointers(return_type))
-          return false;
+        return false;
       }
       body.add(goto_programt::make_set_return_value(result, location));
     }
@@ -864,7 +865,7 @@ void dfcc_infer_loop_assigns_for_function(
         ns);
     }
   }
-  // Restore the function boyd of `malloc` and `free`.
+  // Restore the function bodies of `malloc` and `free`.
   goto_functions.function_map.insert(std::move(malloc_body));
   goto_functions.function_map.insert(std::move(free_body));
 }
