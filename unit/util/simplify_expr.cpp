@@ -319,6 +319,19 @@ TEST_CASE("Simplify cast of a pointer constant to an integer", "[core][util]")
     const typecast_exprt cast{address_of_exprt{x}, unsignedbv_typet{width}};
     REQUIRE(simplify_expr(cast, ns) == cast);
   }
+
+  SECTION("Pointer constants that do not hold an integer address")
+  {
+    // The back-ends build pointer constants with symbolic values, which are
+    // not bit-vector representations and must not become integer constants.
+    for(const irep_idt &symbolic_value :
+        {ID_invalid, irep_idt{"INVALID"}, irep_idt{"INVALID-2"}})
+    {
+      const constant_exprt symbolic{symbolic_value, pointer};
+      const typecast_exprt cast{symbolic, unsignedbv_typet{width}};
+      REQUIRE(simplify_expr(cast, ns) == cast);
+    }
+  }
 }
 
 TEST_CASE("simplify_expr boolean expressions", "[core][util]")

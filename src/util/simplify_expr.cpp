@@ -826,7 +826,7 @@ simplify_exprt::simplify_typecast(const typecast_exprt &expr)
   // yields such casts
   if(
     op_type.id() == ID_pointer && expr.op().is_constant() &&
-    !to_constant_expr(expr.op()).is_null_pointer() &&
+    is_integer_address_constant(to_constant_expr(expr.op())) &&
     (expr_type.id() == ID_unsignedbv || expr_type.id() == ID_signedbv ||
      expr_type.id() == ID_bv) &&
     to_bitvector_type(expr_type).get_width() ==
