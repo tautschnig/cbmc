@@ -1352,11 +1352,57 @@ codet python_convertert::convert_try(const jsont &stmt)
     inline_finally(block);
 
     // Fallthrough / exception path. The finally body runs whether or not an
-    // exception is active, so sequence_exceptions neither guards nor enters
-    // it.
-    code_blockt fin = finally_code;
-    fin.set(ID_python_exc_opaque, true);
-    block.add(std::move(fin));
+    // exception is active: a propagating exception is set aside (an opaque
+    // step, which sequence_exceptions neither guards nor enters), the body
+    // runs as any other code, and the exception is active again after it,
+    // unless the body raised one of its own, which replaces it (PLR 8.4).
+    std::vector<std::pair<symbol_exprt, symbol_exprt>> saved;
+    if(exc_sym != nullptr)
+    {
+      static unsigned finally_ctr = 0;
+      const std::string suffix = std::to_string(finally_ctr++);
+      for(const char *field : {"active", "type"})
+      {
+        const symbolt *f =
+          symbol_table.lookup("python::__exception_" + std::string{field});
+        if(f == nullptr)
+          continue;
+        const std::string nm =
+          "__finally_saved_" + std::string{field} + "_" + suffix;
+        symbolt ss{irep_idt{"python::" + nm}, f->type, "python"};
+        ss.base_name = nm;
+        ss.is_lvalue = true;
+        ss.is_state_var = true;
+        symbol_table.add(ss);
+        saved.emplace_back(
+          f->symbol_expr(), symbol_table.lookup_ref(ss.name).symbol_expr());
+      }
+    }
+    if(saved.empty())
+    {
+      code_blockt fin = finally_code;
+      fin.set(ID_python_exc_opaque, true);
+      block.add(std::move(fin));
+    }
+    else
+    {
+      const symbol_exprt active = exc_sym->symbol_expr();
+      symbol_exprt saved_active = saved.front().second;
+      code_blockt set_aside;
+      for(const auto &[field, copy] : saved)
+        set_aside.add(code_frontend_assignt{copy, field});
+      set_aside.add(code_frontend_assignt{active, false_exprt{}});
+      set_aside.set(ID_python_exc_opaque, true);
+      block.add(std::move(set_aside));
+      block.add(finally_code);
+      code_blockt again;
+      for(const auto &[field, copy] : saved)
+        again.add(code_frontend_assignt{field, copy});
+      code_ifthenelset reactivate{
+        and_exprt{saved_active, not_exprt{active}}, std::move(again)};
+      reactivate.set(ID_python_exc_opaque, true);
+      block.add(std::move(reactivate));
+    }
   }
 
   // Merge arm states: try-success (arm_states[0]) plus each
