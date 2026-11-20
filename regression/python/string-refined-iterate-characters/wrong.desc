@@ -1,0 +1,11 @@
+CORE
+wrong.py
+--unwind 4
+^EXIT=10$
+^SIGNAL=0$
+^\[.*\] file wrong.py line 7 Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+A character of three bytes is an element of the iteration.

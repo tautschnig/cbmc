@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 6
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+A refined string was iterated over by bytes: beyond ASCII the loop could
+end after any byte, and a character was any string, so the loop needed
+more unwinding than the string has characters and `n == 4` failed.

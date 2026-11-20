@@ -3673,6 +3673,67 @@ exprt python_convertert::refined_is_ascii(const exprt &s)
   return r;
 }
 
+symbol_exprt
+python_convertert::refined_utf8_step(const exprt &s, const exprt &start)
+{
+  const signedbv_typet i64{64};
+  const unsignedbv_typet u8{8};
+  const exprt view = string_struct_view(s);
+  const exprt bytes = member_exprt{view, "length", i64};
+  const irep_idt char_at{ID_cprover_string_char_at_func};
+  if(symbol_table.lookup(char_at) == nullptr)
+  {
+    symbolt fs{
+      char_at, mathematical_function_typet({view.type(), i64}, u8), "python"};
+    fs.base_name = id2string(char_at);
+    symbol_table.add(fs);
+  }
+  static unsigned ctr = 0;
+  auto fresh = [&](const std::string &stem, const typet &t)
+  {
+    const std::string nm = "__utf8_" + stem + "_" + std::to_string(ctr++);
+    const irep_idt id{qualify_name(nm)};
+    if(symbol_table.lookup(id) == nullptr)
+    {
+      symbolt sy{id, t, "python"};
+      sy.base_name = nm;
+      sy.is_lvalue = true;
+      sy.is_state_var = true;
+      symbol_table.add(sy);
+    }
+    return symbol_table.lookup_ref(id).symbol_expr();
+  };
+  // Whether the byte at start + k is in the string and continues a
+  // character.
+  auto continues = [&](int k) -> exprt
+  {
+    const exprt pos = plus_exprt{start, from_integer(k, i64)};
+    function_application_exprt app{
+      symbol_table.lookup_ref(char_at).symbol_expr(), {view, pos}};
+    app.type() = u8;
+    const symbol_exprt b = fresh("byte", u8);
+    pending_checks.push_back(code_frontend_assignt{b, std::move(app)});
+    return and_exprt{
+      binary_relation_exprt{pos, ID_lt, bytes},
+      equal_exprt{
+        bitand_exprt{b, from_integer(0xC0, u8)}, from_integer(0x80, u8)}};
+  };
+  const exprt c1 = continues(1);
+  const exprt c2 = and_exprt{c1, continues(2)};
+  const exprt c3 = and_exprt{c2, continues(3)};
+  const symbol_exprt step = fresh("step", i64);
+  pending_checks.push_back(code_frontend_assignt{
+    step,
+    if_exprt{
+      c3,
+      from_integer(4, i64),
+      if_exprt{
+        c2,
+        from_integer(3, i64),
+        if_exprt{c1, from_integer(2, i64), from_integer(1, i64)}}}});
+  return step;
+}
+
 exprt python_convertert::refined_code_point_count(
   const exprt &s,
   const source_locationt &loc)
@@ -3711,7 +3772,10 @@ exprt python_convertert::refined_code_point_count(
     code_frontend_assignt{n, side_effect_expr_nondett{i64, loc}});
   // Beyond ASCII, a character has 2 to 4 bytes: between a quarter of the
   // bytes and one less than them. Up to 32 bytes, the characters are counted
-  // exactly: the bytes that do not continue a character.
+  // exactly, as refined_utf8_step walks them: a character starts at the
+  // first byte, at a byte that does not continue one (10xxxxxx), and after
+  // a start and three continuation bytes. (For valid UTF-8, the bytes that
+  // do not continue a character.)
   exprt::operandst leads;
   {
     const unsignedbv_typet u8{8};
@@ -3724,31 +3788,50 @@ exprt python_convertert::refined_code_point_count(
       symbol_table.add(fs);
     }
     static unsigned byte_ctr = 0;
+    auto fresh = [&](const std::string &stem, const typet &t)
+    {
+      const std::string bn = stem + std::to_string(byte_ctr++);
+      const irep_idt bid{qualify_name(bn)};
+      if(symbol_table.lookup(bid) == nullptr)
+      {
+        symbolt sy{bid, t, "python"};
+        sy.base_name = bn;
+        sy.is_lvalue = true;
+        sy.is_state_var = true;
+        symbol_table.add(sy);
+      }
+      return symbol_table.lookup_ref(bid).symbol_expr();
+    };
+    std::vector<exprt> continues, starts;
     for(int i = 0; i < 32; ++i)
     {
       function_application_exprt app{
         symbol_table.lookup_ref(char_at).symbol_expr(),
         {view, from_integer(i, i64)}};
       app.type() = u8;
-      const std::string bn = "__cp_byte_" + std::to_string(byte_ctr++);
-      const irep_idt bid{qualify_name(bn)};
-      if(symbol_table.lookup(bid) == nullptr)
-      {
-        symbolt sy{bid, u8, "python"};
-        sy.base_name = bn;
-        sy.is_lvalue = true;
-        sy.is_state_var = true;
-        symbol_table.add(sy);
-      }
-      const symbol_exprt b = symbol_table.lookup_ref(bid).symbol_expr();
+      const symbol_exprt b = fresh("__cp_byte_", u8);
       pending_checks.push_back(code_frontend_assignt{b, std::move(app)});
-      leads.push_back(if_exprt{
-        and_exprt{
-          binary_relation_exprt{from_integer(i, i64), ID_lt, bytes},
-          notequal_exprt{
-            bitand_exprt{b, from_integer(0xC0, u8)}, from_integer(0x80, u8)}},
-        from_integer(1, i64),
-        from_integer(0, i64)});
+      continues.push_back(equal_exprt{
+        bitand_exprt{b, from_integer(0xC0, u8)}, from_integer(0x80, u8)});
+      const exprt in_string =
+        binary_relation_exprt{from_integer(i, i64), ID_lt, bytes};
+      exprt starts_here = in_string;
+      if(i > 0)
+      {
+        exprt after_four = false_exprt{};
+        if(i >= 4)
+          after_four = and_exprt{
+            starts[i - 4],
+            continues[i - 3],
+            continues[i - 2],
+            continues[i - 1]};
+        starts_here =
+          and_exprt{in_string, or_exprt{not_exprt{continues[i]}, after_four}};
+      }
+      const symbol_exprt st = fresh("__cp_start_", bool_typet{});
+      pending_checks.push_back(code_frontend_assignt{st, starts_here});
+      starts.push_back(st);
+      leads.push_back(if_exprt{st, from_integer(1, i64), from_integer(0, i64)});
     }
   }
   exprt counted = from_integer(0, i64);

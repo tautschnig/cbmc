@@ -3522,6 +3522,10 @@ private:
     std::vector<typet> arg_types,
     const exprt::operandst &args,
     const typet &ret);
+  /// The number of bytes of the character at byte \p start of the refined
+  /// string \p s: the byte and the continuation bytes (10xxxxxx) that follow
+  /// it, up to three. (Emits its reads of the bytes as pending checks.)
+  symbol_exprt refined_utf8_step(const exprt &s, const exprt &start);
 
   /// Refined-backend {length,data} struct view of a string expression.
   exprt string_struct_view(const exprt &s);

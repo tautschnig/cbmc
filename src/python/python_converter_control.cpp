@@ -2858,6 +2858,8 @@ skip_string_unroll:;
       body_block.add(std::move(st));
   }
 
+  // The bytes of the current element of a refined string (see below).
+  exprt idx_step = from_integer(1, int_type);
   // Whether a refined string iterated over is ASCII (see below).
   exprt iter_ascii = true_exprt{};
   std::vector<codet> iter_ascii_code;
@@ -3017,6 +3019,15 @@ skip_string_unroll:;
           // outer pending_checks list. We need them inside the loop
           // body so they run each iteration. Capture-and-flush.
           std::size_t pre_size = pending_checks.size();
+          // A character is the byte at the index and the continuation
+          // bytes (10xxxxxx) that follow it, up to three: so the loop visits
+          // the characters, as many as refined_code_point_count counts.
+          if(!is_known_ascii(iterable))
+          {
+            const symbol_exprt step = refined_utf8_step(src_struct, start64);
+            end64 = plus_exprt{start64, step};
+            idx_step = typecast_exprt::conditional_cast(step, int_type);
+          }
           elem_val = emit_string_function(
             ID_cprover_string_substring_func,
             {src_struct, start64, end64},
@@ -3040,7 +3051,7 @@ skip_string_unroll:;
     // some string, and there are fewer of them (see for_cond).
     if(
       is_string && !native_str_iter && iterable.type().id() != ID_string &&
-      is_python_string_type(loop_var.type()))
+      is_python_string_type(loop_var.type()) && idx_step.is_constant())
     {
       const std::size_t pre_size = pending_checks.size();
       iter_ascii = refined_is_ascii(iterable);
@@ -3105,8 +3116,7 @@ skip_string_unroll:;
   code_fort while_stmt{
     nil_exprt{},
     std::move(for_cond),
-    side_effect_expr_assignt{
-      idx_var, plus_exprt{idx_var, from_integer(1, int_type)}, loc},
+    side_effect_expr_assignt{idx_var, plus_exprt{idx_var, idx_step}, loc},
     std::move(body_block)};
   while_stmt.add_source_location() = loc;
   result.add(std::move(while_stmt));
