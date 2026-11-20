@@ -78,6 +78,16 @@ TEST_CASE(
     REQUIRE_FALSE(summary.unknown);
   }
 
+  SECTION("Write through a cast parameter")
+  {
+    const auto summary = summary_of(
+      "void f(void *v) { *(int *)v = 1; }\n"
+      "void main() {}\n",
+      "f");
+    REQUIRE(summary.parameters == std::set<std::size_t>{0});
+    REQUIRE_FALSE(summary.unknown);
+  }
+
   SECTION("Recursion iterates to a fixpoint")
   {
     const auto summary = summary_of(
@@ -219,6 +229,61 @@ TEST_CASE(
   {
     const auto summary = summary_of(
       "void f(unsigned long a) { *(int *)a = 1; }\n"
+      "void main() {}\n",
+      "f");
+    REQUIRE(summary.unknown);
+  }
+
+  SECTION("Pointer stored through a member of a union")
+  {
+    const auto summary = summary_of(
+      "void f(int *q)\n"
+      "{\n"
+      "  union { int *p; unsigned long l; } u;\n"
+      "  u.l = (unsigned long)q;\n"
+      "  *u.p = 2;\n"
+      "}\n"
+      "void main() {}\n",
+      "f");
+    REQUIRE(summary.unknown);
+  }
+
+  SECTION("Pointer in a union literal")
+  {
+    const auto summary = summary_of(
+      "union U { int *p; unsigned long l; };\n"
+      "void f(int *q)\n"
+      "{\n"
+      "  union U u = {.l = (unsigned long)q};\n"
+      "  *u.p = 2;\n"
+      "}\n"
+      "void main() {}\n",
+      "f");
+    REQUIRE(summary.unknown);
+  }
+
+  SECTION("Pointer stored as an integer through a cast pointer")
+  {
+    const auto summary = summary_of(
+      "void f(int *q)\n"
+      "{\n"
+      "  int *p;\n"
+      "  *(unsigned long *)&p = (unsigned long)q;\n"
+      "  *p = 2;\n"
+      "}\n"
+      "void main() {}\n",
+      "f");
+    REQUIRE(summary.unknown);
+  }
+
+  SECTION("Pointer loaded from an integer through a cast pointer")
+  {
+    const auto summary = summary_of(
+      "void f(int *q)\n"
+      "{\n"
+      "  unsigned long l = (unsigned long)q;\n"
+      "  **(int **)&l = 2;\n"
+      "}\n"
       "void main() {}\n",
       "f");
     REQUIRE(summary.unknown);
